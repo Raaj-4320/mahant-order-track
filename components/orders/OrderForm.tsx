@@ -73,7 +73,7 @@ export function OrderForm({ draft, setDraft }: Props) {
             <Input
               value={draft.number}
               onChange={(e) =>
-                setDraft((d) => ({ ...d, number: e.target.value }))
+                setDraft((d) => ({ ...d, number: e.target.value, orderNumber: e.target.value }))
               }
               trailingIcon={<Pencil size={14} />}
             />

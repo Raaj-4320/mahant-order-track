@@ -8,6 +8,7 @@ import {
   Users,
   Truck,
   Package,
+  Wallet,
   LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -23,6 +24,7 @@ const items: Item[] = [
   { label: "Order Booking", href: "/orders", icon: ClipboardList },
   { label: "Customers", href: "/customers", icon: Users },
   { label: "Suppliers", href: "/suppliers", icon: Truck },
+  { label: "Payment Agents", href: "/payment-agents", icon: Wallet },
   { label: "Products", href: "/products", icon: Package },
 ];
 
