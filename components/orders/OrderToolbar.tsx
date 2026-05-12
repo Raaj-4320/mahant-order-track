@@ -56,11 +56,15 @@ export function OrderToolbar({
     const num = "25-" + Math.floor(300 + Math.random() * 99);
     const fresh: Order = {
       id: "ord-" + Math.random().toString(36).slice(2, 9),
+      orderNumber: num,
       number: num,
       date: new Date().toISOString().slice(0, 10),
+      loadingDate: new Date().toISOString().slice(0, 10),
+      paymentAgentId: "pa-1",
       paymentBy: "pa-1",
       wechatId: "",
       status: "draft",
+      paymentStatus: "pending",
       lines: [],
     };
     upsertOrder(fresh);

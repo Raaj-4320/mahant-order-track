@@ -1,0 +1,196 @@
+# Implementation Roadmap (Static -> Firebase)
+
+## Phase 0 — Discovery & Blueprint (Current)
+
+- **Goal**: Understand current codebase, data shape, UI rules, and risks.
+- **Likely files**: `docs/system-discovery.md`, `docs/ui-design-blueprint.md`, `docs/firebase-blueprint.md`, `docs/implementation-roadmap.md`.
+- **Expected output**: Approved blueprint baseline.
+- **Acceptance criteria**:
+  - Repo map documented.
+  - Order booking behavior documented end-to-end.
+  - Firebase architecture proposed but not implemented.
+- **Regression risk**: None (documentation-only).
+
+## Phase 1A — UI-to-DB Data Model Alignment (No Firebase)
+
+- **Goal**: Align domain schema to richer planned screens while preserving current `/orders` behavior.
+- **Likely files**:
+  - `types/domain.ts`
+  - `lib/types.ts`
+  - `lib/data.ts`
+  - `docs/data-model-alignment.md`
+- **Expected output**:
+  - Central domain types with Supplier/Customer/Product/PaymentAgent/Order/OrderLine richness.
+  - Backward-compatible order fields (`number` + `orderNumber`, `paymentBy` + `paymentAgentId`).
+  - Existing UI behavior unchanged.
+- **Acceptance criteria**:
+  - `/orders` behavior unchanged visually/functionally.
+  - Build/lint pass.
+  - No Firebase code yet.
+- **Regression risks**:
+  - Drift between old and new mock data shape.
+  - Accidental behavior changes in totals/edit flow.
+
+## Phase 1B — Mock Service Layer (No Firebase)
+
+- **Goal**: Decouple UI imports from raw static arrays using Promise-based service contracts.
+- **Likely files**:
+  - `services/contracts.ts`
+  - `services/mock/*` (or `services/*Service.ts` mock-backed)
+  - minimal page/store wiring updates.
+- **Expected output**:
+  - `list/get/upsert` contracts for suppliers/customers/products/paymentAgents/orders.
+  - UI behavior unchanged with mock-backed async interface.
+- **Acceptance criteria**:
+  - Existing pages still render and save/update local data.
+  - `/orders` flow remains stable.
+- **Regression risks**:
+  - accidental async state bugs during migration from sync arrays.
+
+## Phase 1C — Safe Service/Hook Consumption Migration
+
+- **Goal**: Migrate existing pages to consume hooks/services/selectors while preserving existing UI behavior.
+- **Likely files**:
+  - `app/dashboard/page.tsx`
+  - `app/customers/page.tsx`
+  - `app/suppliers/page.tsx`
+  - `app/products/page.tsx`
+  - `docs/phase-1c-service-consumption.md`
+- **Expected output**:
+  - Non-order pages consume hook/service boundary instead of direct static arrays where safe.
+  - Derived calculations are centralized via selectors.
+  - `/orders` behavior is preserved unchanged.
+- **Acceptance criteria**:
+  - No visible regressions in current pages.
+  - `lib/store.tsx` remains single mutable order source.
+  - Build passes.
+- **Regression risks**:
+  - Brief hook-loading states altering counts during initial render.
+  - Over-aggressive migration of `/orders` creating lookup/default-line race conditions.
+
+## Phase 2 — Build Missing Pages on Mock Services
+
+- **Goal**: Complete Dashboard/Customers/Suppliers/Products with production-like UX while still static.
+- **Likely files**:
+  - `app/dashboard/page.tsx`
+  - `app/customers/page.tsx`
+  - `app/suppliers/page.tsx`
+  - `app/products/page.tsx`
+  - new reusable components for table/forms/filters/empty states.
+- **Expected output**:
+  - Full module UIs with CRUD-ready interaction patterns.
+  - Search/filter/sort + loading/empty/error placeholders.
+- **Acceptance criteria**:
+  - Visual consistency with Order Booking blueprint.
+  - All modules navigable and functionally coherent.
+- **Regression risks**:
+  - Introducing a second visual language.
+  - Inconsistent data calculations across pages.
+
+### Phase 2A–2C delivery (completed in this pass)
+- Rich Dashboard page (KPI + filter/action bar + tabular orders view)
+- Rich Suppliers page (KPI + filter/action bar + tabular suppliers view)
+- Rich Payment Agents page (new route + KPI + filter/action bar + tabular agents view)
+- All powered by existing hook/service/selectors boundaries (no Firebase, no backend)
+
+### Phase 2D–2E delivery (completed in this pass)
+- Rich Customers page (KPI + search/filter/action bar + tabular customer view)
+- Rich Products page (KPI + search/filter/action bar + tabular product view)
+- Reused shared table components and preserved existing mock-service/selectors data flow
+
+### Phase 2F delivery (completed in this pass)
+- Shared UI polish and consistency audit across all major frontend modules
+- Consistent placeholder communication via toast for deferred actions
+- Small accessibility polish for shared table action/pagination controls
+
+## Phase 3 — Firebase Setup (Foundation)
+
+- **Goal**: Add Firebase infrastructure without replacing all data at once.
+- **Likely files**:
+  - `lib/firebase/client.ts`
+  - `lib/firebase/firestore.ts`
+  - `.env.example`
+  - `docs/firebase-setup.md`
+  - security rules draft docs.
+- **Expected output**:
+  - Firebase client initialized.
+  - Firestore access helpers and typed mapping patterns.
+- **Acceptance criteria**:
+  - App builds with/without Firebase envs where appropriate.
+  - No direct Firebase calls inside page components.
+- **Regression risks**:
+  - Env misconfiguration.
+  - Tight coupling of SDK code into UI.
+
+### Phase 3A foundation notes (this pass)
+- Added `.env.example` Firebase client env keys.
+- Added `lib/firebase/client.ts` safe config reader utilities.
+- Added `lib/firebase/firestore.ts` path helpers.
+- Kept app behavior unchanged and did not migrate modules to Firebase.
+- Firebase npm package installation is pending due registry restriction in this execution environment.
+
+### Phase 3B (next)
+- Implement Firebase-backed Products service only.
+- Add safe data-source switch/feature flag (mock vs firebase).
+- Keep all other modules on mock services.
+- No full app migration and no `/orders` data-source changes in this phase.
+
+## Phase 4 — Incremental Module Connection to Firestore
+
+Connection order:
+1. Products
+2. Customers
+3. Suppliers
+4. Orders
+5. Dashboard
+
+- **Goal**: Reduce risk by enabling one module at a time.
+- **Likely files**:
+  - `services/*Service.ts`
+  - `hooks/use*.ts`
+  - module pages for data source switch.
+- **Expected output**:
+  - Hybrid app where completed modules use Firestore data.
+- **Acceptance criteria**:
+  - Feature parity maintained per migrated module.
+  - Clear fallback/error states for network failure.
+- **Regression risks**:
+  - Order booking data schema mismatch during migration.
+  - Inconsistent IDs between mock and firestore documents.
+
+## Phase 5 — Production Hardening
+
+- **Goal**: Stability, correctness, and deploy readiness.
+- **Likely files**:
+  - validation utilities
+  - security rules/tests
+  - seed/migration scripts docs
+  - QA checklists.
+- **Expected output**:
+  - Robust validation and permission model.
+  - Verified user flows under load/error/offline conditions.
+- **Acceptance criteria**:
+  - lint/build pass
+  - UAT sign-off
+  - documented rollback plan
+- **Regression risks**:
+  - Rules too strict/too permissive.
+  - Derived counters (totals, outstanding) drifting without transactional safeguards.
+
+---
+
+## What Not to Touch Yet
+
+- Do not redesign Order Booking UX.
+- Do not remove mock/static datasets before service abstraction is in place.
+- Do not add a custom backend/API layer.
+- Do not embed Firebase SDK calls directly in page components.
+
+## Test Checklist (Per Phase)
+
+- `npm run lint`
+- `npm run build`
+- Manual navigation across all routes.
+- Manual save/edit/cancel checks for Order Booking.
+- Calculation verification for line totals and order totals.
+- Responsive sanity check (mobile/tablet/desktop widths).
