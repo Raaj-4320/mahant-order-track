@@ -194,3 +194,9 @@ Connection order:
 - Manual save/edit/cancel checks for Order Booking.
 - Calculation verification for line totals and order totals.
 - Responsive sanity check (mobile/tablet/desktop widths).
+
+
+### Phase 3B status update (May 12, 2026)
+- Prerequisite install attempt in Codex environment is still blocked (`npm install firebase` -> `E403 Forbidden`).
+- Per migration safety rule, no Products Firebase service code was merged from this environment run.
+- Proceed with Phase 3B implementation only after Firebase SDK can be installed and lockfile/node_modules are consistent.

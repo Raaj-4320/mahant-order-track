@@ -54,3 +54,8 @@ Copy `.env.example` to `.env.local` and fill values:
 - mapping scaffolds
 - docs
 - no module migration yet
+
+
+## Phase 3B environment note
+- On **May 12, 2026**, `npm install firebase` in the Codex execution environment failed with `E403 Forbidden` from `https://registry.npmjs.org/firebase`.
+- Until SDK install succeeds in the execution environment, Products Firebase service migration should not be applied there.
