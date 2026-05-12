@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "TradeFlow (Next.js dev)",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "D:/mahant-order-track", "run", "dev"],
+      "port": 3000
+    }
+  ]
+}
