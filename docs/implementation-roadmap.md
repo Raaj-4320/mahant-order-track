@@ -135,6 +135,19 @@
 - Keep all other modules on mock services.
 - No full app migration and no `/orders` data-source changes in this phase.
 
+### Phase 3C (next)
+- Add Cloudinary unsigned-upload foundation (client-only helper layer).
+- Keep Product UI CRUD changes out of scope in this phase.
+- Keep `/orders` upload behavior unchanged until explicit migration phase.
+- No backend/API routes and no Cloudinary secret exposure.
+
+
+### Phase 3D delivery (completed in this pass)
+- Added Products Add/Edit modal flow.
+- Added Product upsert support in contract + mock + Firebase service + hook.
+- Added Cloudinary unsigned image upload usage in Products form save flow.
+- Kept `/orders` and other modules unchanged.
+
 ## Phase 4 — Incremental Module Connection to Firestore
 
 Connection order:
