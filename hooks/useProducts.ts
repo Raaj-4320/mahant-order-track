@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import type { Product } from "@/lib/types";
-import { productsMockService } from "@/services/mock/productsMockService";
+import { getProductsService } from "@/services/productsService";
 
 export function useProducts() {
   const [data, setData] = useState<Product[]>([]);
@@ -9,7 +9,7 @@ export function useProducts() {
   const [error, setError] = useState<string | null>(null);
   const reload = useCallback(async () => {
     setIsLoading(true); setError(null);
-    try { setData(await productsMockService.listProducts()); }
+    try { setData(await getProductsService().listProducts()); }
     catch (e) { setError(e instanceof Error ? e.message : "Failed to load products"); }
     finally { setIsLoading(false); }
   }, []);
