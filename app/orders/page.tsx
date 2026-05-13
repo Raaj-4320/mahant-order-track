@@ -8,6 +8,7 @@ import { OrderFooter } from "@/components/orders/OrderFooter";
 import { suppliers, customers, formatCNY, formatDate } from "@/lib/data";
 import { Order, orderTotal } from "@/lib/types";
 import { cn } from "@/lib/cn";
+import { syncOrderLinesToProducts } from "@/services/productCatalogSync";
 
 type View = "list" | "grid" | "calendar";
 
@@ -15,6 +16,7 @@ export default function OrdersPage() {
   const { orders, selectedOrderId, selectOrder, upsertOrder, pushToast } = useStore();
   const [query, setQuery] = useState("");
   const [view, setView] = useState<View>("list");
+  const [activeUploads, setActiveUploads] = useState(0);
 
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim();
@@ -43,16 +45,28 @@ export default function OrdersPage() {
 
   const total = useMemo(() => (draft ? orderTotal(draft) : 0), [draft]);
 
-  const onSave = (status: Order["status"]) => {
+  const onSave = async (status: Order["status"]) => {
+    if (activeUploads > 0) {
+      pushToast({ tone: "info", text: "Please wait for image uploads to finish before saving." });
+      return;
+    }
     if (!draft) return;
-    upsertOrder({ ...draft, status });
-    pushToast({
-      tone: "success",
-      text:
-        status === "draft"
-          ? `Draft ${draft.number} saved`
-          : `Order ${draft.number} saved · ${formatCNY(total)}`,
-    });
+    const savedOrder = { ...draft, status };
+    upsertOrder(savedOrder);
+    if (status === "saved") {
+      const result = await syncOrderLinesToProducts(savedOrder);
+      if (result.failed > 0) {
+        pushToast({ tone: "info", text: `Order ${draft.number} saved, but product sync failed for ${result.failed} line(s).` });
+      } else {
+        pushToast({ tone: "success", text: `Order ${draft.number} saved and products synced.` });
+      }
+      return;
+    }
+    pushToast({ tone: "success", text: `Draft ${draft.number} saved` });
+  };
+
+  const onUploadingChange = (isUploading: boolean) => {
+    setActiveUploads((prev) => Math.max(0, prev + (isUploading ? 1 : -1)));
   };
 
   const onCancel = () => {
@@ -73,7 +87,7 @@ export default function OrdersPage() {
       <main className="min-h-0 flex-1 overflow-y-auto animate-fadeSlide">
         {view === "list" && draft && (
           <div key={draft.id} className="animate-fadeSlide">
-            <OrderForm draft={draft} setDraft={(u) => setDraft((d) => (d ? u(d) : d))} />
+            <OrderForm draft={draft} setDraft={(u) => setDraft((d) => (d ? u(d) : d))} onUploadingChange={onUploadingChange} />
           </div>
         )}
 

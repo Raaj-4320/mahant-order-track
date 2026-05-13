@@ -26,9 +26,10 @@ export function newLine(): OrderLine {
 type Props = {
   draft: Order;
   setDraft: (updater: (d: Order) => Order) => void;
+  onUploadingChange?: (isUploading: boolean) => void;
 };
 
-export function OrderForm({ draft, setDraft }: Props) {
+export function OrderForm({ draft, setDraft, onUploadingChange }: Props) {
   const updateLine = (id: string, patch: Partial<OrderLine>) =>
     setDraft((d) => ({
       ...d,
@@ -125,6 +126,7 @@ export function OrderForm({ draft, setDraft }: Props) {
                   line={l}
                   onChange={(patch) => updateLine(l.id, patch)}
                   onRemove={() => removeLine(l.id)}
+                  onUploadingChange={onUploadingChange}
                 />
               ))}
               {draft.lines.length === 0 && (
