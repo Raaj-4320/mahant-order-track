@@ -11,6 +11,7 @@ export type DashboardStats = {
 export interface ProductsService {
   listProducts(): Promise<Product[]>;
   getProductById(id: string): Promise<Product | null>;
+  upsertProduct(product: Product): Promise<Product>;
 }
 export interface CustomersService {
   listCustomers(): Promise<Customer[]>;

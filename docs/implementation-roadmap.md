@@ -135,6 +135,43 @@
 - Keep all other modules on mock services.
 - No full app migration and no `/orders` data-source changes in this phase.
 
+### Phase 3C (next)
+- Add Cloudinary unsigned-upload foundation (client-only helper layer).
+- Keep Product UI CRUD changes out of scope in this phase.
+- Keep `/orders` upload behavior unchanged until explicit migration phase.
+- No backend/API routes and no Cloudinary secret exposure.
+
+
+### Phase 3D delivery (completed in this pass)
+- Added Products Add/Edit modal flow.
+- Added Product upsert support in contract + mock + Firebase service + hook.
+- Added Cloudinary unsigned image upload usage in Products form save flow.
+- Kept `/orders` and other modules unchanged.
+
+
+### Phase 3E delivery (completed in this pass)
+- Added Order Save -> Product catalog sync bridge from order lines.
+- Products now receive generated records from order activity.
+- `/orders` remains on in-memory store (no full Orders Firebase migration).
+
+
+### Phase 3F delivery (completed in this pass)
+- `/orders` line image uploads now store Cloudinary URLs instead of data URLs for new uploads.
+- Saved-order line -> product sync now receives URL images for generated products.
+- Orders remain not fully Firebase-migrated.
+
+
+### Phase 3G delivery (completed in this pass)
+- Added safe catalog merge key strategy for order-line generated products.
+- Reduced duplicate products across orders by deterministic catalog ID mapping.
+- Preserved fallback and idempotent repeated-save behavior.
+
+
+### Phase 3H delivery (completed in this pass)
+- Added tiny Products row source label (`Generated` / `Manual`) for source visibility.
+- New manual products are tagged as manual source.
+- No migration architecture changes in this phase.
+
 ## Phase 4 — Incremental Module Connection to Firestore
 
 Connection order:

@@ -11,13 +11,14 @@ type Props = {
   line: OrderLine;
   onChange: (patch: Partial<OrderLine>) => void;
   onRemove: () => void;
+  onUploadingChange?: (isUploading: boolean) => void;
 };
 
 // Columns: supplier | prod-pic | dim-pic | marka | details | ctns | pcs/ctn | total pcs | rmb/pcs | line total | customer | action
 export const LINE_GRID =
   "grid grid-cols-[minmax(0,0.6fr)_58px_58px_74px_minmax(0,1.05fr)_56px_76px_60px_60px_120px_minmax(0,0.5fr)_28px] items-center gap-1.5";
 
-export function OrderLineRow({ line, onChange, onRemove }: Props) {
+export function OrderLineRow({ line, onChange, onRemove, onUploadingChange }: Props) {
   const pcs = lineTotalPcs(line);
   const totalRmb = lineTotalRmb(line);
 
@@ -37,6 +38,7 @@ export function OrderLineRow({ line, onChange, onRemove }: Props) {
         ariaLabel="Upload product photo"
         value={line.productPhotoUrl}
         onChange={(url) => onChange({ productPhotoUrl: url })}
+        onUploadingChange={onUploadingChange}
       />
 
       <PhotoUpload
@@ -44,6 +46,7 @@ export function OrderLineRow({ line, onChange, onRemove }: Props) {
         ariaLabel="Upload weight/dimension photo"
         value={line.photoUrl}
         onChange={(url) => onChange({ photoUrl: url })}
+        onUploadingChange={onUploadingChange}
       />
 
       <Input
