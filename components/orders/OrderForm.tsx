@@ -26,17 +26,16 @@ export function newLine(): OrderLine {
 type Props = {
   draft: Order;
   setDraft: (updater: (d: Order) => Order) => void;
+  onUploadingChange?: (isUploading: boolean) => void;
+  onRemoveLine?: (lineId: string) => void;
 };
 
-export function OrderForm({ draft, setDraft }: Props) {
+export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine }: Props) {
   const updateLine = (id: string, patch: Partial<OrderLine>) =>
     setDraft((d) => ({
       ...d,
       lines: d.lines.map((l) => (l.id === id ? { ...l, ...patch } : l)),
     }));
-
-  const removeLine = (id: string) =>
-    setDraft((d) => ({ ...d, lines: d.lines.filter((l) => l.id !== id) }));
 
   const addLine = () =>
     setDraft((d) => ({ ...d, lines: [...d.lines, newLine()] }));
@@ -124,7 +123,10 @@ export function OrderForm({ draft, setDraft }: Props) {
                   key={l.id}
                   line={l}
                   onChange={(patch) => updateLine(l.id, patch)}
-                  onRemove={() => removeLine(l.id)}
+                  onRemove={() => {
+                    if (onRemoveLine) onRemoveLine(l.id);
+                  }}
+                  onUploadingChange={onUploadingChange}
                 />
               ))}
               {draft.lines.length === 0 && (

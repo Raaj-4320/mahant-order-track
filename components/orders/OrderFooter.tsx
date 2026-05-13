@@ -8,9 +8,10 @@ type Props = {
   onCancel: () => void;
   onSaveDraft: () => void;
   onSaveOrder: () => void;
+  saveOrderLabel?: string;
 };
 
-export function OrderFooter({ total, onCancel, onSaveDraft, onSaveOrder }: Props) {
+export function OrderFooter({ total, onCancel, onSaveDraft, onSaveOrder, saveOrderLabel = "Save Order" }: Props) {
   return (
     <footer className="sticky bottom-0 z-20 border-t border-border bg-bg-card/95 backdrop-blur px-5 py-3">
       <div className="flex flex-col-reverse items-stretch justify-between gap-3 sm:flex-row sm:items-center">
@@ -22,7 +23,7 @@ export function OrderFooter({ total, onCancel, onSaveDraft, onSaveOrder }: Props
             Save as Draft
           </Button>
           <Button size="sm" variant="primary" onClick={onSaveOrder}>
-            Save Order
+            {saveOrderLabel}
           </Button>
         </div>
         <div className="flex items-baseline gap-3 sm:flex-col sm:items-end sm:gap-0.5">
