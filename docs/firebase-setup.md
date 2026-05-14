@@ -54,3 +54,17 @@ Copy `.env.example` to `.env.local` and fill values:
 - mapping scaffolds
 - docs
 - no module migration yet
+
+
+## Cloudinary unsigned upload (Phase 3C foundation)
+- Frontend-only uploads use unsigned preset with public env vars only.
+- Required envs:
+  - `NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME`
+  - `NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET`
+- Do **not** expose `CLOUDINARY_API_SECRET` in frontend.
+- Do not add backend signing route in this architecture phase.
+
+## Products write testing notes (Phase 3D)
+- In Firebase mode (`NEXT_PUBLIC_PRODUCTS_DATA_SOURCE=firebase`), Products Add/Edit writes to Firestore under `businesses/{businessId}/products/{productId}`.
+- Cloudinary image uploads store returned image URL in `product.photo`.
+- Unsigned Cloudinary preset must be restricted in Cloudinary dashboard (folder/type/size constraints).

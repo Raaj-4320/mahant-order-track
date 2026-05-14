@@ -11,6 +11,8 @@ export type DashboardStats = {
 export interface ProductsService {
   listProducts(): Promise<Product[]>;
   getProductById(id: string): Promise<Product | null>;
+  upsertProduct(product: Product): Promise<Product>;
+  archiveProduct(id: string): Promise<void>;
 }
 export interface CustomersService {
   listCustomers(): Promise<Customer[]>;
@@ -23,6 +25,7 @@ export interface SuppliersService {
 export interface PaymentAgentsService {
   listPaymentAgents(): Promise<PaymentAgent[]>;
   getPaymentAgentById(id: string): Promise<PaymentAgent | null>;
+  upsertPaymentAgent(agent: PaymentAgent): Promise<PaymentAgent>;
 }
 export interface OrdersService {
   listOrders(): Promise<Order[]>;
