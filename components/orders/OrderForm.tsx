@@ -5,38 +5,38 @@ import { Field, Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { OrderLineRow, LINE_GRID } from "./OrderLineRow";
 import { Order, OrderLine } from "@/lib/types";
-import { customers, paymentAgents, products, suppliers } from "@/lib/data";
+import { paymentAgents } from "@/lib/data";
 
 export function newLine(): OrderLine {
-  const p = products[0];
   return {
     id: "ln-" + Math.random().toString(36).slice(2, 9),
-    supplierId: suppliers[0].id,
-    picDim: p.defaultDim ?? "",
-    productId: p.id,
-    marka: p.marka,
-    details: p.name,
-    totalCtns: 1,
-    pcsPerCtn: 50,
-    rmbPerPcs: 10,
-    customerId: customers[0].id,
+    supplierId: "",
+    picDim: "",
+    productId: "",
+    marka: "",
+    details: "",
+    totalCtns: 0,
+    pcsPerCtn: 0,
+    rmbPerPcs: 0,
+    customerId: "",
   };
 }
 
 type Props = {
   draft: Order;
   setDraft: (updater: (d: Order) => Order) => void;
+  onUploadingChange?: (isUploading: boolean) => void;
+  onRemoveLine?: (lineId: string) => void;
+  wechatSuggestions?: string[];
+  supplierSuggestions?: string[];
 };
 
-export function OrderForm({ draft, setDraft }: Props) {
+export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, wechatSuggestions = [], supplierSuggestions = [] }: Props) {
   const updateLine = (id: string, patch: Partial<OrderLine>) =>
     setDraft((d) => ({
       ...d,
       lines: d.lines.map((l) => (l.id === id ? { ...l, ...patch } : l)),
     }));
-
-  const removeLine = (id: string) =>
-    setDraft((d) => ({ ...d, lines: d.lines.filter((l) => l.id !== id) }));
 
   const addLine = () =>
     setDraft((d) => ({ ...d, lines: [...d.lines, newLine()] }));
@@ -80,13 +80,10 @@ export function OrderForm({ draft, setDraft }: Props) {
           </Field>
 
           <Field label="WeChat ID">
-            <Input
-              value={draft.wechatId}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, wechatId: e.target.value }))
-              }
-              placeholder="Enter WeChat ID"
-            />
+            <div className="relative">
+              <Input value={draft.wechatId} onChange={(e) => setDraft((d) => ({ ...d, wechatId: e.target.value }))} placeholder="Enter WeChat ID" list="wechat-suggestions" />
+              <datalist id="wechat-suggestions">{wechatSuggestions.map((w) => <option key={w} value={w} />)}</datalist>
+            </div>
           </Field>
         </div>
       </section>
@@ -124,7 +121,11 @@ export function OrderForm({ draft, setDraft }: Props) {
                   key={l.id}
                   line={l}
                   onChange={(patch) => updateLine(l.id, patch)}
-                  onRemove={() => removeLine(l.id)}
+                  supplierSuggestions={supplierSuggestions}
+                  onRemove={() => {
+                    if (onRemoveLine) onRemoveLine(l.id);
+                  }}
+                  onUploadingChange={onUploadingChange}
                 />
               ))}
               {draft.lines.length === 0 && (
