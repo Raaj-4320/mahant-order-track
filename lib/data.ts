@@ -27,9 +27,9 @@ export const products: Product[] = [
 ];
 
 export const paymentAgents: PaymentAgent[] = [
-  { id: "pa-1", agentCode: "AG-01", name: "Alipay Agent A", initials: "AA", phone: "+86-139-2000-0001", wechatId: "agent.alipay.a", country: "China", city: "Guangzhou", status: "active", totalOrdersPaid: 16, totalPaidAmount: 332000, createdAt: now, updatedAt: now },
-  { id: "pa-2", agentCode: "AG-02", name: "WeChat Pay Agent B", initials: "WB", phone: "+86-139-2000-0002", wechatId: "agent.wechat.b", country: "China", city: "Shenzhen", status: "active", totalOrdersPaid: 11, totalPaidAmount: 246800, createdAt: now, updatedAt: now },
-  { id: "pa-3", agentCode: "AG-03", name: "Bank Wire Agent C", initials: "BC", phone: "+86-139-2000-0003", wechatId: "agent.bank.c", country: "China", status: "active", totalOrdersPaid: 7, totalPaidAmount: 142300, createdAt: now, updatedAt: now },
+  { id: "pa-1", agentCode: "AG-01", name: "Alipay Agent A", initials: "AA", phone: "+86-139-2000-0001", wechatId: "agent.alipay.a", country: "China", city: "Guangzhou", status: "active", totalOrdersPaid: 16, totalPaidAmount: 332000, creditBalance: 0, currency: "CNY", createdAt: now, updatedAt: now },
+  { id: "pa-2", agentCode: "AG-02", name: "WeChat Pay Agent B", initials: "WB", phone: "+86-139-2000-0002", wechatId: "agent.wechat.b", country: "China", city: "Shenzhen", status: "active", totalOrdersPaid: 11, totalPaidAmount: 246800, creditBalance: 20000, currency: "CNY", createdAt: now, updatedAt: now },
+  { id: "pa-3", agentCode: "AG-03", name: "Bank Wire Agent C", initials: "BC", phone: "+86-139-2000-0003", wechatId: "agent.bank.c", country: "China", status: "active", totalOrdersPaid: 7, totalPaidAmount: 142300, creditBalance: 5000, currency: "CNY", createdAt: now, updatedAt: now },
   { id: "pa-4", agentCode: "AG-04", name: "Hawala Agent D", initials: "HD", phone: "+86-139-2000-0004", wechatId: "agent.hawala.d", country: "China", status: "inactive", totalOrdersPaid: 3, totalPaidAmount: 57100, createdAt: now, updatedAt: now },
 ];
 

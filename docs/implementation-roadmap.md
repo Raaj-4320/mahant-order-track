@@ -135,7 +135,97 @@
 - Keep all other modules on mock services.
 - No full app migration and no `/orders` data-source changes in this phase.
 
+### Phase 3C (next)
+- Add Cloudinary unsigned-upload foundation (client-only helper layer).
+- Keep Product UI CRUD changes out of scope in this phase.
+- Keep `/orders` upload behavior unchanged until explicit migration phase.
+- No backend/API routes and no Cloudinary secret exposure.
+
+
+### Phase 3D delivery (completed in this pass)
+- Added Products Add/Edit modal flow.
+- Added Product upsert support in contract + mock + Firebase service + hook.
+- Added Cloudinary unsigned image upload usage in Products form save flow.
+- Kept `/orders` and other modules unchanged.
+
+
+### Phase 3E delivery (completed in this pass)
+- Added Order Save -> Product catalog sync bridge from order lines.
+- Products now receive generated records from order activity.
+- `/orders` remains on in-memory store (no full Orders Firebase migration).
+
+
+### Phase 3F delivery (completed in this pass)
+- `/orders` line image uploads now store Cloudinary URLs instead of data URLs for new uploads.
+- Saved-order line -> product sync now receives URL images for generated products.
+- Orders remain not fully Firebase-migrated.
+
+
+### Phase 3G delivery (completed in this pass)
+- Added safe catalog merge key strategy for order-line generated products.
+- Reduced duplicate products across orders by deterministic catalog ID mapping.
+- Preserved fallback and idempotent repeated-save behavior.
+
+
+
+### Phase 3G merge removal note
+- Phase 3G cross-order catalog merge strategy was intentionally removed/disabled.
+- Product identity now uses order-line-level records: `order-line-{order.id}-{line.id}`.
+- Existing old merged records are retained for manual cleanup later.
+
+### Phase 3H delivery (completed in this pass)
+- Added tiny Products row source label (`Generated` / `Manual`) for source visibility.
+- New manual products are tagged as manual source.
+- No migration architecture changes in this phase.
+
+
+### Phase 3I delivery (completed in this pass)
+- Added clean new-order workspace default (no demo preloaded active order).
+- Added order history section below form with edit/delete actions.
+- Added save-reset behavior and safe product archive sync effects for edit/delete.
+- No full Orders Firebase migration yet.
+
+
+### Phase 3I.1 stabilization (completed in this pass)
+- Completed edit-mode line delete tracking with original vs new line distinction.
+- Ensured archive happens on save for removed saved lines only.
+- Removed dead/non-functional orders toolbar view control wiring.
+
+
+### Phase 3I.2 hardening (completed in this pass)
+- Moved edit-line confirmation to pre-remove path with cancel-safe behavior.
+- Added Save Changes footer cue in edit mode.
+- Preserved archive-on-save behavior for removed persisted lines only.
+
+### Phase 3I basic order-line fixes (completed in this pass)
+- New order lines now initialize as blank values (no demo prefill).
+- Products view now defaults to Active status so archived generated products are hidden by default.
+
 ## Phase 4 — Incremental Module Connection to Firestore
+
+### Phase 4A settlement preview (completed in this pass)
+- Added Payment Agent settlement preview UI in `/orders` footer area.
+- Added pure settlement calculation helper (credit-use/payable/new-credit/status).
+- Preview-only: no ledger persistence and no payment-agent balance mutation yet.
+
+### Phase 4A supplier/wechat flow (completed in this pass)
+- Added WeChat autocomplete in Orders header from saved order history.
+- Added supplier line typed-name autocomplete with `supplierName` support.
+- Reworked Suppliers page into WeChat and Unique Supplier derived views from saved orders.
+- No supplier finance behavior and no Firebase supplier persistence added.
+
+### Phase 4B payment-agent master/settlement UI (completed in this pass)
+- Added Payment Agent creation modal with opening credit.
+- Added payment-agent summary and read-only ledger preview on Payment Agents page.
+- Orders save stores settlement snapshot preview; no full ledger persistence yet.
+
+### Stabilization note
+- Fixed `/orders` Payment By dropdown to use hook/service-backed payment agents source (same as `/payment-agents`) instead of static data import.
+
+### Phase 4C payment-agent balance application (completed in this pass)
+- Applied payment-agent balance/totals recalculation from saved order settlement snapshots.
+- Added edit/delete-safe recalculation path after order save/delete flows.
+- Customer ledger remains out of scope.
 
 Connection order:
 1. Products
