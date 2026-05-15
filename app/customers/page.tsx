@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Download, Filter, Plus, Search, Users } from "lucide-react";
 import { useMemo, useState } from "react";
+import { isAnyFirebaseModeEnabled } from "@/lib/runtimeConfig";
 
 export default function CustomersPage() {
   const { orders, pushToast } = useStore();
@@ -23,6 +24,7 @@ export default function CustomersPage() {
   const [status, setStatus] = useState("all");
   const filtered = useMemo(() => base.filter((c) => [c.name, c.phone, c.wechatId, c.city].join(" ").toLowerCase().includes(q.toLowerCase().trim()) && (status === "all" || c.status === status)), [base, q, status]);
   const active = base.filter((c) => c.status === "active").length;
+  const firebaseMode = isAnyFirebaseModeEnabled();
   const placeholder = () => pushToast({ tone: "info", text: "This action will be connected in a later phase." });
 
   return (
@@ -66,7 +68,7 @@ export default function CustomersPage() {
                     <td className="px-4"><ActionIcons onPlaceholder={placeholder} /></td>
                   </tr>
                 ))}
-                {filtered.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-fg-subtle">No customers found.</td></tr>}
+                {filtered.length === 0 && <tr><td colSpan={8} className="px-4 py-8 text-center text-fg-subtle">{firebaseMode ? "No customers yet. Customer records will appear here when added." : "No customers found."}</td></tr>}
               </tbody>
             </table>
           </div>

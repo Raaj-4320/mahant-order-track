@@ -1,75 +1,44 @@
 "use client";
 
 import { PageShell } from "@/components/PageShell";
-import { formatCNY } from "@/lib/data";
+import { formatCNY, formatDate } from "@/lib/data";
 import { useStore } from "@/lib/store";
 import { useSuppliers } from "@/hooks/useSuppliers";
-import { getSupplierStats } from "@/services/selectors";
-import { ActionIcons } from "@/components/table/ActionIcons";
-import { StatusBadge } from "@/components/table/StatusBadge";
-import { TablePagination } from "@/components/table/TablePagination";
+import { getUniqueSupplierGroups, getWechatSupplierGroups } from "@/services/supplierSelectors";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
-import { Select } from "@/components/ui/Select";
-import { Building2, Download, Filter, Plus, Search } from "lucide-react";
-import { useMemo, useState } from "react";
 import { StatCard } from "@/components/StatCard";
+import { Search } from "lucide-react";
+import { useMemo, useState } from "react";
+import { useOrders } from "@/hooks/useOrders";
 
 export default function SuppliersPage() {
   const { orders, pushToast } = useStore();
+  const { data: remoteOrders, isLoading: ordersLoading } = useOrders();
   const { data: suppliers } = useSuppliers();
-  const rows = getSupplierStats(suppliers, orders).map((x) => ({ ...x.supplier, totalOrders: x.totalOrders, totalOrderAmount: x.totalOrderAmount }));
+  const ordersSource = process.env.NEXT_PUBLIC_ORDERS_DATA_SOURCE ?? "mock";
+  const isFirebaseOrdersMode = ordersSource === "firebase";
+  const [tab, setTab] = useState<"wechat" | "unique">("wechat");
   const [query, setQuery] = useState("");
-  const [status, setStatus] = useState("all");
-  const filtered = useMemo(() => rows.filter((r) => [r.name, r.contactPerson, r.city, r.country].join(" ").toLowerCase().includes(query.toLowerCase().trim()) && (status === "all" || r.status === status)), [rows, query, status]);
-  const active = rows.filter((r) => r.status === "active").length;
-  const placeholder = () => pushToast({ tone: "info", text: "This action will be connected in a later phase." });
-
-  return (
-    <PageShell title="Suppliers">
-      <div className="space-y-4 p-6">
-        <div className="flex items-center justify-between">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5 flex-1">
-            <StatCard label="Total Suppliers" value={rows.length.toString()} />
-            <StatCard label="Active Suppliers" value={active.toString()} />
-            <StatCard label="Inactive Suppliers" value={(rows.length - active).toString()} />
-            <StatCard label="Total Orders" value={rows.reduce((s, r) => s + r.totalOrders, 0).toString()} />
-            <StatCard label="Total Order Amount" value={formatCNY(rows.reduce((s, r) => s + r.totalOrderAmount, 0))} />
-          </div>
-          <Button onClick={placeholder} variant="primary" className="ml-3"><Plus size={14} />Add Supplier</Button>
-        </div>
-
-        <div className="card p-3 flex flex-wrap gap-2 items-center">
-          <div className="min-w-[280px] flex-1"><Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by supplier name, contact, city, country..." leadingIcon={<Search size={14} />} /></div>
-          <div className="w-[160px]"><Select value={status} onChange={(e) => setStatus(e.target.value)} options={[{ value: "all", label: "All Statuses" }, { value: "active", label: "Active" }, { value: "inactive", label: "Inactive" }]} /></div>
-          <div className="w-[160px]"><Select value="all" onChange={placeholder} options={[{ value: "all", label: "All Countries" }]} /></div>
-          <Button onClick={placeholder} size="sm" variant="secondary"><Filter size={14} />More Filters</Button>
-          <Button onClick={placeholder} size="sm" variant="secondary"><Download size={14} />Export</Button>
-        </div>
-
-        <div className="card overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[980px] text-[13px]">
-              <thead className="bg-bg-subtle"><tr className="text-left text-[11.5px] uppercase tracking-wide text-fg-subtle"><th className="px-4 py-2">Supplier</th><th>Contact Person</th><th>Location</th><th>Total Orders</th><th>Total Order Amount</th><th>Status</th><th className="text-right px-4">Actions</th></tr></thead>
-              <tbody>
-                {filtered.map((s) => (
-                  <tr key={s.id} className="border-t border-border">
-                    <td className="px-4 py-3"><div className="flex items-center gap-3"><div className="grid h-9 w-9 place-items-center rounded-lg border border-border bg-bg-subtle text-[12px] font-semibold">{s.logoInitials}</div><div><div className="font-semibold">{s.name}</div><div className="text-[11.5px] text-fg-subtle">{s.supplierCode}</div></div></div></td>
-                    <td><div>{s.contactPerson}</div><div className="text-[11.5px] text-fg-subtle">{s.phone}</div></td>
-                    <td><div>{s.country}</div><div className="text-[11.5px] text-fg-subtle">{s.city}</div></td>
-                    <td>{s.totalOrders}</td>
-                    <td className="font-semibold text-[var(--success)] tabular-nums">{formatCNY(s.totalOrderAmount)}</td>
-                    <td><StatusBadge status={s.status} /></td>
-                    <td className="px-4"><ActionIcons onPlaceholder={placeholder} /></td>
-                  </tr>
-                ))}
-                {filtered.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-fg-subtle">No suppliers found.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-          <TablePagination onPlaceholder={placeholder} total={filtered.length} />
-        </div>
-      </div>
-    </PageShell>
-  );
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const sourceOrders = useMemo(() => {
+    const base = isFirebaseOrdersMode ? remoteOrders : orders;
+    return base.filter((o) => o.status === "saved");
+  }, [isFirebaseOrdersMode, remoteOrders, orders]);
+  const wechatGroups = useMemo(() => getWechatSupplierGroups(sourceOrders, suppliers), [sourceOrders, suppliers]);
+  const uniqueGroups = useMemo(() => getUniqueSupplierGroups(sourceOrders, suppliers), [sourceOrders, suppliers]);
+  const filteredWechat = wechatGroups.filter((g) => [g.wechatId, ...g.orders.map((o: any) => o.orderNumber), ...g.orders.flatMap((o: any) => o.lines.map((l: any) => l.supplierName))].join(" ").toLowerCase().includes(query.toLowerCase().trim()));
+  const filteredUnique = uniqueGroups.filter((g) => [g.supplierName, ...g.entries.map((e: any) => `${e.wechatId} ${e.orderNumber}`)].join(" ").toLowerCase().includes(query.toLowerCase().trim()));
+  return <PageShell title="Suppliers"><div className="space-y-4 p-6">
+    <div className="flex gap-2"><Button variant={tab==="wechat"?"primary":"secondary"} size="sm" onClick={()=>setTab("wechat")}>WeChat IDs</Button><Button variant={tab==="unique"?"primary":"secondary"} size="sm" onClick={()=>setTab("unique")}>Unique Suppliers</Button></div>
+    <div className="min-w-[280px]"><Input value={query} onChange={(e)=>setQuery(e.target.value)} placeholder={tab==="wechat"?"Search by wechat, order, supplier...":"Search by supplier, wechat, order..."} leadingIcon={<Search size={14} />} /></div>
+    {isFirebaseOrdersMode && ordersLoading ? <div className="card p-4 text-sm text-fg-subtle">Loading supplier activity from Firestore orders…</div> : sourceOrders.length === 0 ? <div className="card p-4 text-sm text-fg-subtle">No supplier activity yet. Save orders with WeChat ID and supplier names to see data here.</div> : tab==="wechat" ? <>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4"><StatCard label="Total WeChat IDs" value={filteredWechat.length.toString()} /><StatCard label="Total Orders" value={filteredWechat.reduce((s,g)=>s+g.totalOrders,0).toString()} /><StatCard label="Total Supplier Entries" value={filteredWechat.reduce((s,g)=>s+g.totalSuppliers,0).toString()} /><StatCard label="Total Amount" value={formatCNY(filteredWechat.reduce((s,g)=>s+g.totalAmount,0))} /></div>
+      <div className="card overflow-hidden"><table className="w-full text-[13px]"><thead className="bg-bg-subtle"><tr><th className="px-3 py-2 text-left">WeChat ID</th><th className="text-left">Orders</th><th className="text-left">Suppliers</th><th className="text-left">Amount</th><th className="text-left">Last Date</th><th /></tr></thead><tbody>{filteredWechat.map((g)=><><tr key={g.wechatId} className="border-t border-border"><td className="px-3 py-2 font-semibold">{g.wechatId}</td><td>{g.totalOrders}</td><td>{g.totalSuppliers}</td><td>{formatCNY(g.totalAmount)}</td><td>{g.lastOrderDate?formatDate(g.lastOrderDate):"—"}</td><td><Button size="sm" variant="secondary" onClick={()=>setExpanded(expanded===g.wechatId?null:g.wechatId)}>View Details</Button></td></tr>{expanded===g.wechatId && <tr><td colSpan={6} className="px-3 py-2 bg-bg-subtle">{g.orders.map((o:any)=><div key={o.orderId} className="mb-2"><div className="text-[12px] font-medium">{o.orderNumber} · {formatDate(o.date)}</div>{o.lines.map((l:any)=><div key={l.lineId} className="text-[12px] text-fg-subtle">{l.supplierName} · {formatCNY(l.amount)} · {l.marka || l.details || "—"}</div>)}</div>)}</td></tr>}</>)}</tbody></table></div>
+    </> : <>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4"><StatCard label="Total Unique Suppliers" value={filteredUnique.length.toString()} /><StatCard label="Total Orders" value={filteredUnique.reduce((s,g)=>s+g.totalOrders,0).toString()} /><StatCard label="Total WeChat IDs" value={filteredUnique.reduce((s,g)=>s+g.totalWechatIds,0).toString()} /><StatCard label="Total Amount" value={formatCNY(filteredUnique.reduce((s,g)=>s+g.totalAmount,0))} /></div>
+      <div className="card overflow-hidden"><table className="w-full text-[13px]"><thead className="bg-bg-subtle"><tr><th className="px-3 py-2 text-left">Supplier</th><th className="text-left">Orders</th><th className="text-left">WeChat IDs</th><th className="text-left">Amount</th><th className="text-left">Last Date</th><th /></tr></thead><tbody>{filteredUnique.map((g)=><><tr key={g.supplierKey} className="border-t border-border"><td className="px-3 py-2 font-semibold">{g.supplierName}</td><td>{g.totalOrders}</td><td>{g.totalWechatIds}</td><td>{formatCNY(g.totalAmount)}</td><td>{g.lastOrderDate?formatDate(g.lastOrderDate):"—"}</td><td><Button size="sm" variant="secondary" onClick={()=>setExpanded(expanded===g.supplierKey?null:g.supplierKey)}>View Details</Button></td></tr>{expanded===g.supplierKey && <tr><td colSpan={6} className="px-3 py-2 bg-bg-subtle">{g.entries.map((e:any)=><div key={e.lineId} className="text-[12px] text-fg-subtle">{e.orderNumber} · {e.wechatId || "—"} · {formatDate(e.date)} · {formatCNY(e.amount)} · {e.marka || e.details || "—"}</div>)}</td></tr>}</>)}</tbody></table></div>
+    </>}
+    <Button size="sm" variant="secondary" onClick={()=>pushToast({tone:"info",text:"Manual supplier creation is not required in this flow."})}>Add Supplier</Button>
+  </div></PageShell>;
 }

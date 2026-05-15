@@ -1,10 +1,7 @@
-/**
- * Phase 3A foundation wrapper.
- *
- * NOTE: Firebase SDK installation is environment-dependent.
- * This file intentionally provides safe getters that return `null`
- * when env config is missing or SDK is not yet available.
- */
+import { getApp, getApps, initializeApp, type FirebaseApp } from "firebase/app";
+import { getAuth, type Auth } from "firebase/auth";
+import { getFirestore, type Firestore } from "firebase/firestore";
+import { getStorage, type FirebaseStorage } from "firebase/storage";
 
 export type FirebaseClientConfig = {
   apiKey: string;
@@ -24,18 +21,32 @@ export const getFirebaseClientConfig = (): FirebaseClientConfig | null => {
   const messagingSenderId = process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID;
   const appId = process.env.NEXT_PUBLIC_FIREBASE_APP_ID;
   const measurementId = process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID;
-
-  if (!apiKey || !authDomain || !projectId || !storageBucket || !messagingSenderId || !appId) {
-    return null;
-  }
-
+  if (!apiKey || !authDomain || !projectId || !storageBucket || !messagingSenderId || !appId) return null;
   return { apiKey, authDomain, projectId, storageBucket, messagingSenderId, appId, measurementId };
 };
 
 export const isFirebaseConfigured = () => getFirebaseClientConfig() !== null;
 
-// SDK-backed getters are intentionally null in this environment until SDK install is available.
-export const getFirebaseApp = () => null;
-export const getFirestoreDb = () => null;
-export const getFirebaseAuth = () => null;
-export const getFirebaseStorage = () => null;
+export const getFirebaseApp = (): FirebaseApp | null => {
+  const config = getFirebaseClientConfig();
+  if (!config) return null;
+  return getApps().length ? getApp() : initializeApp(config);
+};
+
+export const getFirestoreDb = (): Firestore | null => {
+  const app = getFirebaseApp();
+  if (!app) return null;
+  return getFirestore(app);
+};
+
+export const getFirebaseAuth = (): Auth | null => {
+  const app = getFirebaseApp();
+  if (!app) return null;
+  return getAuth(app);
+};
+
+export const getFirebaseStorage = (): FirebaseStorage | null => {
+  const app = getFirebaseApp();
+  if (!app) return null;
+  return getStorage(app);
+};

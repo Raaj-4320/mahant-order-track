@@ -11,13 +11,15 @@ type Props = {
   line: OrderLine;
   onChange: (patch: Partial<OrderLine>) => void;
   onRemove: () => void;
+  onUploadingChange?: (isUploading: boolean) => void;
+  supplierSuggestions?: string[];
 };
 
 // Columns: supplier | prod-pic | dim-pic | marka | details | ctns | pcs/ctn | total pcs | rmb/pcs | line total | customer | action
 export const LINE_GRID =
   "grid grid-cols-[minmax(0,0.6fr)_58px_58px_74px_minmax(0,1.05fr)_56px_76px_60px_60px_120px_minmax(0,0.5fr)_28px] items-center gap-1.5";
 
-export function OrderLineRow({ line, onChange, onRemove }: Props) {
+export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, supplierSuggestions = [] }: Props) {
   const pcs = lineTotalPcs(line);
   const totalRmb = lineTotalRmb(line);
 
@@ -25,18 +27,15 @@ export function OrderLineRow({ line, onChange, onRemove }: Props) {
     <div
       className={`${LINE_GRID} px-2 py-2 text-[13.75px] hover:bg-bg-subtle/60 transition-colors rounded-lg`}
     >
-      <Select
-        compact
-        value={line.supplierId}
-        onChange={(e) => onChange({ supplierId: e.target.value })}
-        options={suppliers.map((s) => ({ value: s.id, label: s.name }))}
-      />
+      <Input compact value={line.supplierName ?? suppliers.find((s) => s.id === line.supplierId)?.name ?? ""} onChange={(e) => onChange({ supplierName: e.target.value, supplierId: suppliers.find((s) => s.name.toLowerCase() === e.target.value.trim().toLowerCase())?.id ?? "" })} placeholder="Supplier name" list={`supplier-list-${line.id}`} />
+      <datalist id={`supplier-list-${line.id}`}>{supplierSuggestions.map((name) => <option key={name} value={name} />)}</datalist>
 
       <PhotoUpload
         compact
         ariaLabel="Upload product photo"
         value={line.productPhotoUrl}
         onChange={(url) => onChange({ productPhotoUrl: url })}
+        onUploadingChange={onUploadingChange}
       />
 
       <PhotoUpload
@@ -44,6 +43,7 @@ export function OrderLineRow({ line, onChange, onRemove }: Props) {
         ariaLabel="Upload weight/dimension photo"
         value={line.photoUrl}
         onChange={(url) => onChange({ photoUrl: url })}
+        onUploadingChange={onUploadingChange}
       />
 
       <Input
@@ -105,7 +105,7 @@ export function OrderLineRow({ line, onChange, onRemove }: Props) {
         compact
         value={line.customerId}
         onChange={(e) => onChange({ customerId: e.target.value })}
-        options={customers.map((c) => ({ value: c.id, label: c.name }))}
+        options={[{ value: "", label: "Select Customer" }, ...customers.map((c) => ({ value: c.id, label: c.name }))]}
       />
 
       <button

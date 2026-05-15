@@ -7,6 +7,7 @@ import { formatCNY, formatDate } from "@/lib/data";
 import { useCustomers } from "@/hooks/useCustomers";
 import { useSuppliers } from "@/hooks/useSuppliers";
 import { usePaymentAgents } from "@/hooks/usePaymentAgents";
+import { useOrders } from "@/hooks/useOrders";
 import { getDashboardRows, getDashboardStats } from "@/services/selectors";
 import { ActionIcons } from "@/components/table/ActionIcons";
 import { StatusBadge } from "@/components/table/StatusBadge";
@@ -15,17 +16,33 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { CalendarDays, ClipboardList, Download, Filter, Package, Search, TrendingUp } from "lucide-react";
 import { useMemo, useState } from "react";
+import { isDevResetEnabled, runDevReset } from "@/services/devResetService";
 
 export default function DashboardPage() {
   const { orders, pushToast } = useStore();
+  const { data: remoteOrders, isLoading: ordersLoading } = useOrders();
   const { data: customers } = useCustomers();
   const { data: suppliers } = useSuppliers();
   const { data: paymentAgents } = usePaymentAgents();
-  const stats = getDashboardStats(orders);
-  const rows = getDashboardRows(orders, suppliers, customers, paymentAgents);
+  const ordersSource = process.env.NEXT_PUBLIC_ORDERS_DATA_SOURCE ?? "mock";
+  const isFirebaseOrdersMode = ordersSource === "firebase";
+  const sourceOrders = useMemo(() => {
+    const base = isFirebaseOrdersMode ? remoteOrders : orders;
+    return base.filter((o) => o.status !== "archived");
+  }, [isFirebaseOrdersMode, remoteOrders, orders]);
+  const stats = getDashboardStats(sourceOrders);
+  const rows = getDashboardRows(sourceOrders, suppliers, customers, paymentAgents);
   const [query, setQuery] = useState("");
+  const [showReset, setShowReset] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
+  const [includeSettings, setIncludeSettings] = useState(false);
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetResult, setResetResult] = useState<null | { orders: number; products: number; paymentAgents: number; paymentAgentLedger: number; customers: number; settings?: number }>(null);
+  const [resetError, setResetError] = useState<string | null>(null);
   const filtered = useMemo(() => rows.filter((r) => [r.orderNumber, r.customerSummary, r.supplierSummary].join(" ").toLowerCase().includes(query.toLowerCase().trim())), [rows, query]);
   const placeholder = () => pushToast({ tone: "info", text: "This action will be connected in a later phase." });
+  const canConfirmReset = confirmText === "DELETE EVERYTHING";
+  const businessId = process.env.NEXT_PUBLIC_FIREBASE_BUSINESS_ID ?? "mahant";
 
   return (
     <PageShell title="Dashboard">
@@ -37,6 +54,7 @@ export default function DashboardPage() {
           <StatCard label="Pending Payments" value={stats.pendingPayments.toString()} icon={<Package size={16} />} />
           <StatCard label="Delayed Shipments" value={stats.delayedShipments.toString()} icon={<Filter size={16} />} />
         </div>
+        {isFirebaseOrdersMode && ordersLoading ? <div className="card p-4 text-sm text-fg-subtle">Loading dashboard orders from Firestore…</div> : null}
 
         <div className="card p-3 flex flex-wrap gap-2 items-center">
           <div className="min-w-[260px] flex-1"><Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by order no., customer, supplier..." leadingIcon={<Search size={14} />} /></div>
@@ -71,6 +89,39 @@ export default function DashboardPage() {
           </div>
           <TablePagination onPlaceholder={placeholder} total={filtered.length} />
         </div>
+        {isDevResetEnabled() ? <div className="card p-4 border border-red-500/40">
+          <div className="text-sm font-semibold text-red-300 mb-2">Developer Tools</div>
+          <div className="text-xs text-fg-subtle mb-3">Danger zone. This is for development/testing only.</div>
+          <Button variant="secondary" className="border-red-400 text-red-300" onClick={() => { setShowReset(true); setResetResult(null); setResetError(null); }}>Delete Everything</Button>
+          {showReset ? <div className="mt-4 rounded border border-red-500/40 p-3 space-y-3">
+            <div className="text-xs text-fg-subtle">This deletes Firestore records under <span className="font-semibold">businesses/{businessId}</span> only. Requires Firestore rules allowing delete for signed-in owner/admin members.</div>
+            <ul className="text-xs list-disc pl-5 text-fg-subtle">
+              <li>orders</li><li>products</li><li>paymentAgents</li><li>paymentAgentLedger</li><li>customers</li>
+            </ul>
+            <label className="text-xs flex items-center gap-2"><input type="checkbox" checked={includeSettings} onChange={(e) => setIncludeSettings(e.target.checked)} /> Also delete settings</label>
+            <Input value={confirmText} onChange={(e) => setConfirmText(e.target.value)} placeholder='Type "DELETE EVERYTHING" to confirm' />
+            <div className="flex gap-2">
+              <Button variant="secondary" onClick={() => setShowReset(false)}>Cancel</Button>
+              <Button variant="primary" disabled={!canConfirmReset || resetBusy} onClick={async () => {
+                setResetBusy(true); setResetError(null); setResetResult(null);
+                try { const res = await runDevReset({ includeSettings }); setResetResult(res); }
+                catch (e) { setResetError(e instanceof Error ? e.message : "Delete failed."); }
+                finally { setResetBusy(false); }
+              }}>{resetBusy ? "Deleting..." : "Confirm Delete Everything"}</Button>
+            </div>
+            {resetError ? <div className="text-xs text-red-300">{resetError}</div> : null}
+            {resetResult ? <div className="text-xs text-fg-subtle space-y-1">
+              <div>Delete complete. Refresh the app to see clean state.</div>
+              <div>orders: {resetResult.orders}</div>
+              <div>products: {resetResult.products}</div>
+              <div>paymentAgents: {resetResult.paymentAgents}</div>
+              <div>paymentAgentLedger: {resetResult.paymentAgentLedger}</div>
+              <div>customers: {resetResult.customers}</div>
+              {typeof resetResult.settings === "number" ? <div>settings: {resetResult.settings}</div> : null}
+              <Button size="sm" variant="secondary" onClick={() => window.location.reload()}>Reload App</Button>
+            </div> : null}
+          </div> : null}
+        </div> : null}
       </div>
     </PageShell>
   );
