@@ -14,5 +14,8 @@ export const ordersMockService: OrdersService = {
     else mockOrders.unshift(deepClone(order));
     return deepClone(order);
   },
+  async archiveOrder(id) { mockOrders = mockOrders.map((x) => x.id === id ? { ...x, status: "archived", updatedAt: new Date().toISOString() } : x); },
   async deleteOrder(id) { mockOrders = mockOrders.filter((x) => x.id !== id); },
+  async listDraftOrders() { return deepClone(mockOrders.filter((x) => x.status === "draft")); },
+  async autosaveDraft(order) { return this.upsertOrder({ ...order, status: "draft", draftAutosavedAt: new Date().toISOString() } as any); },
 };
