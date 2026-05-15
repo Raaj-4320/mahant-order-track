@@ -14,3 +14,6 @@ export const paymentAgentPath = (businessId: string, agentId: string) => `${paym
 
 export const ordersPath = (businessId: string) => `${businessPath(businessId)}/orders`;
 export const orderPath = (businessId: string, orderId: string) => `${ordersPath(businessId)}/${orderId}`;
+
+export const paymentAgentLedgerPath = (businessId: string) => `${businessPath(businessId)}/paymentAgentLedger`;
+export const paymentAgentLedgerEntryPath = (businessId: string, entryId: string) => `${paymentAgentLedgerPath(businessId)}/${entryId}`;
