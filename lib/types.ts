@@ -8,6 +8,8 @@ export type {
   Customer,
   Product,
   PaymentAgent,
+  PaymentAgentLedgerEntry,
+  CustomerLedgerEntry,
   OrderLine,
   Order,
   DashboardOrderRow,

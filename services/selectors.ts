@@ -7,17 +7,18 @@ const uniqNames = (ids: string[], rows: { id: string; name: string }[]) =>
 
 export function getDashboardStats(orders: Order[]): DashboardStats {
   const today = new Date().toISOString().slice(0, 10);
+  const savedOrders = orders.filter((o) => o.status === "saved");
   return {
-    totalOrders: orders.length,
-    totalOrderAmount: orders.reduce((s, o) => s + orderTotal(o), 0),
-    ordersLoadingToday: orders.filter((o) => o.loadingDate === today).length,
-    pendingPayments: orders.filter((o) => o.paymentStatus === "pending" || o.paymentStatus === "partial").length,
-    delayedShipments: orders.filter((o) => o.status === "delayed").length,
+    totalOrders: savedOrders.length,
+    totalOrderAmount: savedOrders.reduce((s, o) => s + orderTotal(o), 0),
+    ordersLoadingToday: savedOrders.filter((o) => o.loadingDate === today).length,
+    pendingPayments: savedOrders.filter((o) => o.paymentStatus === "pending" || o.paymentStatus === "partial").length,
+    delayedShipments: savedOrders.filter((o) => o.status === "delayed").length,
   };
 }
 
 export function getDashboardRows(orders: Order[], suppliers: Supplier[], customers: Customer[], paymentAgents: PaymentAgent[]): DashboardOrderRow[] {
-  return orders.map((o) => ({
+  return orders.filter((o) => o.status === "saved").map((o) => ({
     id: o.id,
     orderNumber: o.orderNumber || o.number,
     supplierSummary: uniqNames(o.lines.map((l) => l.supplierId), suppliers).join(", ") || "—",

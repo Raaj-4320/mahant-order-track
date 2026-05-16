@@ -2,8 +2,9 @@ import { initialOrders } from "@/lib/data";
 import type { OrdersService } from "@/services/contracts";
 import type { Order } from "@/lib/types";
 import { deepClone } from "./utils";
+import { isDemoDataEnabled } from "@/lib/runtimeConfig";
 
-let mockOrders: Order[] = deepClone(initialOrders);
+let mockOrders: Order[] = deepClone(isDemoDataEnabled() ? initialOrders : []);
 
 export const ordersMockService: OrdersService = {
   async listOrders() { return deepClone(mockOrders); },
@@ -14,5 +15,8 @@ export const ordersMockService: OrdersService = {
     else mockOrders.unshift(deepClone(order));
     return deepClone(order);
   },
+  async archiveOrder(id) { mockOrders = mockOrders.map((x) => x.id === id ? { ...x, status: "archived", updatedAt: new Date().toISOString() } : x); },
   async deleteOrder(id) { mockOrders = mockOrders.filter((x) => x.id !== id); },
+  async listDraftOrders() { return deepClone(mockOrders.filter((x) => x.status === "draft")); },
+  async autosaveDraft(order) { return this.upsertOrder({ ...order, status: "draft", draftAutosavedAt: new Date().toISOString() } as any); },
 };
