@@ -16,6 +16,23 @@ export const customerLedgerService = {
     const { customerLedgerFirebaseService } = await import("@/services/firebase/customerLedgerFirebaseService");
     try { await customerLedgerFirebaseService.applyOrderCustomerReceivables(order); logLedger("apply_order_customer_receivables_success", { orderId: order.id }); } catch (e) { logError("apply_order_customer_receivables_failure", { orderId: order.id, error: e instanceof Error ? e.message : String(e) }); throw e; }
   },
+
+  async recalculateCustomerFromLedger(customerId: string) {
+    if (SOURCE !== "firebase" || !isFirebaseConfigured()) throw new Error("Reconciliation is available only in Firebase mode.");
+    const { customerLedgerFirebaseService } = await import("@/services/firebase/customerLedgerFirebaseService");
+    return customerLedgerFirebaseService.recalculateCustomerFromLedger(customerId);
+  },
+  async recalculateAllCustomersFromLedger() {
+    if (SOURCE !== "firebase" || !isFirebaseConfigured()) throw new Error("Reconciliation is available only in Firebase mode.");
+    const { customerLedgerFirebaseService } = await import("@/services/firebase/customerLedgerFirebaseService");
+    return customerLedgerFirebaseService.recalculateAllCustomersFromLedger();
+  },
+
+  async repairCustomerLedgerFromSavedOrders() {
+    if (SOURCE !== "firebase" || !isFirebaseConfigured()) throw new Error("Repair is available only in Firebase mode.");
+    const { customerLedgerFirebaseService } = await import("@/services/firebase/customerLedgerFirebaseService");
+    return customerLedgerFirebaseService.repairCustomerLedgerFromSavedOrders();
+  },
   async reverseOrderCustomerReceivables(order: Order): Promise<void> {
     if (SOURCE !== "firebase" || !isFirebaseConfigured()) return;
     const { customerLedgerFirebaseService } = await import("@/services/firebase/customerLedgerFirebaseService");

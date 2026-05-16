@@ -1,6 +1,6 @@
 import { collection, doc, getDoc, getDocs, setDoc } from "firebase/firestore";
 import { getFirestoreDb } from "@/lib/firebase/client";
-import { productFromFirestore, productToFirestore } from "@/lib/firebase/mappers";
+import { productFromFirestore, productToFirestore, sanitizeFirestorePayload } from "@/lib/firebase/mappers";
 import { productPath, productsPath } from "@/lib/firebase/paths";
 import type { Product } from "@/lib/types";
 import type { ProductsService } from "@/services/contracts";
@@ -65,7 +65,16 @@ export const productsFirebaseService: ProductsService = {
     const db = requireDb();
     const existing = product.id ? await this.getProductById(product.id) : null;
     const normalized = normalizeProduct(product, existing);
-    await setDoc(doc(db, productPath(BUSINESS_ID, normalized.id)), productToFirestore(normalized), { merge: true });
+    const mapped = productToFirestore(normalized);
+    const { value: sanitized, removedUndefinedPaths } = sanitizeFirestorePayload(mapped, {
+      keepNullPaths: [
+        "purchasePrice", "sellingPrice", "defaultRmbPerPcs", "stockQty", "lowStockLimit", "defaultDim",
+        "supplierId", "source", "sourceOrderId", "sourceOrderNumber", "sourceLineId", "sourceOrderIds",
+        "sourceLineIds", "catalogKey", "generatedFromOrderLines", "lastSeenAt", "lastLineTotalPcs"
+      ]
+    });
+    if (removedUndefinedPaths.length) logDB("product_payload_sanitized", { productId: normalized.id, removedUndefinedPaths });
+    await setDoc(doc(db, productPath(BUSINESS_ID, normalized.id)), sanitized, { merge: true });
     return normalized;
   },
 };
