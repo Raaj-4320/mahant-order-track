@@ -11,6 +11,46 @@ const asNum = (v: unknown): number | undefined => {
 const asStr = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
 const asStatus = (v: unknown): "active" | "inactive" => (v === "inactive" ? "inactive" : "active");
 
+
+type SanitizeOptions = { keepNullPaths?: string[] };
+
+const shouldKeepNullAtPath = (path: string, options?: SanitizeOptions): boolean => {
+  if (!options?.keepNullPaths?.length) return false;
+  return options.keepNullPaths.includes(path);
+};
+
+export const sanitizeFirestorePayload = <T>(input: T, options?: SanitizeOptions): { value: T; removedUndefinedPaths: string[] } => {
+  const removedUndefinedPaths: string[] = [];
+
+  const walk = (value: unknown, path: string): unknown => {
+    if (value === undefined) {
+      removedUndefinedPaths.push(path || "<root>");
+      return undefined;
+    }
+    if (Array.isArray(value)) {
+      const out: unknown[] = [];
+      for (let i = 0; i < value.length; i++) {
+        const next = walk(value[i], `${path}[${i}]`);
+        if (next !== undefined) out.push(next);
+      }
+      return out;
+    }
+    if (value && typeof value === "object") {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+        const childPath = path ? `${path}.${k}` : k;
+        const next = walk(v, childPath);
+        if (next !== undefined) out[k] = next;
+      }
+      return out;
+    }
+    if (value === null && path && !shouldKeepNullAtPath(path, options)) return "";
+    return value;
+  };
+
+  return { value: walk(input, "") as T, removedUndefinedPaths };
+};
+
 export const productFromFirestore = (doc: unknown): Product => {
   const p = (doc ?? {}) as Record<string, unknown>;
   const now = new Date().toISOString();
