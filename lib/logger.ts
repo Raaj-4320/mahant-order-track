@@ -21,10 +21,21 @@ function sanitizeValue(value: unknown): unknown {
   return value;
 }
 
+const LOG_DEDUPE_WINDOW_MS = 500;
+const recentLogs = new Map<string, number>();
+
 function baseLog(area: LogArea, event: string, data?: unknown) {
   const ts = new Date().toISOString();
   const prefix = `[${area}]`;
   const payload = data === undefined ? undefined : sanitizeValue(data);
+  const isError = area === "ERROR";
+  if (!isError) {
+    const key = `${area}|${event}|${JSON.stringify(payload ?? null)}`;
+    const now = Date.now();
+    const last = recentLogs.get(key) ?? 0;
+    if (now - last < LOG_DEDUPE_WINDOW_MS) return;
+    recentLogs.set(key, now);
+  }
   if (payload === undefined) {
     console.log(prefix, ts, event);
   } else {
