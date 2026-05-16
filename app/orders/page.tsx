@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
 import { OrderForm, newLine } from "@/components/orders/OrderForm";
 import { OrderFooter } from "@/components/orders/OrderFooter";
@@ -40,8 +40,11 @@ const createEmptyDraft = (orders: Order[], defaultPaymentAgentId = ""): Order =>
 const meaningfulLine = (l: Order["lines"][number]) => !!(l.details?.trim() || l.marka?.trim() || l.productPhotoUrl || l.photoUrl || l.totalCtns || l.pcsPerCtn || l.rmbPerPcs);
 
 export default function OrdersPage() {
-  logRoute("orders_page_loaded", { ordersSource: process.env.NEXT_PUBLIC_ORDERS_DATA_SOURCE ?? "mock" });
   type OrdersMode = "history" | "add" | "drafts" | "edit";
+  useEffect(() => {
+    logRoute("page_rendered", { page: "Orders", ordersSource: process.env.NEXT_PUBLIC_ORDERS_DATA_SOURCE ?? "mock" });
+  }, []);
+
   const { orders, upsertOrder, deleteOrder, pushToast } = useStore();
   const { data: paymentAgents, recalculateFromOrders, applyOrderSettlement, reverseOrderSettlement } = usePaymentAgents();
   const { data: firebaseOrders, draftOrders: firebaseDraftOrders, autosaveDraft, upsertOrder: upsertFirebaseOrder, archiveOrder: archiveFirebaseOrder, reload: reloadFirebaseOrders } = useOrders();

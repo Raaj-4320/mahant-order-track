@@ -7,7 +7,7 @@ import { customerLedgerPath } from "@/lib/firebase/paths";
 import { customerLedgerEntryToFirestore } from "@/lib/firebase/mappers";
 import { buildCustomerPaymentEntry } from "@/services/settlement/customerReceivableLedger";
 import { normalizeCustomerName } from "@/services/customers/customerIdentity";
-import { logCustomer, logDB, logError } from "@/lib/logger";
+import { logCustomer, logDB } from "@/lib/logger";
 
 const BUSINESS_ID = process.env.NEXT_PUBLIC_FIREBASE_BUSINESS_ID ?? "mahant";
 const makeId = () => (globalThis.crypto?.randomUUID?.() ?? `cus-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
@@ -16,11 +16,9 @@ const requireDb = () => { const db = getFirestoreDb(); if (!db) throw new Error(
 
 export const customersFirebaseService: CustomersService = {
   async listCustomers() {
-    logDB("list_customers_start", { path: customersPath(BUSINESS_ID), businessId: BUSINESS_ID });
     const db = requireDb();
     const snap = await getDocs(collection(db, customersPath(BUSINESS_ID)));
     const rows = snap.docs.map((d) => ({ ...(d.data() as Customer), id: d.id } as Customer));
-    logDB("list_customers_success", { path: customersPath(BUSINESS_ID), businessId: BUSINESS_ID, count: rows.length });
     return rows;
   },
   async getCustomerById(id) {
