@@ -1,23 +1,29 @@
-# Phase 3B Blocked: Firebase SDK Installation Failure
+# Phase 3B: Products Firebase Service (Safe, gated rollout)
 
 Date: 2026-05-12
 
-## Attempted prerequisite checks
-- Verified `firebase` is declared in `package.json` and `package-lock.json`.
-- Ran `npm run build` to validate SDK availability in this environment.
-- Build failed with `Module not found: Can't resolve 'firebase/app'` (and related Firebase modules).
+## Scope
+- Added **Products-only** Firebase service wiring behind a data-source switch.
+- Kept all other modules on mock services.
+- Did not migrate `/orders` and did not change order runtime behavior.
 
-## Installation attempt
-- Ran `npm install firebase`.
-- Install failed with:
-  - `npm ERR! code E403`
-  - `npm ERR! 403 Forbidden - GET https://registry.npmjs.org/firebase`
+## Data-source switch
+- `NEXT_PUBLIC_PRODUCTS_DATA_SOURCE=firebase` enables Firebase attempt for Products.
+- Default behavior remains mock-backed when flag is unset or not `firebase`.
+- If Firebase config is missing, Products falls back to mock mode.
+
+## Codex environment blocker note
+- Some Codex environments may still fail `npm install firebase` with npm registry `403 Forbidden`.
+- In those environments, Firebase SDK install/build verification can be blocked.
+- Local verification is required where SDK installation succeeds.
 
 ## Outcome
-Per Phase 3A/3B constraints, Firebase-backed implementation is **not** added in this environment after install failure.
-No Products Firebase service migration changes were applied.
+- Firebase service implementation is added only for Products and loaded lazily.
+- Project remains safely mock-backed by default.
+- Phase 3B verification in Codex depends on environment package availability.
 
-## What is required next
-- Install `firebase` successfully in an environment with npm registry access.
-- Commit updated lockfile if needed.
-- Re-run Phase 3B implementation steps.
+## What to verify locally
+1. `npm install firebase`
+2. `npm run build`
+3. `NEXT_PUBLIC_PRODUCTS_DATA_SOURCE=firebase` with valid Firebase env config.
+4. Confirm `/products` reads from Firestore; `/orders` remains unchanged.

@@ -1,0 +1,86 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function memberDoc(businessId) {
+      return get(/databases/$(database)/documents/businesses/$(businessId)/members/$(request.auth.uid));
+    }
+    function businessDoc(businessId) {
+      return get(/databases/$(database)/documents/businesses/$(businessId));
+    }
+
+    function isActiveMember(businessId) {
+      return isSignedIn() && memberDoc(businessId).exists() && memberDoc(businessId).data.active == true;
+    }
+
+    function role(businessId) {
+      return isActiveMember(businessId) ? memberDoc(businessId).data.role : null;
+    }
+
+    function isOwnerOrAdmin(businessId) {
+      return role(businessId) in ['owner', 'admin'];
+    }
+
+    function canReadBusinessData(businessId) {
+      return isActiveMember(businessId) || (isSignedIn() && businessDoc(businessId).exists() && businessDoc(businessId).data.ownerUid == request.auth.uid);
+    }
+
+    function canWriteBusinessData(businessId) {
+      return role(businessId) in ['owner', 'admin', 'staff'];
+    }
+
+    match /businesses/{businessId} {
+      allow read: if canReadBusinessData(businessId);
+      allow create: if isSignedIn() && request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if isOwnerOrAdmin(businessId);
+
+      match /members/{uid} {
+        allow read: if isSignedIn() && (uid == request.auth.uid || canReadBusinessData(businessId));
+        allow create: if isOwnerOrAdmin(businessId) || (isSignedIn() && uid == request.auth.uid && businessDoc(businessId).exists() && businessDoc(businessId).data.ownerUid == request.auth.uid);
+        allow update, delete: if isOwnerOrAdmin(businessId);
+      }
+
+      match /orders/{orderId} {
+        allow read: if canReadBusinessData(businessId);
+        allow create, update: if canWriteBusinessData(businessId);
+        allow delete: if isOwnerOrAdmin(businessId);
+      }
+
+      match /products/{productId} {
+        allow read: if canReadBusinessData(businessId);
+        allow create, update: if canWriteBusinessData(businessId);
+        allow delete: if isOwnerOrAdmin(businessId);
+      }
+
+      match /paymentAgents/{agentId} {
+        allow read: if canReadBusinessData(businessId);
+        allow create, update: if canWriteBusinessData(businessId);
+        allow delete: if isOwnerOrAdmin(businessId);
+      }
+
+      match /paymentAgentLedger/{entryId} {
+        allow read: if canReadBusinessData(businessId);
+        allow create, update: if canWriteBusinessData(businessId);
+        allow delete: if isOwnerOrAdmin(businessId);
+      }
+
+      match /customers/{customerId} {
+        allow read: if canReadBusinessData(businessId);
+        allow create, update: if canWriteBusinessData(businessId);
+        allow delete: if isOwnerOrAdmin(businessId);
+      }
+
+      match /settings/{docId} {
+        allow read: if canReadBusinessData(businessId);
+        allow create, update, delete: if isOwnerOrAdmin(businessId);
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

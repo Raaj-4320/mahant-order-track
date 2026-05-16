@@ -4,28 +4,46 @@
 All business data is nested under:
 - `businesses/{businessId}/...`
 
-## Future auth ownership model
-- User must be authenticated.
-- User must be member/owner of `businessId`.
+## Auth and membership model
+- User must be authenticated (`request.auth != null`).
+- User must be an active member in `businesses/{businessId}/members/{uid}`.
+- Roles: `owner | admin | staff | viewer`.
 
-## Collections to protect
-- products
-- customers
-- suppliers
-- paymentAgents
+## Collections protected
+- businesses root doc
+- members
 - orders
+- products
+- paymentAgents
+- paymentAgentLedger
+- customers
+- settings
+
+## Role intent
+- owner/admin:
+  - full business administration
+  - delete operations
+  - settings management
+- staff:
+  - read + create/update business operational docs
+  - no delete
+- viewer:
+  - read-only
+
+## Delete Everything protection
+Even when `NEXT_PUBLIC_ENABLE_DEV_RESET=true`, actual delete ability must be enforced by rules (owner/admin only).
 
 ## Frontend-only caution
 - Rules must enforce tenant access and write constraints.
 - Never rely on UI-only hiding.
 - Derived counter writes need strict validation to avoid tampering.
 
-## Suggested staged security approach
-1. Development: authenticated users only.
-2. Add business membership documents.
-3. Role-based permissions (owner/manager/staff).
-4. Add stricter schema validation in rules for write payloads.
+## Deployment cautions
+1. Prepare Auth and member docs first.
+2. Deploy rules only after owner/admin membership exists.
+3. Expect denied reads/writes if membership docs are missing.
+4. Do not use permissive `allow read, write: if true` rules.
 
-## Deployment status
-- Draft documentation only.
-- No rules deployed in Phase 3A.
+## Current status
+- Rules draft created in `firestore.rules` (Phase 6G).
+- Not auto-deployed by the app.
