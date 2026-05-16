@@ -12,7 +12,8 @@ import { getPaymentAgentFinanceSummary } from "@/services/paymentAgentSelectors"
 import { StatusBadge } from "@/components/table/StatusBadge";
 import { TablePagination } from "@/components/table/TablePagination";
 import { Download, Filter, Plus, Search, Wallet } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { logPageAccess, logDataFlow } from "@/lib/logger";
 import type { PaymentAgent, PaymentAgentLedgerEntry } from "@/lib/types";
 
 type LedgerViewRow = {
@@ -43,6 +44,8 @@ export default function PaymentAgentsPage() {
 
   const filtered = useMemo(() => rows.filter((r) => [r.agent.name, r.agent.agentCode, r.agent.wechatId || "", r.agent.phone || ""].join(" ").toLowerCase().includes(q.toLowerCase().trim()) && (status === "all" || r.agent.status === status)), [rows, q, status]);
   const active = rows.filter((r) => r.agent.status === "active").length;
+  useEffect(() => { logPageAccess("Payment Agents", { component: "app/payment-agents/page.tsx", source: process.env.NEXT_PUBLIC_PAYMENT_AGENTS_DATA_SOURCE ?? "mock" }); }, []);
+  useEffect(() => { logDataFlow("Payment Agents", { functionsCalled:["usePaymentAgents.reload"], dbPaths:["businesses/{businessId}/paymentAgents"], result:{count:rows.length,reachedComponent:true,renderedRows:filtered.length}, totals:{currentDue:rows.reduce((s,r)=>s+r.currentDuePayable,0),currentCredit:rows.reduce((s,r)=>s+r.currentCredit,0),totalPaid:rows.reduce((s,r)=>s+r.totalPaidAmount,0)}, sampleAgents:filtered.slice(0,5).map((r)=>({id:r.agent.id,name:r.agent.name,status:r.agent.status,currentDue:r.currentDuePayable,currentCredit:r.currentCredit})) }); }, [rows.length, filtered.length]);
 
   const buildLedgerTable = (agentId: string, openingCredit: number) => {
     const source = [...(ledgerRows[agentId] || [])].sort((a, b) => {

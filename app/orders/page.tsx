@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useStore } from "@/lib/store";
 import { OrderForm, newLine } from "@/components/orders/OrderForm";
 import { OrderFooter } from "@/components/orders/OrderFooter";
@@ -18,7 +18,7 @@ import { useCustomers } from "@/hooks/useCustomers";
 import { getCustomersService } from "@/services/customersService";
 import { customerLedgerService } from "@/services/customerLedgerService";
 import { resolveCustomersForOrderLines } from "@/services/customers/customerResolution";
-import { logDB, logError, logLedger, logOrder, logPaymentAgent, logProduct, logRoute } from "@/lib/logger";
+import { logDB, logError, logLedger, logOrder, logPageAccess, logDataFlow, logPaymentAgent, logProduct } from "@/lib/logger";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const nextOrderNo = (orders: Order[]) => `25-${String(orders.length + 301).padStart(3, "0")}`;
@@ -39,12 +39,32 @@ const createEmptyDraft = (orders: Order[], defaultPaymentAgentId = ""): Order =>
 
 const meaningfulLine = (l: Order["lines"][number]) => !!(l.details?.trim() || l.marka?.trim() || l.productPhotoUrl || l.photoUrl || l.totalCtns || l.pcsPerCtn || l.rmbPerPcs);
 
+const summarizeOrderForLog = (o: Order) => ({
+  id: o.id,
+  orderNumber: o.number || o.orderNumber,
+  status: o.status,
+  date: o.date,
+  loadingDate: o.loadingDate,
+  wechatId: o.wechatId,
+  paymentBy: o.paymentBy,
+  paymentAgentId: o.paymentAgentId,
+  lineCount: o.lines.length,
+  totalAmount: orderTotal(o),
+  customerNames: Array.from(new Set(o.lines.map((l) => l.customerName || l.customerSnapshot?.name || "").filter(Boolean))).slice(0, 10),
+  supplierNames: Array.from(new Set(o.lines.map((l) => l.supplierName || l.supplierSnapshot?.name || "").filter(Boolean))).slice(0, 10),
+  generatedLineIds: o.lines.map((l) => l.id),
+  linePhotoFlags: o.lines.map((l) => ({ lineId: l.id, hasProductPhoto: Boolean(l.productPhotoUrl), hasDimensionPhoto: Boolean(l.photoUrl) })),
+});
+
 export default function OrdersPage() {
-  logRoute("orders_page_loaded", { ordersSource: process.env.NEXT_PUBLIC_ORDERS_DATA_SOURCE ?? "mock" });
   type OrdersMode = "history" | "add" | "drafts" | "edit";
+  useEffect(() => {
+    logPageAccess("Orders", { component: "app/orders/page.tsx", source: process.env.NEXT_PUBLIC_ORDERS_DATA_SOURCE ?? "mock" });
+  }, []);
+
   const { orders, upsertOrder, deleteOrder, pushToast } = useStore();
   const { data: paymentAgents, recalculateFromOrders, applyOrderSettlement, reverseOrderSettlement } = usePaymentAgents();
-  const { data: firebaseOrders, draftOrders: firebaseDraftOrders, autosaveDraft, upsertOrder: upsertFirebaseOrder, archiveOrder: archiveFirebaseOrder, reload: reloadFirebaseOrders } = useOrders();
+  const { data: firebaseOrders, isLoading: isOrdersLoading, error: ordersLoadError, draftOrders: firebaseDraftOrders, autosaveDraft, upsertOrder: upsertFirebaseOrder, archiveOrder: archiveFirebaseOrder, reload: reloadFirebaseOrders } = useOrders();
   const { data: customers, reload: reloadCustomers } = useCustomers();
   const ordersDataSource = process.env.NEXT_PUBLIC_ORDERS_DATA_SOURCE ?? "mock";
   const isFirebaseOrdersMode = ordersDataSource === "firebase";
@@ -61,6 +81,24 @@ export default function OrdersPage() {
   const activeOrders = useMemo(() => (isFirebaseOrdersMode ? firebaseOrders : orders).filter((o) => o.status !== "archived"), [isFirebaseOrdersMode, firebaseOrders, orders]);
   const total = useMemo(() => orderTotal(draft), [draft]);
   const history = useMemo(() => activeOrders.filter((o) => { const q=query.toLowerCase().trim(); if(!q) return true; const supplierText=o.lines.map(l=>l.supplierName || l.supplierSnapshot?.name || "").join(" ").toLowerCase(); const customerText=o.lines.map(l=>l.customerSnapshot?.name || "").join(" ").toLowerCase(); const payment=paymentAgents.find(p=>p.id===o.paymentBy)?.name.toLowerCase()??""; return o.number.toLowerCase().includes(q)||o.wechatId.toLowerCase().includes(q)||supplierText.includes(q)||customerText.includes(q)||payment.includes(q); }).slice(0, 10), [activeOrders, query, paymentAgents]);
+
+  useEffect(() => {
+    if (isFirebaseOrdersMode && isOrdersLoading) return;
+    if (ordersLoadError) {
+      logError("orders_load_failure", { source: isFirebaseOrdersMode ? "firebase" : "mock", error: ordersLoadError });
+      return;
+    }
+    const allOrders = isFirebaseOrdersMode ? firebaseOrders : orders;
+    logDataFlow("Orders", {
+      functionsCalled: ["useOrders.reload", "ordersService.listOrders"],
+      dbPaths: ["businesses/{businessId}/orders"],
+      result: { count: allOrders.length, reachedComponent: true, renderedRows: history.length },
+      counts: { saved: allOrders.filter((o) => o.status === "saved").length, draft: allOrders.filter((o) => o.status === "draft").length, archived: allOrders.filter((o) => o.status === "archived").length },
+      customersLoadedCount: customers.length,
+      sampleOrders: history.slice(0, 5).map(summarizeOrderForLog),
+      query: query.trim() || undefined,
+    });
+  }, [isFirebaseOrdersMode, isOrdersLoading, ordersLoadError, firebaseOrders, orders, history, query, customers.length]);
   const editingOrder = editingOrderId ? activeOrders.find((o) => o.id === editingOrderId) ?? null : null;
   const wechatSuggestions = useMemo(() => Array.from(new Set(activeOrders.map((o) => o.wechatId.trim()).filter(Boolean))).slice(0, 5), [activeOrders]);
   const supplierSuggestions = useMemo(() => {
@@ -80,7 +118,7 @@ export default function OrdersPage() {
   const onUploadingChange = (isUploading: boolean) => setActiveUploads((p) => Math.max(0, p + (isUploading ? 1 : -1)));
 
   const onSave = async (status: Order["status"]) => {
-    logOrder("save_clicked", { status, activeUploads, lineCount: draft.lines.length, orderNumber: draft.number });
+    logDataFlow("Orders", { event: "order_save_started", status, lineCount: draft.lines.length, orderNumber: draft.number });
     if (activeUploads > 0) return pushToast({ tone: "info", text: "Please wait for image uploads to finish before saving." });
     if ((draft.paidToPaymentAgentNow ?? 0) < 0) return pushToast({ tone: "danger", text: "Paid Now cannot be negative." });
 
@@ -151,7 +189,7 @@ export default function OrdersPage() {
       await customersService.upsertCustomer?.({ ...base, totalOrders: t.totalOrders, totalSpent: t.totalSpent, outstandingAmount: t.totalSpent, updatedAt: now } as any);
     }
     if (editingOrderId && removedLineIds.length) await archiveProductsForRemovedOrderLines(editingOrderId, removedLineIds);
-    let result = { failed: 0, synced: 0 };
+    let result = { failed: 0, synced: 0, failures: [] as { lineId: string; generatedProductId?: string; reason: string; errorCode?: string; errorMessage?: string }[] };
     try {
       result = await syncOrderLinesToProducts(savedOrder);
       logProduct("product_sync_success", result);
@@ -177,8 +215,9 @@ export default function OrdersPage() {
     }
     await recalculateFromOrders(mergedOrders);
     await reloadCustomers();
-    logOrder("save_order_complete", { orderId: savedOrder.id, upserted: true, productSyncFailed: Boolean(result.failed), settlementApplied: isFirebaseOrdersMode, receivablesApplied: true });
-    pushToast({ tone: result.failed ? "info" : "success", text: result.failed ? "Order saved, but generated product sync failed." : `Order ${draft.number} saved and products synced.` });
+    logDataFlow("Orders", { event: "order_save_completed", orderSaved: true, productsSynced: !Boolean(result.failed), customerResolved: true, customerReceivablesApplied: true, paymentSettlementApplied: isFirebaseOrdersMode });
+    const failedMsg = result.failures[0] ? `Order saved, but product sync failed for line ${result.failures[0].lineId}: ${result.failures[0].errorCode || result.failures[0].reason}${result.failures[0].errorMessage ? ` (${result.failures[0].errorMessage})` : ""}.` : "Order saved, but generated product sync failed.";
+    pushToast({ tone: result.failed ? "info" : "success", text: result.failed ? failedMsg : `Order ${draft.number} saved and products synced.` });
     setEditingOrderId(null); setRemovedLineIds([]); setOriginalLineIds(new Set()); setDraft(createEmptyDraft(orders, "")); setMode("history");
   };
 
