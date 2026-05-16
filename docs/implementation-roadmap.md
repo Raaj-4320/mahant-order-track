@@ -135,7 +135,120 @@
 - Keep all other modules on mock services.
 - No full app migration and no `/orders` data-source changes in this phase.
 
+### Phase 3C (next)
+- Add Cloudinary unsigned-upload foundation (client-only helper layer).
+- Keep Product UI CRUD changes out of scope in this phase.
+- Keep `/orders` upload behavior unchanged until explicit migration phase.
+- No backend/API routes and no Cloudinary secret exposure.
+
+
+### Phase 3D delivery (completed in this pass)
+- Added Products Add/Edit modal flow.
+- Added Product upsert support in contract + mock + Firebase service + hook.
+- Added Cloudinary unsigned image upload usage in Products form save flow.
+- Kept `/orders` and other modules unchanged.
+
+
+### Phase 3E delivery (completed in this pass)
+- Added Order Save -> Product catalog sync bridge from order lines.
+- Products now receive generated records from order activity.
+- `/orders` remains on in-memory store (no full Orders Firebase migration).
+
+
+### Phase 3F delivery (completed in this pass)
+- `/orders` line image uploads now store Cloudinary URLs instead of data URLs for new uploads.
+- Saved-order line -> product sync now receives URL images for generated products.
+- Orders remain not fully Firebase-migrated.
+
+
+### Phase 3G delivery (completed in this pass)
+- Added safe catalog merge key strategy for order-line generated products.
+- Reduced duplicate products across orders by deterministic catalog ID mapping.
+- Preserved fallback and idempotent repeated-save behavior.
+
+
+
+### Phase 3G merge removal note
+- Phase 3G cross-order catalog merge strategy was intentionally removed/disabled.
+- Product identity now uses order-line-level records: `order-line-{order.id}-{line.id}`.
+- Existing old merged records are retained for manual cleanup later.
+
+### Phase 3H delivery (completed in this pass)
+- Added tiny Products row source label (`Generated` / `Manual`) for source visibility.
+- New manual products are tagged as manual source.
+- No migration architecture changes in this phase.
+
+
+### Phase 3I delivery (completed in this pass)
+- Added clean new-order workspace default (no demo preloaded active order).
+- Added order history section below form with edit/delete actions.
+- Added save-reset behavior and safe product archive sync effects for edit/delete.
+- No full Orders Firebase migration yet.
+
+
+### Phase 3I.1 stabilization (completed in this pass)
+- Completed edit-mode line delete tracking with original vs new line distinction.
+- Ensured archive happens on save for removed saved lines only.
+- Removed dead/non-functional orders toolbar view control wiring.
+
+
+### Phase 3I.2 hardening (completed in this pass)
+- Moved edit-line confirmation to pre-remove path with cancel-safe behavior.
+- Added Save Changes footer cue in edit mode.
+- Preserved archive-on-save behavior for removed persisted lines only.
+
+### Phase 3I basic order-line fixes (completed in this pass)
+- New order lines now initialize as blank values (no demo prefill).
+- Products view now defaults to Active status so archived generated products are hidden by default.
+
 ## Phase 4 — Incremental Module Connection to Firestore
+
+### Phase 4A settlement preview (completed in this pass)
+- Added Payment Agent settlement preview UI in `/orders` footer area.
+- Added pure settlement calculation helper (credit-use/payable/new-credit/status).
+- Preview-only: no ledger persistence and no payment-agent balance mutation yet.
+
+### Phase 4A supplier/wechat flow (completed in this pass)
+- Added WeChat autocomplete in Orders header from saved order history.
+- Added supplier line typed-name autocomplete with `supplierName` support.
+- Reworked Suppliers page into WeChat and Unique Supplier derived views from saved orders.
+- No supplier finance behavior and no Firebase supplier persistence added.
+
+### Phase 4B payment-agent master/settlement UI (completed in this pass)
+- Added Payment Agent creation modal with opening credit.
+- Added payment-agent summary and read-only ledger preview on Payment Agents page.
+- Orders save stores settlement snapshot preview; no full ledger persistence yet.
+
+### Stabilization note
+- Fixed `/orders` Payment By dropdown to use hook/service-backed payment agents source (same as `/payment-agents`) instead of static data import.
+
+### Phase 4C payment-agent balance application (completed in this pass)
+- Applied payment-agent balance/totals recalculation from saved order settlement snapshots.
+- Added edit/delete-safe recalculation path after order save/delete flows.
+- Customer ledger remains out of scope.
+
+### Phase 4D stabilization (completed in this pass)
+- Reset Orders Payment By to placeholder after successful save.
+- Added Payment Agents `+ Payment` action with due-first then credit behavior.
+- Preserved standalone payment effects during order-triggered recalculation.
+
+### Phase 5A audit (completed in this pass)
+- Completed runtime data-source and demo-seed audit for Orders/Products/Agents/Customers/Suppliers/Dashboard.
+- Documented target `/orders` workflow blueprint (history-first default + Add Order + Complete Draft modes).
+- Documented draft-validation blueprint, dev-only Delete Everything blueprint, and persistence gap analysis.
+- Proposed execution sequence for Phase 5B–5F.
+
+### Phase 5B orders UI restructure (completed in this pass)
+### Phase 5C draft workflow hardening (completed in this pass)
+- Added centralized order save validation with header + per-line issue reporting.
+- Disabled Save Order when invalid and added missing-fields checklist UI near footer.
+- Hardened Save as Draft (allows incomplete data but blocks completely empty drafts).
+- Ensured draft saves do not trigger product sync or payment-agent recalculation impact.
+- Expanded Complete Draft panel metadata and continue/complete flow for conversion to saved orders.
+
+- Added explicit `/orders` mode state: history/add/drafts/edit.
+- Default view now shows toolbar + history only; form/footer hidden until Add Order/Edit.
+- Added Complete Draft panel shell with draft list/empty state.
 
 Connection order:
 1. Products
@@ -194,3 +307,93 @@ Connection order:
 - Manual save/edit/cancel checks for Order Booking.
 - Calculation verification for line totals and order totals.
 - Responsive sanity check (mobile/tablet/desktop widths).
+
+
+### Phase 6A Firebase real DB migration blueprint (completed in this pass)
+- Completed module-by-module runtime source-of-truth and durability audit.
+- Defined target Firestore tenant schema under `businesses/{businessId}` for orders, products, payment agents, ledger, customers, and settings.
+- Documented service/hook migration architecture and phased rollout plan (6B–6G).
+- Added ledger correctness plan for save draft/save order/edit/delete/payment flows.
+- Added dev-only real DB reset blueprint and clean-slate/no-demo-data transition plan.
+
+
+### Phase 6B payment agents + ledger Firebase migration (completed in this pass)
+- Added payment-agents data source facade with env switch (`NEXT_PUBLIC_PAYMENT_AGENTS_DATA_SOURCE`).
+- Added Firestore payment agents service and ledger service under `services/firebase/*`.
+- Added durable standalone `Pay Agent` transaction flow (ledger entry + agent summary update).
+- Rewired `usePaymentAgents` to facade while preserving mock fallback.
+- Preserved Phase 6C boundary: no Orders Firestore migration in this phase.
+
+
+### Phase 6C.1 orders firebase service + draft autosave foundation (completed in this pass)
+- Added Orders firebase service + facade + useOrders hook.
+- Added debounced durable draft autosave foundation for cross-device unfinished order continuity.
+- Kept final order save/edit/delete migration for Phase 6C.2/6C.3 to reduce risk.
+
+
+### Phase 6C.2 orders history + drafts firestore wiring (completed in this pass)
+- `/orders` history and Complete Draft lists now use Firestore-backed `useOrders` source in firebase mode.
+- Save Draft and Save Order order-document writes in firebase mode now upsert same Firestore order document id.
+- Delete action in firebase mode archives order docs instead of hard deletion.
+- Deferred financial/product archival durable side-effects remain scoped for Phase 6C.3.
+
+
+### Phase 6C.3A durable generated product sync/archive from firestore saved orders (completed in this pass)
+- Hardened product sync to saved orders only and skip blank lines.
+- Preserved order-line generated product identity and metadata.
+- Wired firebase order archive path to best-effort generated product archive cleanup.
+- Kept payment-agent durable settlement ledger deferred for 6C.3B/6C.3C.
+
+- ✅ Phase 6C.3B complete: durable idempotent payment-agent order-settlement ledger posting/reversal for Firebase saved-order save/edit/archive flows (with hash guard and active settlement tracking).
+
+- ✅ Phase 6D complete: Suppliers/WeChat and Dashboard now use Firestore-backed orders in firebase mode (with saved-only totals, archived exclusion, and mock fallback preserved).
+
+- ✅ Phase 6E complete: gated development-only Firestore Delete Everything tool scoped to businesses/{businessId} with typed confirmation and optional settings deletion.
+
+- ✅ Phase 6F complete: clean-slate runtime defaults prevent demo fixture leakage in Firebase mode while preserving mock fallback and optional demo mode.
+
+- ✅ Phase 6G complete: Firestore rules/auth hardening draft added with business membership role model and owner/admin delete restrictions.
+
+- ✅ Phase 6H complete: minimal Firebase Auth + business/member bootstrap foundation added to support strict rules model without backend.
+
+## Phase 8A + 8B delivery (completed in this pass)
+- Loading Date is now editable and preserved through draft/save/edit flows.
+- Status changes in Order History are now real persisted updates for saved orders.
+- Added reusable Order Lines Details modal and connected it in Orders and Dashboard.
+- Removed connected-later placeholder popups from core Orders/Dashboard controls and used disabled deferred controls instead.
+- Continued runtime currency text cleanup in touched order/dashboard surfaces.
+
+## Phase 8C delivery (completed in this pass)
+- Payment Agent ledger view now uses summary cards + accounting table (Debit/Credit/Balance) with oldest-to-newest rows.
+- Runtime amount display in touched surfaces migrated to neutral formatAmount usage.
+- Final currency wording cleanup applied in touched Orders/Products/Suppliers/Customers/Payment Agents surfaces.
+
+## Phase 8D delivery (completed in this pass)
+- Customer suggestions in order lines now come from real customer data + saved-order history instead of fixture dropdown options.
+- Saving an order now auto-creates missing customers from typed order lines (saved orders only).
+- Basic customer receivable foundation now updates customer totals from saved orders after save.
+
+## Phase 8D.2 delivery (completed in this pass)
+- Added durable customer receivable ledger entries (apply/reverse) for saved-order and archive flows.
+- Added customer statement modal with Debit/Credit/Balance and oldest-to-newest rows.
+- Added customerLedger collection cleanup to Delete Everything dev reset.
+
+## Phase 8D.3 delivery (completed in this pass)
+- Added customer payment posting with receivable-first and overpayment-to-store-credit behavior.
+- Added normalized customer identity helpers to reduce duplicate creation from order-line input variants.
+- Added Receive Payment UI and customer_payment rows in customer statement.
+
+
+## Phase 8D.4 delivery (completed in this pass)
+- Removed Loading Date control from active Add/Edit order form; kept saved-order row editing/persistence.
+- Kept status changes scoped to saved order history rows (not active line/form editing).
+- Added Customer column in Order Details modal lines.
+- Fixed order line customer typed-input persistence via `customerName`.
+- Fixed Save Order customer resolution to ensure/reuse customers from `customerName` and persist resolved ids before receivable apply.
+- Preserved draft exclusion for customer create and customer receivable apply.
+
+
+## Phase 8D.5 delivery (completed in this pass)
+- Added centralized customer name resolution helper for typed line input + save-time ensure/create flow.
+- Unified duplicate-prevention matching by normalized name with deterministic first-match reuse.
+- Kept draft/autosave exclusion from customer creation and receivable-apply paths.

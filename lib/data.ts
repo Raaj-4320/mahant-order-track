@@ -27,9 +27,9 @@ export const products: Product[] = [
 ];
 
 export const paymentAgents: PaymentAgent[] = [
-  { id: "pa-1", agentCode: "AG-01", name: "Alipay Agent A", initials: "AA", phone: "+86-139-2000-0001", wechatId: "agent.alipay.a", country: "China", city: "Guangzhou", status: "active", totalOrdersPaid: 16, totalPaidAmount: 332000, createdAt: now, updatedAt: now },
-  { id: "pa-2", agentCode: "AG-02", name: "WeChat Pay Agent B", initials: "WB", phone: "+86-139-2000-0002", wechatId: "agent.wechat.b", country: "China", city: "Shenzhen", status: "active", totalOrdersPaid: 11, totalPaidAmount: 246800, createdAt: now, updatedAt: now },
-  { id: "pa-3", agentCode: "AG-03", name: "Bank Wire Agent C", initials: "BC", phone: "+86-139-2000-0003", wechatId: "agent.bank.c", country: "China", status: "active", totalOrdersPaid: 7, totalPaidAmount: 142300, createdAt: now, updatedAt: now },
+  { id: "pa-1", agentCode: "AG-01", name: "Alipay Agent A", initials: "AA", phone: "+86-139-2000-0001", wechatId: "agent.alipay.a", country: "China", city: "Guangzhou", status: "active", totalOrdersPaid: 16, totalPaidAmount: 332000, creditBalance: 0, currency: "CNY", createdAt: now, updatedAt: now },
+  { id: "pa-2", agentCode: "AG-02", name: "WeChat Pay Agent B", initials: "WB", phone: "+86-139-2000-0002", wechatId: "agent.wechat.b", country: "China", city: "Shenzhen", status: "active", totalOrdersPaid: 11, totalPaidAmount: 246800, creditBalance: 20000, currency: "CNY", createdAt: now, updatedAt: now },
+  { id: "pa-3", agentCode: "AG-03", name: "Bank Wire Agent C", initials: "BC", phone: "+86-139-2000-0003", wechatId: "agent.bank.c", country: "China", status: "active", totalOrdersPaid: 7, totalPaidAmount: 142300, creditBalance: 5000, currency: "CNY", createdAt: now, updatedAt: now },
   { id: "pa-4", agentCode: "AG-04", name: "Hawala Agent D", initials: "HD", phone: "+86-139-2000-0004", wechatId: "agent.hawala.d", country: "China", status: "inactive", totalOrdersPaid: 3, totalPaidAmount: 57100, createdAt: now, updatedAt: now },
 ];
 
@@ -40,5 +40,10 @@ export const initialOrders: Order[] = [
   { id: "ord-25-298", orderNumber: "25-298", number: "25-298", date: "2025-05-20", loadingDate: "2025-05-22", paymentAgentId: "pa-1", paymentBy: "pa-1", wechatId: "abc.fashion88", status: "delayed", paymentStatus: "unpaid", lines: [{ id: "ln-8", supplierId: "sup-1", picDim: "32 × 24 × 18 cm", productId: "prd-1", marka: "MARKA-1", details: "Short sleeve cotton t-shirt", totalCtns: 6, pcsPerCtn: 100, rmbPerPcs: 12.5, customerId: "cus-4" }] },
 ];
 
-export const formatCNY = (n: number) => "¥ " + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+export function formatAmount(value: number | string | undefined | null): string {
+  const n = typeof value === "string" ? Number(value) : Number(value ?? 0);
+  const safe = Number.isFinite(n) ? n : 0;
+  return safe.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+export const formatCNY = formatAmount;
 export const formatDate = (iso: string) => new Date(iso).toLocaleDateString("en-US", { day: "2-digit", month: "short", year: "numeric" });
