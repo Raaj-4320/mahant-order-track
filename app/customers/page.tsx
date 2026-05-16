@@ -40,7 +40,7 @@ export default function CustomersPage() {
   const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10));
   const [payNote, setPayNote] = useState("");
 
-  useEffect(() => { logRoute("customers_page_loaded", {}); }, []);
+  useEffect(() => { logRoute("page_rendered", { page: "Customers" }); }, []);
 
   const filtered = useMemo(
     () => base.filter((c) => [c.name, c.phone, c.wechatId, c.city].join(" ").toLowerCase().includes(q.toLowerCase().trim()) && (status === "all" || c.status === status)),
