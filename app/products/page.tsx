@@ -23,8 +23,10 @@ type ProductForm = Omit<Product, "createdAt" | "updatedAt"> & { createdAt?: stri
 const emptyForm: ProductForm = { id: "", productCode: "", sku: "", name: "", marka: "", category: "", unit: "pcs", defaultDim: "", photo: "", supplierId: "", purchasePrice: undefined, sellingPrice: undefined, defaultRmbPerPcs: undefined, stockQty: undefined, lowStockLimit: undefined, status: "active" };
 
 export default function ProductsPage() {
-  logRoute("page_rendered", { page: "Products" });
-  useEffect(() => { logProduct("products_page_loaded"); }, []);
+  useEffect(() => {
+    logRoute("page_rendered", { page: "Products" });
+    logProduct("products_page_loaded");
+  }, []);
   const { data: products, error, upsertProduct } = useProducts();
   const { data: suppliers } = useSuppliers();
   const { orders, pushToast } = useStore();
