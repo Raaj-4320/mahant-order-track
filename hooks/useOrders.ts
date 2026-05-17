@@ -14,6 +14,10 @@ export function useOrders() {
   const upsertOrder = useCallback(async (order: Order) => { const saved = await service.upsertOrder(order); await reload(); return saved; }, [service, reload]);
   const autosaveDraft = useCallback(async (order: Order) => { const saved = await (service.autosaveDraft ? service.autosaveDraft(order) : service.upsertOrder({ ...order, status: "draft" })); setData((p) => p.some((x) => x.id === saved.id) ? p.map((x) => x.id === saved.id ? saved : x) : [saved, ...p]); return saved; }, [service]);
   const archiveOrder = useCallback(async (id: string) => { await service.archiveOrder(id); await reload(); }, [service, reload]);
+  const allocateNextOrderNumber = useCallback(async () => {
+    if (!service.allocateNextOrderNumber) throw new Error("Order number allocator is not enabled for this data source.");
+    return service.allocateNextOrderNumber();
+  }, [service]);
   const draftOrders = useMemo(() => data.filter((o) => o.status === "draft"), [data]);
-  return { data, isLoading, error, isEmpty: !isLoading && data.length === 0, reload, getOrderById, upsertOrder, autosaveDraft, archiveOrder, draftOrders };
+  return { data, isLoading, error, isEmpty: !isLoading && data.length === 0, reload, getOrderById, upsertOrder, autosaveDraft, archiveOrder, draftOrders, allocateNextOrderNumber };
 }
