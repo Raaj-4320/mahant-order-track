@@ -1,4 +1,4 @@
-type LogArea = "SYSTEM" | "ROUTE" | "UI" | "DB" | "ORDER" | "CUSTOMER" | "PRODUCT" | "PAYMENT_AGENT" | "LEDGER" | "ERROR";
+type LogArea = "SYSTEM" | "ROUTE" | "UI" | "DB" | "ORDER" | "CUSTOMER" | "PRODUCT" | "PAYMENT_AGENT" | "LEDGER" | "ERROR" | "PAGE" | "FLOW";
 
 const SENSITIVE_KEY = /(password|token|apiKey|secret|privateKey|uploadPreset|credential)/i;
 
@@ -21,10 +21,21 @@ function sanitizeValue(value: unknown): unknown {
   return value;
 }
 
+const LOG_DEDUPE_WINDOW_MS = 500;
+const recentLogs = new Map<string, number>();
+
 function baseLog(area: LogArea, event: string, data?: unknown) {
   const ts = new Date().toISOString();
   const prefix = `[${area}]`;
   const payload = data === undefined ? undefined : sanitizeValue(data);
+  const isError = area === "ERROR";
+  if (!isError) {
+    const key = `${area}|${event}|${JSON.stringify(payload ?? null)}`;
+    const now = Date.now();
+    const last = recentLogs.get(key) ?? 0;
+    if (now - last < LOG_DEDUPE_WINDOW_MS) return;
+    recentLogs.set(key, now);
+  }
   if (payload === undefined) {
     console.log(prefix, ts, event);
   } else {
@@ -42,3 +53,7 @@ export const logProduct = (event: string, data?: unknown) => baseLog("PRODUCT", 
 export const logPaymentAgent = (event: string, data?: unknown) => baseLog("PAYMENT_AGENT", event, data);
 export const logLedger = (event: string, data?: unknown) => baseLog("LEDGER", event, data);
 export const logError = (event: string, data?: unknown) => baseLog("ERROR", event, data);
+
+export const logPageAccess = (pageName: string, payload?: unknown) => baseLog("PAGE", `${pageName} accessed`, payload);
+export const logDataFlow = (pageName: string, payload?: unknown) => baseLog("FLOW", `${pageName} data flow`, payload);
+export const logDbCall = (area: string, payload?: unknown) => baseLog("DB", area, payload);
