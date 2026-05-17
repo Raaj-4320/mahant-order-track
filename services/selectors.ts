@@ -21,7 +21,7 @@ export function getDashboardRows(orders: Order[], suppliers: Supplier[], custome
   return orders.filter((o) => o.status === "saved").map((o) => ({
     id: o.id,
     orderNumber: o.orderNumber || o.number,
-    supplierSummary: uniqNames(o.lines.map((l) => l.supplierId), suppliers).join(", ") || "—",
+    supplierSummary: Array.from(new Set(o.lines.map((l) => (l.supplierName || l.supplierSnapshot?.name || "").trim()).filter(Boolean))).join(", ") || uniqNames(o.lines.map((l) => l.supplierId), suppliers).join(", ") || "—",
     customerSummary: uniqNames(o.lines.map((l) => l.customerId), customers).join(", ") || "—",
     totalUniqueItems: new Set(o.lines.map((l) => l.productId)).size,
     orderTotal: orderTotal(o),

@@ -1,13 +1,23 @@
-import { collection, doc, getDoc, getDocs, query, setDoc, where } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, query, runTransaction, setDoc, where } from "firebase/firestore";
 import { getFirestoreDb } from "@/lib/firebase/client";
-import { orderFromFirestore, orderToFirestore } from "@/lib/firebase/mappers";
-import { orderPath, ordersPath } from "@/lib/firebase/paths";
+import { orderFromFirestore, orderToFirestore, sanitizeFirestorePayload } from "@/lib/firebase/mappers";
+import { orderNumberCounterPath, orderPath, ordersPath } from "@/lib/firebase/paths";
 import type { OrdersService } from "@/services/contracts";
 import type { Order } from "@/lib/types";
+import { logDB, logError } from "@/lib/logger";
 
 const BUSINESS_ID = process.env.NEXT_PUBLIC_FIREBASE_BUSINESS_ID ?? "mahant";
 const makeId = () => (globalThis.crypto?.randomUUID?.() ?? `ord-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
 const requireDb = () => { const db = getFirestoreDb(); if (!db) throw new Error("Firebase not configured."); return db; };
+const ORDER_NO_RE = /^YY-(\d+)$/;
+
+function parseOrderNo(value?: string | null): number | null {
+  if (!value) return null;
+  const m = value.trim().match(ORDER_NO_RE);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) ? n : null;
+}
 
 export const ordersFirebaseService: OrdersService = {
   async listOrders() {
@@ -21,13 +31,68 @@ export const ordersFirebaseService: OrdersService = {
     if (!snap.exists()) return null;
     return orderFromFirestore({ id: snap.id, ...(snap.data() as Record<string, unknown>) });
   },
+
+  async peekNextOrderNumber() {
+    const db = requireDb();
+    const counterRef = doc(db, orderNumberCounterPath(BUSINESS_ID));
+    const counterSnap = await getDoc(counterRef);
+    if (counterSnap.exists()) {
+      const maybeNext = Number((counterSnap.data() as any).nextNumber);
+      const next = Number.isFinite(maybeNext) && maybeNext >= 301 ? maybeNext : 301;
+      return `YY-${next}`;
+    }
+    const allOrders = await getDocs(collection(db, ordersPath(BUSINESS_ID)));
+    let maxExisting = 300;
+    for (const d of allOrders.docs) {
+      const data = d.data() as any;
+      const a = parseOrderNo(data.number);
+      const b = parseOrderNo(data.orderNumber);
+      if (a && a > maxExisting) maxExisting = a;
+      if (b && b > maxExisting) maxExisting = b;
+    }
+    return `YY-${Math.max(maxExisting + 1, 301)}`;
+  },
+  async allocateNextOrderNumber() {
+    const db = requireDb();
+    const counterRef = doc(db, orderNumberCounterPath(BUSINESS_ID));
+    return runTransaction(db, async (tx) => {
+      const counterSnap = await tx.get(counterRef);
+      let next = 301;
+      if (counterSnap.exists()) {
+        const maybeNext = Number((counterSnap.data() as any).nextNumber);
+        next = Number.isFinite(maybeNext) && maybeNext >= 301 ? maybeNext : 301;
+      } else {
+        const allOrders = await getDocs(collection(db, ordersPath(BUSINESS_ID)));
+        let maxExisting = 300;
+        for (const d of allOrders.docs) {
+          const data = d.data() as any;
+          const a = parseOrderNo(data.number);
+          const b = parseOrderNo(data.orderNumber);
+          if (a && a > maxExisting) maxExisting = a;
+          if (b && b > maxExisting) maxExisting = b;
+        }
+        next = Math.max(maxExisting + 1, 301);
+      }
+      tx.set(counterRef, { nextNumber: next + 1, updatedAt: new Date().toISOString() }, { merge: true });
+      return `YY-${next}`;
+    });
+  },
   async upsertOrder(order: Order) {
     const db = requireDb();
     const now = new Date().toISOString();
     const id = order.id || makeId();
     const existing = await this.getOrderById(id);
-    const next: Order = { ...order, id, createdAt: existing?.createdAt || order.createdAt || now, updatedAt: now, savedAt: order.status === "saved" ? (order.savedAt || now) : order.savedAt } as Order;
-    await setDoc(doc(db, orderPath(BUSINESS_ID, id)), orderToFirestore(next), { merge: true });
+    const number = order.number || order.orderNumber || existing?.number || existing?.orderNumber || "";
+    const next: Order = { ...order, id, number, orderNumber: number, createdAt: existing?.createdAt || order.createdAt || now, updatedAt: now, savedAt: order.status === "saved" ? (order.savedAt || now) : order.savedAt } as Order;
+    const mapped = orderToFirestore(next);
+    const sanitized = sanitizeFirestorePayload(mapped);
+    logDB("order_payload_sanitized", { orderId: id, removedUndefinedPaths: sanitized.removedUndefinedPaths });
+    try {
+      await setDoc(doc(db, orderPath(BUSINESS_ID, id)), sanitized.value, { merge: true });
+    } catch (e: any) {
+      logError("upsert_order_failure", { orderId: id, status: order.status, errorCode: e?.code ?? undefined, errorMessage: e?.message ?? String(e), removedUndefinedPaths: sanitized.removedUndefinedPaths });
+      throw e;
+    }
     return next;
   },
   async archiveOrder(id: string) {
