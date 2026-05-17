@@ -16,6 +16,6 @@ export const productsMockService: ProductsService = {
     return deepClone(product);
   },
   async archiveProduct(id) {
-    productsState = productsState.map((p) => (p.id === id && p.source !== "manual" ? { ...p, status: "inactive", updatedAt: new Date().toISOString() } : p));
+    productsState = productsState.map((p) => (p.id === id ? { ...p, status: "inactive", updatedAt: new Date().toISOString() } : p));
   },
 };
