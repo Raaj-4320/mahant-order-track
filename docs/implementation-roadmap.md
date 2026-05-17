@@ -418,3 +418,17 @@ Connection order:
 - Firebase mode supplier/WeChat groups now derive from Firebase orders and do not mix mock supplier records.
 - Draft and archived orders are excluded from supplier totals/groups.
 - No separate supplier collection introduced in this phase; selectors provide derived grouping/summary outputs.
+
+
+## Phase P1-B — UI Action Truthfulness Pass
+- Removed fake placeholder core actions from Customers and Products row action areas.
+- Converted deferred toolbar controls to explicit disabled states with clear reasons.
+- Kept functional core flows unchanged and documented the full page-level action audit.
+- Added no-fake-action policy and audit table in `docs/phase-p1b-ui-action-truthfulness.md`.
+
+
+## Phase P0-C — Production Safety Gates
+- Added runtime gates for dev reset and maintenance tooling visibility.
+- Delete Everything now requires dev-reset flag and is additionally owner/admin-gated when auth-required mode is enabled.
+- Recalculate Customer Totals is hidden from normal users and shown only in maintenance mode or owner/admin access.
+- Kept customer ledger repair API internal-only with no new normal UI entry points.
