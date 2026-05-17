@@ -9,13 +9,14 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { StatCard } from "@/components/StatCard";
 import { Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { logPageAccess, logDataFlow } from "@/lib/logger";
 import { useOrders } from "@/hooks/useOrders";
 
 export default function SuppliersPage() {
   const { orders, pushToast } = useStore();
   const { data: remoteOrders, isLoading: ordersLoading } = useOrders();
-  const { data: suppliers } = useSuppliers();
+  const { data: suppliers, isLoading: suppliersLoading } = useSuppliers();
   const ordersSource = process.env.NEXT_PUBLIC_ORDERS_DATA_SOURCE ?? "mock";
   const isFirebaseOrdersMode = ordersSource === "firebase";
   const [tab, setTab] = useState<"wechat" | "unique">("wechat");
@@ -29,6 +30,14 @@ export default function SuppliersPage() {
   const uniqueGroups = useMemo(() => getUniqueSupplierGroups(sourceOrders, suppliers), [sourceOrders, suppliers]);
   const filteredWechat = wechatGroups.filter((g) => [g.wechatId, ...g.orders.map((o: any) => o.orderNumber), ...g.orders.flatMap((o: any) => o.lines.map((l: any) => l.supplierName))].join(" ").toLowerCase().includes(query.toLowerCase().trim()));
   const filteredUnique = uniqueGroups.filter((g) => [g.supplierName, ...g.entries.map((e: any) => `${e.wechatId} ${e.orderNumber}`)].join(" ").toLowerCase().includes(query.toLowerCase().trim()));
+  useEffect(() => { logPageAccess("Suppliers", { component: "app/suppliers/page.tsx", source: ordersSource }); }, []);
+  const suppliersFlowLoggedRef = useRef(false);
+  useEffect(() => {
+    if (suppliersFlowLoggedRef.current) return;
+    if (ordersLoading || suppliersLoading) return;
+    suppliersFlowLoggedRef.current = true;
+    logDataFlow("Suppliers", { functionsCalled:["useOrders.reload","useSuppliers.reload"], dbPaths:["businesses/{businessId}/orders"], result:{reachedComponent:true}, counts:{wechatGroups:filteredWechat.length,uniqueSupplierGroups:filteredUnique.length}, samples:{wechat:filteredWechat.slice(0,5).map((g)=>({wechatId:g.wechatId,totalOrders:g.totalOrders})), unique:filteredUnique.slice(0,5).map((g)=>({supplier:g.supplierName,totalOrders:g.totalOrders}))} });
+  }, [ordersLoading, suppliersLoading, filteredWechat.length, filteredUnique.length]);
   return <PageShell title="Suppliers"><div className="space-y-4 p-6">
     <div className="flex gap-2"><Button variant={tab==="wechat"?"primary":"secondary"} size="sm" onClick={()=>setTab("wechat")}>WeChat IDs</Button><Button variant={tab==="unique"?"primary":"secondary"} size="sm" onClick={()=>setTab("unique")}>Unique Suppliers</Button></div>
     <div className="min-w-[280px]"><Input value={query} onChange={(e)=>setQuery(e.target.value)} placeholder={tab==="wechat"?"Search by wechat, order, supplier...":"Search by supplier, wechat, order..."} leadingIcon={<Search size={14} />} /></div>
