@@ -15,5 +15,7 @@ export function getOrdersService(): OrdersService {
     async listDraftOrders() { const { ordersFirebaseService } = await import("@/services/firebase/ordersFirebaseService"); return ordersFirebaseService.listDraftOrders?.() ?? []; },
     async autosaveDraft(order) { const { ordersFirebaseService } = await import("@/services/firebase/ordersFirebaseService"); return ordersFirebaseService.autosaveDraft?.(order) ?? order; },
     async deleteOrder(id) { const { ordersFirebaseService } = await import("@/services/firebase/ordersFirebaseService"); return ordersFirebaseService.archiveOrder(id); },
+    async peekNextOrderNumber() { const { ordersFirebaseService } = await import("@/services/firebase/ordersFirebaseService"); return ordersFirebaseService.peekNextOrderNumber!(); },
+    async allocateNextOrderNumber() { const { ordersFirebaseService } = await import("@/services/firebase/ordersFirebaseService"); return ordersFirebaseService.allocateNextOrderNumber!(); },
   };
 }
