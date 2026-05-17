@@ -77,6 +77,7 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
               onChange={(e) =>
                 setDraft((d) => ({ ...d, number: e.target.value, orderNumber: e.target.value }))
               }
+              placeholder="Auto on Save"
               trailingIcon={<Pencil size={14} />}
             />
           </Field>
