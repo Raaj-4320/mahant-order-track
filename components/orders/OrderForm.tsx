@@ -78,6 +78,7 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
                 setDraft((d) => ({ ...d, number: e.target.value, orderNumber: e.target.value }))
               }
               trailingIcon={<Pencil size={14} />}
+              readOnly
             />
           </Field>
 
