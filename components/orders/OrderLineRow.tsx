@@ -19,7 +19,7 @@ type Props = {
 
 // Columns: supplier | prod-pic | dim-pic | marka | details | ctns | pcs/ctn | total pcs | rmb/pcs | line total | customer | action
 export const LINE_GRID =
-  "grid grid-cols-[minmax(0,0.6fr)_58px_58px_74px_minmax(0,1.05fr)_56px_76px_60px_60px_120px_minmax(0,0.5fr)_28px] items-center gap-1.5";
+  "grid grid-cols-[minmax(0,0.42fr)_58px_58px_78px_minmax(0,0.74fr)_56px_76px_70px_70px_132px_minmax(0,0.8fr)_28px] items-center gap-1.5";
 
 export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, supplierSuggestions = [], customerSuggestions = [], customers = [] }: Props) {
   const pcs = lineTotalPcs(line);
