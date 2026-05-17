@@ -43,6 +43,7 @@ export interface OrdersService {
   deleteOrder?(id: string): Promise<void>;
   listDraftOrders?(): Promise<Order[]>;
   autosaveDraft?(order: Order): Promise<Order>;
+  allocateNextOrderNumber?(): Promise<string>;
 }
 export interface DashboardReadService {
   getDashboardStats(): Promise<DashboardStats>;

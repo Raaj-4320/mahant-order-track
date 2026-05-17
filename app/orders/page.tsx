@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
 import { OrderForm, newLine } from "@/components/orders/OrderForm";
 import { OrderFooter } from "@/components/orders/OrderFooter";
@@ -18,16 +18,16 @@ import { useCustomers } from "@/hooks/useCustomers";
 import { getCustomersService } from "@/services/customersService";
 import { customerLedgerService } from "@/services/customerLedgerService";
 import { resolveCustomersForOrderLines } from "@/services/customers/customerResolution";
-import { logDB, logError, logLedger, logOrder, logPaymentAgent, logProduct, logRoute } from "@/lib/logger";
+import { logDB, logError, logLedger, logOrder, logPageAccess, logDataFlow, logPaymentAgent, logProduct } from "@/lib/logger";
+import { ensureFinalOrderNumber } from "@/services/orderNumberService";
 
 const today = () => new Date().toISOString().slice(0, 10);
-const nextOrderNo = (orders: Order[]) => `25-${String(orders.length + 301).padStart(3, "0")}`;
-const createEmptyDraft = (orders: Order[], defaultPaymentAgentId = ""): Order => ({
+const createEmptyDraft = (_orders: Order[], defaultPaymentAgentId = "", reservedOrderNumber = ""): Order => ({
   id: `ord-${Date.now()}`,
-  orderNumber: nextOrderNo(orders),
-  number: nextOrderNo(orders),
+  orderNumber: reservedOrderNumber,
+  number: reservedOrderNumber,
   date: today(),
-  loadingDate: today(),
+  loadingDate: undefined,
   paymentAgentId: defaultPaymentAgentId,
   paymentBy: defaultPaymentAgentId,
   wechatId: "",
@@ -39,13 +39,33 @@ const createEmptyDraft = (orders: Order[], defaultPaymentAgentId = ""): Order =>
 
 const meaningfulLine = (l: Order["lines"][number]) => !!(l.details?.trim() || l.marka?.trim() || l.productPhotoUrl || l.photoUrl || l.totalCtns || l.pcsPerCtn || l.rmbPerPcs);
 
+const summarizeOrderForLog = (o: Order) => ({
+  id: o.id,
+  orderNumber: o.number || o.orderNumber,
+  status: o.status,
+  date: o.date,
+  loadingDate: o.loadingDate,
+  wechatId: o.wechatId,
+  paymentBy: o.paymentBy,
+  paymentAgentId: o.paymentAgentId,
+  lineCount: o.lines.length,
+  totalAmount: orderTotal(o),
+  customerNames: Array.from(new Set(o.lines.map((l) => l.customerName || l.customerSnapshot?.name || "").filter(Boolean))).slice(0, 10),
+  supplierNames: Array.from(new Set(o.lines.map((l) => l.supplierName || l.supplierSnapshot?.name || "").filter(Boolean))).slice(0, 10),
+  generatedLineIds: o.lines.map((l) => l.id),
+  linePhotoFlags: o.lines.map((l) => ({ lineId: l.id, hasProductPhoto: Boolean(l.productPhotoUrl), hasDimensionPhoto: Boolean(l.photoUrl) })),
+});
+
 export default function OrdersPage() {
-  logRoute("orders_page_loaded", { ordersSource: process.env.NEXT_PUBLIC_ORDERS_DATA_SOURCE ?? "mock" });
   type OrdersMode = "history" | "add" | "drafts" | "edit";
+  useEffect(() => {
+    logPageAccess("Orders", { component: "app/orders/page.tsx", source: process.env.NEXT_PUBLIC_ORDERS_DATA_SOURCE ?? "mock" });
+  }, []);
+
   const { orders, upsertOrder, deleteOrder, pushToast } = useStore();
   const { data: paymentAgents, recalculateFromOrders, applyOrderSettlement, reverseOrderSettlement } = usePaymentAgents();
-  const { data: firebaseOrders, draftOrders: firebaseDraftOrders, autosaveDraft, upsertOrder: upsertFirebaseOrder, archiveOrder: archiveFirebaseOrder, reload: reloadFirebaseOrders } = useOrders();
-  const { data: customers, reload: reloadCustomers } = useCustomers();
+  const { data: firebaseOrders, isLoading: isOrdersLoading, error: ordersLoadError, draftOrders: firebaseDraftOrders, autosaveDraft, upsertOrder: upsertFirebaseOrder, archiveOrder: archiveFirebaseOrder, reload: reloadFirebaseOrders, allocateNextOrderNumber } = useOrders();
+  const { data: customers, isLoading: isCustomersLoading, reload: reloadCustomers } = useCustomers();
   const ordersDataSource = process.env.NEXT_PUBLIC_ORDERS_DATA_SOURCE ?? "mock";
   const isFirebaseOrdersMode = ordersDataSource === "firebase";
   const [query, setQuery] = useState("");
@@ -60,7 +80,33 @@ export default function OrdersPage() {
 
   const activeOrders = useMemo(() => (isFirebaseOrdersMode ? firebaseOrders : orders).filter((o) => o.status !== "archived"), [isFirebaseOrdersMode, firebaseOrders, orders]);
   const total = useMemo(() => orderTotal(draft), [draft]);
-  const history = useMemo(() => activeOrders.filter((o) => { const q=query.toLowerCase().trim(); if(!q) return true; const supplierText=o.lines.map(l=>l.supplierName || l.supplierSnapshot?.name || "").join(" ").toLowerCase(); const customerText=o.lines.map(l=>l.customerSnapshot?.name || "").join(" ").toLowerCase(); const payment=paymentAgents.find(p=>p.id===o.paymentBy)?.name.toLowerCase()??""; return o.number.toLowerCase().includes(q)||o.wechatId.toLowerCase().includes(q)||supplierText.includes(q)||customerText.includes(q)||payment.includes(q); }).slice(0, 10), [activeOrders, query, paymentAgents]);
+  const history = useMemo(() => activeOrders.filter((o) => { const q=query.toLowerCase().trim(); if(!q) return true; const supplierText=o.lines.map(l=>l.supplierName || l.supplierSnapshot?.name || "").join(" ").toLowerCase(); const customerText=o.lines.map(l=>l.customerSnapshot?.name || "").join(" ").toLowerCase(); const payment=paymentAgents.find(p=>p.id===o.paymentBy)?.name.toLowerCase()??""; return (o.number || o.orderNumber || "").toLowerCase().includes(q)||o.wechatId.toLowerCase().includes(q)||supplierText.includes(q)||customerText.includes(q)||payment.includes(q); }).slice(0, 10), [activeOrders, query, paymentAgents]);
+
+  const ordersFlowLoggedRef = useRef(false);
+
+  useEffect(() => {
+    if (ordersFlowLoggedRef.current) return;
+    if (isFirebaseOrdersMode && isOrdersLoading) return;
+    if (isCustomersLoading) return;
+
+    if (ordersLoadError) {
+      ordersFlowLoggedRef.current = true;
+      logError("orders_load_failure", { source: isFirebaseOrdersMode ? "firebase" : "mock", error: ordersLoadError });
+      return;
+    }
+
+    const allOrders = isFirebaseOrdersMode ? firebaseOrders : orders;
+    ordersFlowLoggedRef.current = true;
+    logDataFlow("Orders", {
+      functionsCalled: ["useOrders.reload", "useCustomers.reload", "ordersService.listOrders", "customersService.listCustomers"],
+      dbPaths: ["businesses/{businessId}/orders", "businesses/{businessId}/customers"],
+      result: { count: allOrders.length, reachedComponent: true, renderedRows: history.length },
+      counts: { saved: allOrders.filter((o) => o.status === "saved").length, draft: allOrders.filter((o) => o.status === "draft").length, archived: allOrders.filter((o) => o.status === "archived").length },
+      customersLoadedCount: customers.length,
+      sampleOrders: history.slice(0, 5).map(summarizeOrderForLog),
+      query: query.trim() || undefined,
+    });
+  }, [isFirebaseOrdersMode, isOrdersLoading, isCustomersLoading, ordersLoadError, firebaseOrders, orders, history, query, customers.length]);
   const editingOrder = editingOrderId ? activeOrders.find((o) => o.id === editingOrderId) ?? null : null;
   const wechatSuggestions = useMemo(() => Array.from(new Set(activeOrders.map((o) => o.wechatId.trim()).filter(Boolean))).slice(0, 5), [activeOrders]);
   const supplierSuggestions = useMemo(() => {
@@ -80,7 +126,7 @@ export default function OrdersPage() {
   const onUploadingChange = (isUploading: boolean) => setActiveUploads((p) => Math.max(0, p + (isUploading ? 1 : -1)));
 
   const onSave = async (status: Order["status"]) => {
-    logOrder("save_clicked", { status, activeUploads, lineCount: draft.lines.length, orderNumber: draft.number });
+    logDataFlow("Orders", JSON.stringify({ event: status === "draft" ? "draft_save_started" : "order_save_started", status, lineCount: draft.lines.length, orderNumber: draft.number }, null, 2));
     if (activeUploads > 0) return pushToast({ tone: "info", text: "Please wait for image uploads to finish before saving." });
     if ((draft.paidToPaymentAgentNow ?? 0) < 0) return pushToast({ tone: "danger", text: "Paid Now cannot be negative." });
 
@@ -98,6 +144,7 @@ export default function OrdersPage() {
       setOriginalLineIds(new Set());
       setDraft(createEmptyDraft(orders, ""));
       setMode("history");
+      logDataFlow("Orders", JSON.stringify({ event: "draft_save_completed", orderId: draftOrder.id, orderNumber: draftOrder.number || draftOrder.orderNumber }, null, 2));
       return pushToast({ tone: "success", text: "Draft saved. Use Complete Draft to finish it." });
     }
 
@@ -120,7 +167,8 @@ export default function OrdersPage() {
       logError("customer_resolution_failure", { error: e instanceof Error ? e.message : String(e) });
       throw e;
     }
-    const savedOrder = { ...draft, lines: resolvedLines, status: "saved" as const, paymentAgentId: selectedPaymentAgentId, paymentBy: selectedPaymentAgentId, paymentAgentSettlementSnapshot: { ...settlement, orderTotal: settlement.orderTotal, existingCredit: settlement.existingCredit, paymentAgentId: selectedPaymentAgentId, paymentAgentName: selectedPaymentAgent?.name, updatedAt: now, createdAt: draft.paymentAgentSettlementSnapshot?.createdAt || now } };
+    const finalOrderNumber = await ensureFinalOrderNumber({ ...draft, status: "saved" as const });
+    const savedOrder = { ...draft, number: finalOrderNumber, orderNumber: finalOrderNumber, lines: resolvedLines, status: "saved" as const, paymentAgentId: selectedPaymentAgentId, paymentBy: selectedPaymentAgentId, paymentAgentSettlementSnapshot: { ...settlement, orderTotal: settlement.orderTotal, existingCredit: settlement.existingCredit, paymentAgentId: selectedPaymentAgentId, paymentAgentName: selectedPaymentAgent?.name, updatedAt: now, createdAt: draft.paymentAgentSettlementSnapshot?.createdAt || now } };
     try {
       if (isFirebaseOrdersMode) {
         await upsertFirebaseOrder(savedOrder as any);
@@ -151,7 +199,7 @@ export default function OrdersPage() {
       await customersService.upsertCustomer?.({ ...base, totalOrders: t.totalOrders, totalSpent: t.totalSpent, outstandingAmount: t.totalSpent, updatedAt: now } as any);
     }
     if (editingOrderId && removedLineIds.length) await archiveProductsForRemovedOrderLines(editingOrderId, removedLineIds);
-    let result = { failed: 0, synced: 0 };
+    let result = { failed: 0, synced: 0, failures: [] as { lineId: string; generatedProductId?: string; reason: string; errorCode?: string; errorMessage?: string }[] };
     try {
       result = await syncOrderLinesToProducts(savedOrder);
       logProduct("product_sync_success", result);
@@ -177,8 +225,9 @@ export default function OrdersPage() {
     }
     await recalculateFromOrders(mergedOrders);
     await reloadCustomers();
-    logOrder("save_order_complete", { orderId: savedOrder.id, upserted: true, productSyncFailed: Boolean(result.failed), settlementApplied: isFirebaseOrdersMode, receivablesApplied: true });
-    pushToast({ tone: result.failed ? "info" : "success", text: result.failed ? "Order saved, but generated product sync failed." : `Order ${draft.number} saved and products synced.` });
+    logDataFlow("Orders", JSON.stringify({ event: "order_save_completed", orderSaved: true, productsSynced: !Boolean(result.failed), customerResolved: true, customerReceivablesApplied: true, paymentSettlementApplied: isFirebaseOrdersMode }, null, 2));
+    const failedMsg = result.failures[0] ? `Order saved, but product sync failed for line ${result.failures[0].lineId}: ${result.failures[0].errorCode || result.failures[0].reason}${result.failures[0].errorMessage ? ` (${result.failures[0].errorMessage})` : ""}.` : "Order saved, but generated product sync failed.";
+    pushToast({ tone: result.failed ? "info" : "success", text: result.failed ? failedMsg : `Order ${savedOrder.number} saved and products synced.` });
     setEditingOrderId(null); setRemovedLineIds([]); setOriginalLineIds(new Set()); setDraft(createEmptyDraft(orders, "")); setMode("history");
   };
 
@@ -196,7 +245,7 @@ export default function OrdersPage() {
   };
 
   const startEdit = (o: Order) => { setEditingOrderId(o.id); setRemovedLineIds([]); setOriginalLineIds(new Set(o.lines.map(l=>l.id))); setDraft(JSON.parse(JSON.stringify(o))); setMode("edit"); };
-  const startAdd = () => {
+  const startAdd = async () => {
     setEditingOrderId(null);
     setRemovedLineIds([]);
     setOriginalLineIds(new Set());
@@ -205,7 +254,13 @@ export default function OrdersPage() {
       setDraft(JSON.parse(JSON.stringify(latest)));
       pushToast({ tone: "info", text: "Resumed autosaved draft." });
     } else {
-      setDraft(createEmptyDraft(orders, ""));
+      try {
+        const reserved = await allocateNextOrderNumber();
+        setDraft(createEmptyDraft(orders, "", reserved));
+      } catch (e) {
+        pushToast({ tone: "danger", text: e instanceof Error ? e.message : "Could not allocate order number." });
+        return;
+      }
     }
     setMode("add");
   };
@@ -229,7 +284,7 @@ export default function OrdersPage() {
       try {
         await reverseOrderSettlement(o);
       } catch {
-        pushToast({ tone: "danger", text: `Could not reverse payment-agent settlement for ${o.number}. Order was not archived.` });
+        pushToast({ tone: "danger", text: `Could not reverse payment-agent settlement for ${o.number || o.orderNumber}. Order was not archived.` });
         return;
       }
       try {
@@ -242,13 +297,13 @@ export default function OrdersPage() {
       try { await archiveProductsForOrder(o); } catch { archiveProductsFailed = true; }
       await archiveFirebaseOrder(o.id);
       await reloadFirebaseOrders();
-      pushToast({ tone: archiveProductsFailed ? "info" : "success", text: archiveProductsFailed ? `Order ${o.number} archived, but generated product archive failed.` : `Order ${o.number} archived and generated products archived.` });
+      pushToast({ tone: archiveProductsFailed ? "info" : "success", text: archiveProductsFailed ? `Order ${o.number || o.orderNumber} archived, but generated product archive failed.` : `Order ${o.number || o.orderNumber} archived and generated products archived.` });
       return;
     }
     deleteOrder(o.id);
     await recalculateFromOrders(orders.filter((x) => x.id !== o.id && x.status === "saved"));
     await archiveProductsForOrder(o);
-    pushToast({ tone: "success", text: `Order ${o.number} deleted and related generated products archived.` });
+    pushToast({ tone: "success", text: `Order ${o.number || o.orderNumber} deleted and related generated products archived.` });
     if (editingOrderId === o.id) onCancel();
   };
 
@@ -264,18 +319,18 @@ export default function OrdersPage() {
       <main className="min-h-0 flex-1 overflow-y-auto p-4 space-y-4">
         {(mode === "add" || mode === "edit") && <>
           {isFirebaseOrdersMode && <div className="text-[11px] text-fg-subtle px-5">{autosaveStatus === "saving" ? "Saving draft..." : autosaveStatus === "saved" ? "Draft saved" : autosaveStatus === "error" ? "Draft autosave failed" : ""}</div>}
-          <div className="card p-3 text-[12px] text-fg-subtle">{editingOrder ? `Editing order ${editingOrder.number}` : "Create new order"}</div>
+          <div className="card p-3 text-[12px] text-fg-subtle">{editingOrder ? `Editing order ${editingOrder.number || editingOrder.orderNumber}` : "Create new order"}</div>
           <OrderForm draft={draft} setDraft={(u) => setDraft((d) => u(d))} paymentAgents={paymentAgents} customers={customers} onUploadingChange={onUploadingChange} onRemoveLine={handleRemoveLine} wechatSuggestions={wechatSuggestions.filter((w) => draft.wechatId.trim() ? w.toLowerCase().includes(draft.wechatId.trim().toLowerCase()) : false)} supplierSuggestions={supplierSuggestions} customerSuggestions={customerSuggestions} />
           {!validation.isValid && <div className="card p-3 text-[12px]"><div className="font-semibold mb-1">Missing before Save Order</div><ul className="list-disc pl-5 space-y-0.5 text-fg-subtle">{validation.missingFields.map((item) => <li key={item}>{item}</li>)}{validation.lineIssues.flatMap((line) => line.issues.map((issue) => <li key={`${line.lineId}-${issue}`}>{`Line ${line.lineNumber}: ${issue}`}</li>))}</ul></div>}
           <OrderFooter total={total} onCancel={onCancel} onSaveDraft={() => onSave("draft")} onSaveOrder={() => onSave("saved")} onViewDetails={() => setViewOrder(draft)} saveOrderLabel={editingOrderId ? "Save Changes" : "Save Order"} disableSaveOrder={!validation.isValid} paymentAgent={selectedPaymentAgent} settlement={settlement} paidNow={draft.paidToPaymentAgentNow ?? 0} onPaidNowChange={(value) => setDraft((d) => ({ ...d, paidToPaymentAgentNow: Math.max(0, Number(value) || 0) }))} />
         </>}
-        {mode === "drafts" && <section className="card p-4"><div className="font-semibold mb-2">Draft Orders</div>{drafts.length === 0 ? <div className="text-[12px] text-fg-subtle">No draft orders yet.</div> : <div className="space-y-2">{drafts.map((o)=>{ const check = validateOrderForSave(o); const agent = paymentAgents.find((p) => p.id === (o.paymentAgentId || o.paymentBy)); return <div key={o.id} className="rounded border border-border p-3 flex items-center justify-between"><div className="text-[12px]"><div className="font-semibold">{o.number}</div><div className="text-fg-subtle">{formatDate(o.date)} · {o.lines.length} lines · {agent?.name ?? "No payment agent"}</div><div className="text-fg-subtle">{o.wechatId || "No WeChat ID"} · {check.missingFields.length + check.lineIssues.length} missing items</div>{isFirebaseOrdersMode && o.draftAutosavedAt ? <div className="text-fg-subtle">Autosaved: {formatDate(o.draftAutosavedAt)}</div> : null}</div><Button size="sm" variant="secondary" onClick={() => startEdit(o)}>Continue / Complete</Button></div>})}</div>}</section>}
+        {mode === "drafts" && <section className="card p-4"><div className="font-semibold mb-2">Draft Orders</div>{drafts.length === 0 ? <div className="text-[12px] text-fg-subtle">No draft orders yet.</div> : <div className="space-y-2">{drafts.map((o)=>{ const check = validateOrderForSave(o); const agent = paymentAgents.find((p) => p.id === (o.paymentAgentId || o.paymentBy)); return <div key={o.id} className="rounded border border-border p-3 flex items-center justify-between"><div className="text-[12px]"><div className="font-semibold">{o.number || o.orderNumber || "—"}</div><div className="text-fg-subtle">{formatDate(o.date)} · {o.lines.length} lines · {agent?.name ?? "No payment agent"}</div><div className="text-fg-subtle">{o.wechatId || "No WeChat ID"} · {check.missingFields.length + check.lineIssues.length} missing items</div>{isFirebaseOrdersMode && o.draftAutosavedAt ? <div className="text-fg-subtle">Autosaved: {formatDate(o.draftAutosavedAt)}</div> : null}</div><Button size="sm" variant="secondary" onClick={() => startEdit(o)}>Continue / Complete</Button></div>})}</div>}</section>}
 
         <section className="card p-4">
           <div className="flex items-center justify-between mb-3"><h3 className="font-semibold">Order History</h3><div className="text-[12px] text-fg-subtle">Showing first 10</div></div>
           <div className="space-y-2">{history.length === 0 ? <div className="text-[12px] text-fg-subtle">No orders yet. Click Add Order to create one.</div> : history.map((o) => (
             <div key={o.id} className="rounded border border-border p-3 flex items-center justify-between gap-2">
-              <div className="text-[12px]"><div className="font-semibold">{o.number}</div><div className="text-fg-subtle">{formatDate(o.date)} · {paymentAgents.find((p) => p.id === o.paymentBy)?.name ?? "—"} · {o.wechatId || "—"}</div><div className="text-fg-subtle">{o.lines.length} lines · {formatAmount(orderTotal(o))}</div></div>
+              <div className="text-[12px]"><div className="font-semibold">{o.number || o.orderNumber || "—"}</div><div className="text-fg-subtle">{formatDate(o.date)} · {paymentAgents.find((p) => p.id === o.paymentBy)?.name ?? "—"} · {o.wechatId || "—"}</div><div className="text-fg-subtle">{o.lines.length} lines · {formatAmount(orderTotal(o))}</div></div>
               <div className="flex items-center gap-2">
                 <input type="date" className="input h-8 text-[12px]" value={o.loadingDate ?? ""} onChange={(e) => { const updated = { ...o, loadingDate: e.target.value, updatedAt: new Date().toISOString() }; if (isFirebaseOrdersMode) { upsertFirebaseOrder(updated as any).then(reloadFirebaseOrders); } else { upsertOrder(updated); } }} />
                 {o.status !== "draft" && o.status !== "archived" ? <select className="input h-8 text-[12px]" value={o.status} disabled={statusUpdatingId === o.id} onChange={(e) => changeOrderStatus(o, e.target.value as Order["status"])}><option value="saved">saved</option><option value="loading">loading</option><option value="shipped">shipped</option><option value="received">received</option><option value="completed">completed</option><option value="cancelled">cancelled</option></select> : <span className="text-[11px] text-fg-subtle">{o.status}</span>}
