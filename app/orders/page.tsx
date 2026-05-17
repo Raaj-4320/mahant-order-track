@@ -4,10 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
 import { OrderForm, newLine } from "@/components/orders/OrderForm";
 import { OrderFooter } from "@/components/orders/OrderFooter";
-import { formatAmount, formatDate } from "@/lib/data";
+import { formatDate } from "@/lib/data";
 import { Order, orderTotal } from "@/lib/types";
 import { syncOrderLinesToProducts, archiveProductsForOrder, archiveProductsForRemovedOrderLines } from "@/services/productCatalogSync";
 import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
 import { calculatePaymentAgentSettlement } from "@/services/settlement/paymentAgentSettlement";
 import { usePaymentAgents } from "@/hooks/usePaymentAgents";
 import { useOrders } from "@/hooks/useOrders";
@@ -19,6 +20,9 @@ import { customerLedgerService } from "@/services/customerLedgerService";
 import { resolveCustomersForOrderLines } from "@/services/customers/customerResolution";
 import { logCustomer, logDB, logError, logLedger, logOrder, logPageAccess, logDataFlow, logPaymentAgent, logProduct } from "@/lib/logger";
 import { ensureFinalOrderNumber, peekNextOrderNumber } from "@/services/orderNumberService";
+import { ArrowUpDown, Bell, CalendarDays, ChevronDown, Filter, LayoutGrid, List, Moon, Search, Sun } from "lucide-react";
+import { cn } from "@/lib/cn";
+import { useTheme } from "@/components/ThemeProvider";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const createEmptyDraft = (_orders: Order[], defaultPaymentAgentId = "", reservedOrderNumber = ""): Order => ({
@@ -91,6 +95,10 @@ export default function OrdersPage() {
   const [mode, setMode] = useState<OrdersMode>("history");
   const [viewOrder, setViewOrder] = useState<Order | null>(null);
   const [statusUpdatingId, setStatusUpdatingId] = useState<string | null>(null);
+  const [view, setView] = useState<"list" | "grid" | "calendar">("list");
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const pickerRef = useRef<HTMLDivElement | null>(null);
+  const { theme, toggle } = useTheme();
 
   const activeOrders = useMemo(() => (isFirebaseOrdersMode ? firebaseOrders : orders).filter((o) => o.status !== "archived"), [isFirebaseOrdersMode, firebaseOrders, orders]);
   const total = useMemo(() => orderTotal(draft), [draft]);
@@ -283,6 +291,13 @@ export default function OrdersPage() {
     }
   };
   const drafts = useMemo(() => (isFirebaseOrdersMode ? firebaseDraftOrders : orders.filter((o) => o.status === "draft")), [isFirebaseOrdersMode, orders, firebaseDraftOrders]);
+  const formatPlainAmount = (value: number) =>
+    value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const getPaymentAgentName = (order: Order) =>
+    paymentAgents.find((p) => p.id === (order.paymentAgentId || order.paymentBy) || p.id === order.paymentBy)?.name
+    || order.paymentAgentSnapshot?.name
+    || "—";
+  const getTotalCtns = (order: Order) => order.lines.reduce((sum, line) => sum + (Number(line.totalCtns) || 0), 0);
 
 
   const handleRemoveLine = (lineId: string) => {
@@ -319,15 +334,29 @@ export default function OrdersPage() {
     pushToast({ tone: "success", text: `Order ${o.number || o.orderNumber} deleted and related generated products archived.` });
     if (editingOrderId === o.id) onCancel();
   };
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) setPickerOpen(false);
+    };
+    if (pickerOpen) document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [pickerOpen]);
 
   return (
     <div className="flex h-screen min-h-0 flex-col">
-      <div className="flex items-center gap-2 px-5 py-3 border-b border-border bg-bg">
-        <div className="flex-1 max-w-md"><input value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="Search order history..." className="input" /></div>
-        <Button size="sm" variant="secondary" disabled title="Filtering is not enabled in this phase.">Filter</Button>
-        <Button size="sm" variant="secondary" disabled title="Sorting is not enabled in this phase.">Sort</Button>
+      <div className="flex flex-wrap items-center gap-2 px-5 py-3 border-b border-border bg-bg">
+        <div className="min-w-[280px] flex-1 max-w-xl"><Input value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="Search orders, suppliers, customers..." leadingIcon={<Search size={15} />} /></div>
+        <div className="relative" ref={pickerRef}>
+          <Button size="sm" onClick={() => setPickerOpen((v) => !v)}><List size={14} /><span className="text-fg-muted">Order</span><span className="font-semibold">{(editingOrder?.number || draft.number || history[0]?.number || "—")}</span><ChevronDown size={13} /></Button>
+          {pickerOpen && <div className="absolute left-0 top-full z-20 mt-2 w-72 rounded-xl border border-border bg-bg-card p-1.5 shadow-card max-h-[320px] overflow-y-auto">{activeOrders.slice(0,30).map((o) => <button key={o.id} onClick={() => { setPickerOpen(false); startEdit(o); }} className="block w-full rounded-md px-2.5 py-2 text-left text-[12.5px] hover:bg-bg-subtle transition-colors"><div className="flex items-center justify-between"><span className="font-semibold">{o.number || o.orderNumber || "Draft"}</span><span className="text-[11px] text-fg-subtle">{formatDate(o.date)}</span></div><div className="mt-0.5 text-[11.5px] text-fg-muted">{o.lines.length} lines · {formatPlainAmount(orderTotal(o))}</div></button>)}</div>}
+        </div>
+        <Button size="sm" variant="secondary" disabled title="Filtering is not enabled in this phase."><Filter size={14} />Filter</Button>
+        <Button size="sm" variant="secondary" disabled title="Sorting is not enabled in this phase."><ArrowUpDown size={14} />Sort</Button>
+        <div className="flex items-center rounded-lg border border-border bg-bg-card p-0.5">{([{ v: "list", I: List }, { v: "grid", I: LayoutGrid }, { v: "calendar", I: CalendarDays }] as const).map(({ v, I }) => <button key={v} onClick={() => setView(v)} className={cn("grid h-6 w-7 place-items-center rounded-md text-fg-muted transition-colors", view===v && "bg-brand text-brand-fg")}><I size={13} /></button>)}</div>
         <Button size="sm" variant="primary" onClick={startAdd}>Add Order</Button>
-        <Button size="sm" variant="secondary" onClick={() => setMode("drafts")}>Complete Draft</Button>
+        <Button size="sm" variant="secondary" onClick={() => setMode("drafts")}>Draft ({drafts.length})</Button>
+        <button aria-label="Notifications" className="relative grid h-8 w-8 place-items-center rounded-full border border-border bg-bg-card hover:border-fg-subtle transition-colors"><Bell size={14} /></button>
+        <button aria-label="Toggle theme" onClick={toggle} className="grid h-8 w-8 place-items-center rounded-full border border-border bg-bg-card hover:border-fg-subtle transition-colors">{theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}</button>
       </div>
       <main className="min-h-0 flex-1 overflow-y-auto p-4 space-y-4">
         {(mode === "add" || mode === "edit") && <>
@@ -337,13 +366,25 @@ export default function OrdersPage() {
           {!validation.isValid && <div className="card p-3 text-[12px]"><div className="font-semibold mb-1">Missing before Save Order</div><ul className="list-disc pl-5 space-y-0.5 text-fg-subtle">{validation.missingFields.map((item) => <li key={item}>{item}</li>)}{validation.lineIssues.flatMap((line) => line.issues.map((issue) => <li key={`${line.lineId}-${issue}`}>{`Line ${line.lineNumber}: ${issue}`}</li>))}</ul></div>}
           <OrderFooter total={total} onCancel={onCancel} onSaveDraft={() => onSave("draft")} onSaveOrder={() => onSave("saved")} onViewDetails={() => setViewOrder(draft)} saveOrderLabel={editingOrderId ? "Save Changes" : "Save Order"} disableSaveOrder={!validation.isValid} paymentAgent={selectedPaymentAgent} settlement={settlement} paidNow={draft.paidToPaymentAgentNow ?? 0} onPaidNowChange={(value) => setDraft((d) => ({ ...d, paidToPaymentAgentNow: Math.max(0, Number(value) || 0) }))} />
         </>}
-        {mode === "drafts" && <section className="card p-4"><div className="font-semibold mb-2">Draft Orders</div>{drafts.length === 0 ? <div className="text-[12px] text-fg-subtle">No draft orders yet.</div> : <div className="space-y-2">{drafts.map((o)=>{ const check = validateOrderForSave(o); const agent = paymentAgents.find((p) => p.id === (o.paymentAgentId || o.paymentBy)); return <div key={o.id} className="rounded border border-border p-3 flex items-center justify-between"><div className="text-[12px]"><div className="font-semibold">{o.number || o.orderNumber || "Draft"}</div><div className="text-fg-subtle">{formatDate(o.date)} · {o.lines.length} lines · {agent?.name ?? "No payment agent"}</div><div className="text-fg-subtle">{o.wechatId || "No WeChat ID"} · {check.missingFields.length + check.lineIssues.length} missing items</div>{isFirebaseOrdersMode && o.draftAutosavedAt ? <div className="text-fg-subtle">Autosaved: {formatDate(o.draftAutosavedAt)}</div> : null}</div><Button size="sm" variant="secondary" onClick={async () => { logDataFlow("Orders", JSON.stringify({ event: "complete_draft_opened", orderId: o.id, orderNumber: o.number || o.orderNumber }, null, 2)); await startEdit(o); }}>Continue / Complete</Button></div>})}</div>}</section>}
+        {mode === "drafts" && <section className="card p-4"><div className="font-semibold mb-2">Draft Orders</div>{drafts.length === 0 ? <div className="text-[12px] text-fg-subtle">No draft orders yet.</div> : <div className="space-y-2">{drafts.map((o)=>{ const check = validateOrderForSave(o); return <div key={o.id} className="rounded border border-border p-3 flex items-center justify-between gap-3"><div className="text-[12px] space-y-0.5"><div className="font-semibold">{o.number || o.orderNumber || "Draft"}</div><div className="text-fg-subtle">WeChat ID: {o.wechatId || "—"} · Payment Agent: {getPaymentAgentName(o)}</div><div className="text-fg-subtle">{o.lines.length} lines · {getTotalCtns(o)} CTNS · {formatPlainAmount(orderTotal(o))}</div><div className="text-fg-subtle">{isFirebaseOrdersMode && o.draftAutosavedAt ? `Autosaved ${formatDate(o.draftAutosavedAt)}` : `Updated ${formatDate(o.updatedAt || o.date)}`} · {check.missingFields.length + check.lineIssues.length} missing items</div></div><div className="flex items-center gap-2"><Button size="sm" variant="secondary" onClick={async () => { logDataFlow("Orders", JSON.stringify({ event: "complete_draft_opened", orderId: o.id, orderNumber: o.number || o.orderNumber }, null, 2)); await startEdit(o); }}>Continue</Button><Button size="sm" variant="secondary" onClick={() => removeOrder(o)}>Delete</Button></div></div>})}</div>}</section>}
 
         <section className="card p-4">
           <div className="flex items-center justify-between mb-3"><h3 className="font-semibold">Order History</h3><div className="text-[12px] text-fg-subtle">Showing first 10</div></div>
           <div className="space-y-2">{history.length === 0 ? <div className="text-[12px] text-fg-subtle">No orders yet. Click Add Order to create one.</div> : history.map((o) => (
-            <div key={o.id} className="rounded border border-border p-3 flex items-center justify-between gap-2">
-              <div className="text-[12px]"><div className="font-semibold">{o.number || o.orderNumber || "Draft"}</div><div className="text-fg-subtle">{formatDate(o.date)} · {paymentAgents.find((p) => p.id === o.paymentBy)?.name ?? "—"} · {o.wechatId || "—"}</div><div className="text-fg-subtle">{o.lines.length} lines · {formatAmount(orderTotal(o))}</div></div>
+            <div key={o.id} className="rounded border border-border p-3 flex items-center justify-between gap-3">
+              <div className="text-[12px] space-y-1">
+                <div className="font-semibold">{o.number || o.orderNumber || "Draft"} — {o.wechatId || "—"}</div>
+                <div className="text-fg-subtle">Payment Agent: {getPaymentAgentName(o)}</div>
+                <div className="flex items-center gap-1.5">
+                  {o.lines.slice(0, 5).map((line) => {
+                    const photo = line.productPhotoUrl || line.photoUrl || "";
+                    const label = line.marka?.trim() || line.details?.trim() || "Product";
+                    return photo ? <img key={line.id} src={photo} alt={label} title={label} className="h-7 w-7 rounded border border-border object-cover" /> : <div key={line.id} title={label} className="grid h-7 w-7 place-items-center rounded border border-dashed border-border text-[10px] text-fg-subtle">—</div>;
+                  })}
+                  {o.lines.length > 5 ? <span className="text-[11px] text-fg-subtle">+{o.lines.length - 5}</span> : null}
+                </div>
+                <div className="text-fg-subtle">{getTotalCtns(o)} CTNS · {formatPlainAmount(orderTotal(o))}</div>
+              </div>
               <div className="flex items-center gap-2">
                 <input type="date" className="input h-8 text-[12px]" value={o.loadingDate ?? ""} onChange={(e) => { const updated = { ...o, loadingDate: e.target.value, updatedAt: new Date().toISOString() }; if (isFirebaseOrdersMode) { upsertFirebaseOrder(updated as any).then(reloadFirebaseOrders); } else { upsertOrder(updated); } }} />
                 {o.status !== "draft" && o.status !== "archived" ? <select className="input h-8 text-[12px]" value={o.status} disabled={statusUpdatingId === o.id} onChange={(e) => changeOrderStatus(o, e.target.value as Order["status"])}><option value="saved">saved</option><option value="loading">loading</option><option value="shipped">shipped</option><option value="received">received</option><option value="completed">completed</option><option value="cancelled">cancelled</option></select> : <span className="text-[11px] text-fg-subtle">{o.status}</span>}

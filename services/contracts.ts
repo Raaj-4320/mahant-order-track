@@ -19,6 +19,7 @@ export interface CustomersService {
   getCustomerById(id: string): Promise<Customer | null>;
   upsertCustomer?(customer: Customer): Promise<Customer>;
   recordPaymentToCustomer?(customerId: string, input: { amount: number; paymentDate?: string; note?: string }): Promise<Customer>;
+  deleteCustomer?(id: string): Promise<void>;
 }
 export interface SuppliersService {
   listSuppliers(): Promise<Supplier[]>;
@@ -31,7 +32,7 @@ export interface PaymentAgentsService {
   recalculatePaymentAgentsFromOrders(orders: Order[]): Promise<PaymentAgent[]>;
   recordPaymentToAgent(agentId: string, payment: { amount: number; paymentDate: string; note?: string }): Promise<PaymentAgent>;
   listPaymentAgentLedger(agentId: string): Promise<PaymentAgentLedgerEntry[]>;
-  archivePaymentAgent?(id: string): Promise<void>;
+  deletePaymentAgent?(id: string): Promise<void>;
   applyOrderSettlement?(order: Order): Promise<void>;
   reverseOrderSettlement?(order: Order): Promise<void>;
 }
