@@ -43,4 +43,9 @@ export const paymentAgentsMockService: PaymentAgentsService = {
     return deepClone(paymentAgentsState[idx]);
   },
   async listPaymentAgentLedger(agentId) { return deepClone(paymentAgentLedgerState.filter((x) => x.agentId === agentId)); },
+  async deletePaymentAgent(id) {
+    const idx = paymentAgentsState.findIndex((x) => x.id === id);
+    if (idx < 0) throw new Error("Payment agent not found.");
+    paymentAgentsState.splice(idx, 1);
+  },
 };
