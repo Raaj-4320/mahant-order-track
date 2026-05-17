@@ -16,16 +16,17 @@ import { formatAmount } from "@/lib/data";
 import { uploadImageUnsigned } from "@/lib/cloudinary/client";
 import type { Product } from "@/lib/types";
 import { Boxes, Download, Edit, Filter, Plus, Search } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { logProduct, logRoute } from "@/lib/logger";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { logPageAccess, logDataFlow } from "@/lib/logger";
 
 type ProductForm = Omit<Product, "createdAt" | "updatedAt"> & { createdAt?: string; updatedAt?: string };
 const emptyForm: ProductForm = { id: "", productCode: "", sku: "", name: "", marka: "", category: "", unit: "pcs", defaultDim: "", photo: "", supplierId: "", purchasePrice: undefined, sellingPrice: undefined, defaultRmbPerPcs: undefined, stockQty: undefined, lowStockLimit: undefined, status: "active" };
 
 export default function ProductsPage() {
-  logRoute("page_rendered", { page: "Products" });
-  useEffect(() => { logProduct("products_page_loaded"); }, []);
-  const { data: products, error, upsertProduct } = useProducts();
+  useEffect(() => {
+    logPageAccess("Products", { component: "app/products/page.tsx", source: process.env.NEXT_PUBLIC_PRODUCTS_DATA_SOURCE ?? "mock" });
+  }, []);
+  const { data: products, isLoading: isProductsLoading, error, upsertProduct } = useProducts();
   const { data: suppliers } = useSuppliers();
   const { orders, pushToast } = useStore();
   const rows = getProductStats(products, orders).map((x) => ({ ...x.product, totalQtyPcs: x.totalQtyPcs, totalAmount: x.totalAmount, catalogValue: x.catalogValue, isLowStock: x.isLowStock }));
@@ -35,6 +36,14 @@ export default function ProductsPage() {
   const filtered = useMemo(() => rows.filter((p) => [p.name, p.sku, p.marka, p.category].join(" ").toLowerCase().includes(q.toLowerCase().trim()) && (status === "all" || p.status === status) && (category === "all" || p.category === category)), [rows, q, status, category]);
   const active = rows.filter((r) => r.status === "active").length; const lowStock = rows.filter((r) => r.isLowStock).length;
   const placeholder = () => pushToast({ tone: "info", text: "This action will be connected in a later phase." });
+
+  const productsFlowLoggedRef = useRef(false);
+  useEffect(() => {
+    if (productsFlowLoggedRef.current) return;
+    if (isProductsLoading || error) return;
+    productsFlowLoggedRef.current = true;
+    logDataFlow("Products", { functionsCalled: ["useProducts.reload", "productsService.listProducts"], dbPaths: ["businesses/{businessId}/products"], result: { count: rows.length, reachedComponent: true, renderedRows: filtered.length }, counts: { active, inactive: rows.length - active }, sampleProducts: filtered.slice(0,5).map((p) => ({ id: p.id, sku: p.sku, name: p.name, status: p.status })) });
+  }, [isProductsLoading, error, rows.length, filtered.length, active]);
 
   const openAdd = () => { setForm(emptyForm); setFile(null); setOpen(true); };
   const openEdit = (p: Product) => { setForm({ ...p }); setFile(null); setOpen(true); };
