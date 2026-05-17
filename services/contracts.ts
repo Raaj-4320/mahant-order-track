@@ -19,6 +19,7 @@ export interface CustomersService {
   getCustomerById(id: string): Promise<Customer | null>;
   upsertCustomer?(customer: Customer): Promise<Customer>;
   recordPaymentToCustomer?(customerId: string, input: { amount: number; paymentDate?: string; note?: string }): Promise<Customer>;
+  archiveCustomer?(id: string): Promise<Customer | void>;
 }
 export interface SuppliersService {
   listSuppliers(): Promise<Supplier[]>;

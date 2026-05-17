@@ -68,5 +68,12 @@ export const customersFirebaseService: CustomersService = {
     });
 
     return updated;
-  }
+  },
+  async archiveCustomer(id) {
+    const existing = await this.getCustomerById(id);
+    if (!existing) throw new Error("Customer not found.");
+    const next: Customer = { ...existing, status: "inactive", updatedAt: new Date().toISOString() };
+    await setDoc(doc(requireDb(), customerPath(BUSINESS_ID, id)), next, { merge: true });
+    return next;
+  },
 };

@@ -39,4 +39,11 @@ export const customersMockService: CustomersService = {
     rows[idx] = next;
     return JSON.parse(JSON.stringify(next));
   },
+  async archiveCustomer(id) {
+    const rows = getRows();
+    const idx = rows.findIndex((x) => x.id === id);
+    if (idx < 0) throw new Error("Customer not found.");
+    rows[idx] = { ...rows[idx], status: "inactive", updatedAt: new Date().toISOString() };
+    return JSON.parse(JSON.stringify(rows[idx]));
+  },
 };

@@ -25,5 +25,10 @@ export function useCustomers() {
     setData((prev) => prev.map((x) => x.id === updated.id ? updated : x));
     return updated;
   }, [service]);
-  return { data, isLoading, error, isEmpty: !isLoading && data.length === 0, reload, recordPaymentToCustomer };
+  const archiveCustomer = useCallback(async (customerId: string) => {
+    if (!service.archiveCustomer) throw new Error("Customer archive flow is not enabled for this data source.");
+    await service.archiveCustomer(customerId);
+    await reload();
+  }, [service, reload]);
+  return { data, isLoading, error, isEmpty: !isLoading && data.length === 0, reload, recordPaymentToCustomer, archiveCustomer };
 }
