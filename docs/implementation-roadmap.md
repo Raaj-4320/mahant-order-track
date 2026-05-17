@@ -397,3 +397,10 @@ Connection order:
 - Added centralized customer name resolution helper for typed line input + save-time ensure/create flow.
 - Unified duplicate-prevention matching by normalized name with deterministic first-match reuse.
 - Kept draft/autosave exclusion from customer creation and receivable-apply paths.
+
+
+## Phase P0-A — Order Number Series Hardening
+- Replaced broken local order-number generation (`25-...` / list-length based) with allocator-backed sequence.
+- Added counter path `businesses/{businessId}/counters/orderNumbers` and Firestore transaction allocator.
+- Drafts/new forms now show 'Auto on Save'; final number allocated on Save Order only.
+- Existing valid saved numbers in `YY-###` are preserved during edit/status/loading updates.

@@ -14,7 +14,8 @@ import { TablePagination } from "@/components/table/TablePagination";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { CalendarDays, ClipboardList, Download, Filter, Package, Search, TrendingUp } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { logPageAccess, logDataFlow } from "@/lib/logger";
 import { isDevResetEnabled, runDevReset } from "@/services/devResetService";
 import { useRouter } from "next/navigation";
 import { OrderLinesDetailModal } from "@/components/orders/OrderLinesDetailModal";
@@ -22,9 +23,9 @@ import { OrderLinesDetailModal } from "@/components/orders/OrderLinesDetailModal
 export default function DashboardPage() {
   const { orders, pushToast } = useStore();
   const { data: remoteOrders, isLoading: ordersLoading } = useOrders();
-  const { data: customers } = useCustomers();
-  const { data: suppliers } = useSuppliers();
-  const { data: paymentAgents } = usePaymentAgents();
+  const { data: customers, isLoading: customersLoading } = useCustomers();
+  const { data: suppliers, isLoading: suppliersLoading } = useSuppliers();
+  const { data: paymentAgents, isLoading: paymentAgentsLoading } = usePaymentAgents();
   const ordersSource = process.env.NEXT_PUBLIC_ORDERS_DATA_SOURCE ?? "mock";
   const isFirebaseOrdersMode = ordersSource === "firebase";
   const sourceOrders = useMemo(() => {
@@ -45,6 +46,14 @@ export default function DashboardPage() {
   const filtered = useMemo(() => rows.filter((r) => [r.orderNumber, r.customerSummary, r.supplierSummary].join(" ").toLowerCase().includes(query.toLowerCase().trim())), [rows, query]);
   const viewOrder = sourceOrders.find((o) => o.id === viewOrderId) ?? null;
   const canConfirmReset = confirmText === "DELETE EVERYTHING";
+  useEffect(() => { logPageAccess("Dashboard", { component: "app/dashboard/page.tsx", source: ordersSource }); }, []);
+  const dashboardFlowLoggedRef = useRef(false);
+  useEffect(() => {
+    if (dashboardFlowLoggedRef.current) return;
+    if (ordersLoading || customersLoading || suppliersLoading || paymentAgentsLoading) return;
+    dashboardFlowLoggedRef.current = true;
+    logDataFlow("Dashboard", { functionsCalled:["useOrders.reload","useCustomers.reload","useSuppliers.reload","usePaymentAgents.reload"], dbPaths:["businesses/{businessId}/orders"], result:{reachedComponent:true,recentOrdersCount:filtered.length}, counts:{totalOrders:stats.totalOrders,totalOrderAmount:stats.totalOrderAmount,pendingPayments:stats.pendingPayments,delayedShipments:stats.delayedShipments} });
+  }, [ordersLoading, customersLoading, suppliersLoading, paymentAgentsLoading, filtered.length, stats.totalOrders, stats.totalOrderAmount, stats.pendingPayments, stats.delayedShipments]);
   const businessId = process.env.NEXT_PUBLIC_FIREBASE_BUSINESS_ID ?? "mahant";
 
   return (
