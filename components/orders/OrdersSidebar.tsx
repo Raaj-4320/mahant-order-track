@@ -1,7 +1,7 @@
 "use client";
 
 import { List } from "lucide-react";
-import { customers, formatCNY, formatDate, suppliers } from "@/lib/data";
+import { customers, formatAmount, formatDate, suppliers } from "@/lib/data";
 import { useStore } from "@/lib/store";
 import { orderTotal } from "@/lib/types";
 import { cn } from "@/lib/cn";
@@ -47,7 +47,7 @@ export function OrdersSidebar() {
                 <div className="mt-1.5 flex items-center justify-between gap-2">
                   <span className="truncate text-[11.5px] text-fg-muted">{customerNames}</span>
                   <span className="text-[12px] font-semibold text-[var(--success)] tabular-nums whitespace-nowrap">
-                    {formatCNY(total)}
+                    {formatAmount(total)}
                   </span>
                 </div>
               </button>
