@@ -39,4 +39,10 @@ export const customersMockService: CustomersService = {
     rows[idx] = next;
     return JSON.parse(JSON.stringify(next));
   },
+  async deleteCustomer(id) {
+    const rows = getRows();
+    const idx = rows.findIndex((x) => x.id === id);
+    if (idx < 0) throw new Error("Customer not found.");
+    rows.splice(idx, 1);
+  },
 };

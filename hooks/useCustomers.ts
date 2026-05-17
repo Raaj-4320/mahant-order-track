@@ -25,5 +25,10 @@ export function useCustomers() {
     setData((prev) => prev.map((x) => x.id === updated.id ? updated : x));
     return updated;
   }, [service]);
-  return { data, isLoading, error, isEmpty: !isLoading && data.length === 0, reload, recordPaymentToCustomer };
+  const deleteCustomer = useCallback(async (customerId: string) => {
+    if (!service.deleteCustomer) throw new Error("Customer delete flow is not enabled for this data source.");
+    await service.deleteCustomer(customerId);
+    await reload();
+  }, [service, reload]);
+  return { data, isLoading, error, isEmpty: !isLoading && data.length === 0, reload, recordPaymentToCustomer, deleteCustomer };
 }
