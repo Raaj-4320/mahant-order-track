@@ -8,6 +8,7 @@ import { useCustomers } from "@/hooks/useCustomers";
 import { useSuppliers } from "@/hooks/useSuppliers";
 import { usePaymentAgents } from "@/hooks/usePaymentAgents";
 import { useOrders } from "@/hooks/useOrders";
+import { Order } from "@/lib/types";
 import { getDashboardRows, getDashboardStats } from "@/services/selectors";
 import { StatusBadge } from "@/components/table/StatusBadge";
 import { TablePagination } from "@/components/table/TablePagination";
@@ -16,13 +17,15 @@ import { Input } from "@/components/ui/Input";
 import { CalendarDays, ClipboardList, Download, Filter, Package, Search, TrendingUp } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { logPageAccess, logDataFlow } from "@/lib/logger";
-import { isDevResetEnabled, runDevReset } from "@/services/devResetService";
+import { runDevReset } from "@/services/devResetService";
+import { isAuthRequiredModeEnabled, isDevResetEnabled } from "@/lib/runtimeConfig";
 import { useRouter } from "next/navigation";
 import { OrderLinesDetailModal } from "@/components/orders/OrderLinesDetailModal";
+import { useBusinessAccess } from "@/hooks/useBusinessAccess";
 
 export default function DashboardPage() {
-  const { orders, pushToast } = useStore();
-  const { data: remoteOrders, isLoading: ordersLoading } = useOrders();
+  const { orders, upsertOrder, pushToast } = useStore();
+  const { data: remoteOrders, isLoading: ordersLoading, upsertOrder: upsertRemoteOrder, reload: reloadRemoteOrders } = useOrders();
   const { data: customers, isLoading: customersLoading } = useCustomers();
   const { data: suppliers, isLoading: suppliersLoading } = useSuppliers();
   const { data: paymentAgents, isLoading: paymentAgentsLoading } = usePaymentAgents();
@@ -42,19 +45,31 @@ export default function DashboardPage() {
   const [resetResult, setResetResult] = useState<null | { orders: number; products: number; paymentAgents: number; paymentAgentLedger: number; customerLedger: number; customers: number; settings?: number }>(null);
   const [resetError, setResetError] = useState<string | null>(null);
   const [viewOrderId, setViewOrderId] = useState<string | null>(null);
+  const { canManageMaintenance } = useBusinessAccess();
   const router = useRouter();
   const filtered = useMemo(() => rows.filter((r) => [r.orderNumber, r.customerSummary, r.supplierSummary].join(" ").toLowerCase().includes(query.toLowerCase().trim())), [rows, query]);
   const viewOrder = sourceOrders.find((o) => o.id === viewOrderId) ?? null;
   const canConfirmReset = confirmText === "DELETE EVERYTHING";
+  const canSeeDevReset = isDevResetEnabled() && (!isAuthRequiredModeEnabled() || canManageMaintenance);
   useEffect(() => { logPageAccess("Dashboard", { component: "app/dashboard/page.tsx", source: ordersSource }); }, []);
   const dashboardFlowLoggedRef = useRef(false);
   useEffect(() => {
     if (dashboardFlowLoggedRef.current) return;
     if (ordersLoading || customersLoading || suppliersLoading || paymentAgentsLoading) return;
     dashboardFlowLoggedRef.current = true;
-    logDataFlow("Dashboard", { functionsCalled:["useOrders.reload","useCustomers.reload","useSuppliers.reload","usePaymentAgents.reload"], dbPaths:["businesses/{businessId}/orders"], result:{reachedComponent:true,recentOrdersCount:filtered.length}, counts:{totalOrders:stats.totalOrders,totalOrderAmount:stats.totalOrderAmount,pendingPayments:stats.pendingPayments,delayedShipments:stats.delayedShipments} });
+    logDataFlow("Dashboard", { functionsCalled:["useOrders.reload","useCustomers.reload","useSuppliers.reload","usePaymentAgents.reload"], dbPaths:["businesses/{businessId}/orders"], result:{reachedComponent:true,recentOrdersCount:filtered.length}, counts:{totalOrders:stats.totalOrders,totalOrderAmount:stats.totalOrderAmount,pendingPayments:stats.pendingPayments,delayedShipments:stats.delayedShipments}, visibleActionsSummary:["View Details","Open Order Edit from Orders page"] });
   }, [ordersLoading, customersLoading, suppliersLoading, paymentAgentsLoading, filtered.length, stats.totalOrders, stats.totalOrderAmount, stats.pendingPayments, stats.delayedShipments]);
   const businessId = process.env.NEXT_PUBLIC_FIREBASE_BUSINESS_ID ?? "mahant";
+
+  const updateOrderField = async (order: Order, patch: Partial<Order>) => {
+    const updated = { ...order, ...patch, updatedAt: new Date().toISOString() };
+    if (isFirebaseOrdersMode) {
+      await upsertRemoteOrder(updated);
+      await reloadRemoteOrders();
+      return;
+    }
+    upsertOrder(updated);
+  };
 
   return (
     <PageShell title="Dashboard">
@@ -90,9 +105,38 @@ export default function DashboardPage() {
                     <td><span className="rounded-full bg-bg-subtle px-2 py-1 text-[11.5px]">{r.totalUniqueItems} Items</span></td>
                     <td className="font-semibold text-[var(--success)] tabular-nums">{formatAmount(r.orderTotal)}</td>
                     <td><div>{r.paidBy}</div></td>
-                    <td><span className="rounded-md border border-border px-2 py-1 text-[12px]">{r.loadingDate ? formatDate(r.loadingDate) : "—"}</span></td>
-                    <td><StatusBadge status={r.status} /></td>
-                    <td className="px-4"><div className="flex justify-end gap-2"><Button size="sm" variant="secondary" onClick={() => setViewOrderId(r.id)}>View Details</Button><Button size="sm" variant="secondary" onClick={() => router.push(`/orders?edit=${r.id}`)}>Edit Order</Button></div></td>
+                    <td>
+                      <input
+                        type="date"
+                        className="input h-8 text-[12px]"
+                        value={r.loadingDate ?? ""}
+                        onChange={(e) => {
+                          const target = sourceOrders.find((o) => o.id === r.id);
+                          if (!target) return;
+                          void updateOrderField(target, { loadingDate: e.target.value || undefined });
+                        }}
+                      />
+                    </td>
+                    <td>
+                      <select
+                        className="input h-8 text-[12px]"
+                        value={r.status}
+                        onChange={(e) => {
+                          const target = sourceOrders.find((o) => o.id === r.id);
+                          if (!target) return;
+                          void updateOrderField(target, { status: e.target.value as Order["status"] });
+                        }}
+                      >
+                        <option value="saved">saved</option>
+                        <option value="loading">loading</option>
+                        <option value="shipped">shipped</option>
+                        <option value="received">received</option>
+                        <option value="completed">completed</option>
+                        <option value="cancelled">cancelled</option>
+                        <option value="delayed">delayed</option>
+                      </select>
+                    </td>
+                    <td className="px-4"><div className="flex justify-end gap-2"><Button size="sm" variant="secondary" onClick={() => setViewOrderId(r.id)}>View Details</Button><Button size="sm" variant="secondary" onClick={() => router.push(`/orders?edit=${r.id}`)}>Open in Orders</Button></div></td>
                   </tr>
                 ))}
                 {filtered.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-fg-subtle">No matching orders found.</td></tr>}
@@ -101,7 +145,7 @@ export default function DashboardPage() {
           </div>
           <TablePagination total={filtered.length} />
         </div>
-        {isDevResetEnabled() ? <div className="card p-4 border border-red-500/40">
+        {canSeeDevReset ? <div className="card p-4 border border-red-500/40">
           <div className="text-sm font-semibold text-red-300 mb-2">Developer Tools</div>
           <div className="text-xs text-fg-subtle mb-3">Danger zone. This is for development/testing only.</div>
           <Button variant="secondary" className="border-red-400 text-red-300" onClick={() => { setShowReset(true); setResetResult(null); setResetError(null); }}>Delete Everything</Button>
