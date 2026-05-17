@@ -39,4 +39,20 @@ export const customersMockService: CustomersService = {
     rows[idx] = next;
     return JSON.parse(JSON.stringify(next));
   },
+  async deleteCustomer(id) {
+    console.log("[CUSTOMER_DELETE_TRACE] mock_delete_start", JSON.stringify({ customerId: id }, null, 2));
+    const rows = getRows();
+    const idx = rows.findIndex((x) => x.id === id);
+    if (idx < 0) throw new Error("Customer not found.");
+    try {
+      rows.splice(idx, 1);
+      console.log("[CUSTOMER_DELETE_TRACE] mock_delete_success", JSON.stringify({ customerId: id }, null, 2));
+    } catch (e) {
+      console.log("[CUSTOMER_DELETE_TRACE] mock_delete_failed", JSON.stringify({
+        customerId: id,
+        error: e instanceof Error ? e.message : String(e),
+      }, null, 2));
+      throw e;
+    }
+  },
 };
