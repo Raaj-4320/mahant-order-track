@@ -2,6 +2,7 @@ import { customers } from "@/lib/data";
 import type { Customer } from "@/lib/types";
 import type { CustomersService } from "@/services/contracts";
 import { isDemoDataEnabled } from "@/lib/runtimeConfig";
+import { getCustomerCurrentReceivable, getCustomerStoreCredit, getCustomerTotalReceived, getCustomerTotalReceivable } from "@/services/customers/customerFinance";
 
 const seedRows = (): Customer[] => JSON.parse(JSON.stringify(isDemoDataEnabled() ? customers : []));
 let inMemoryCustomers: Customer[] | null = null;
@@ -21,7 +22,7 @@ export const customersMockService: CustomersService = {
     const idx = rows.findIndex((x) => x.id === customerId);
     if (idx < 0) throw new Error("Customer not found.");
     const customer = rows[idx];
-    const currentReceivable = customer.currentReceivable ?? customer.outstandingAmount ?? 0;
+    const currentReceivable = getCustomerCurrentReceivable(customer);
     const receivableReduced = Math.min(currentReceivable, amount);
     const creditCreated = Math.max(0, amount - receivableReduced);
     const nextCurrentReceivable = Math.max(0, currentReceivable - receivableReduced);
@@ -29,8 +30,10 @@ export const customersMockService: CustomersService = {
       ...customer,
       currentReceivable: nextCurrentReceivable,
       outstandingAmount: nextCurrentReceivable,
-      storeCreditBalance: (customer.storeCreditBalance ?? 0) + creditCreated,
-      totalReceived: (customer.totalReceived ?? 0) + amount,
+      totalReceivableGenerated: getCustomerTotalReceivable(customer),
+      totalSpent: getCustomerTotalReceivable(customer),
+      storeCreditBalance: getCustomerStoreCredit(customer) + creditCreated,
+      totalReceived: getCustomerTotalReceived(customer) + amount,
       updatedAt: new Date().toISOString(),
     };
     rows[idx] = next;

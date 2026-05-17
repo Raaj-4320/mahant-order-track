@@ -11,6 +11,46 @@ const asNum = (v: unknown): number | undefined => {
 const asStr = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
 const asStatus = (v: unknown): "active" | "inactive" => (v === "inactive" ? "inactive" : "active");
 
+
+type SanitizeOptions = { keepNullPaths?: string[] };
+
+const shouldKeepNullAtPath = (path: string, options?: SanitizeOptions): boolean => {
+  if (!options?.keepNullPaths?.length) return false;
+  return options.keepNullPaths.includes(path);
+};
+
+export const sanitizeFirestorePayload = <T>(input: T, options?: SanitizeOptions): { value: T; removedUndefinedPaths: string[] } => {
+  const removedUndefinedPaths: string[] = [];
+
+  const walk = (value: unknown, path: string): unknown => {
+    if (value === undefined) {
+      removedUndefinedPaths.push(path || "<root>");
+      return undefined;
+    }
+    if (Array.isArray(value)) {
+      const out: unknown[] = [];
+      for (let i = 0; i < value.length; i++) {
+        const next = walk(value[i], `${path}[${i}]`);
+        if (next !== undefined) out.push(next);
+      }
+      return out;
+    }
+    if (value && typeof value === "object") {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+        const childPath = path ? `${path}.${k}` : k;
+        const next = walk(v, childPath);
+        if (next !== undefined) out[k] = next;
+      }
+      return out;
+    }
+    if (value === null && path && !shouldKeepNullAtPath(path, options)) return "";
+    return value;
+  };
+
+  return { value: walk(input, "") as T, removedUndefinedPaths };
+};
+
 export const productFromFirestore = (doc: unknown): Product => {
   const p = (doc ?? {}) as Record<string, unknown>;
   const now = new Date().toISOString();
@@ -69,7 +109,35 @@ export const productToFirestore = (entity: Product): Record<string, unknown> => 
   lastLineTotalPcs: entity.lastLineTotalPcs ?? null,
 });
 
-export const customerFromFirestore = (doc: unknown): Customer => doc as Customer;
+export const customerFromFirestore = (doc: unknown): Customer => {
+  const c = (doc ?? {}) as Record<string, unknown>;
+  const now = new Date().toISOString();
+  return {
+    id: asStr(c.id),
+    customerCode: asStr(c.customerCode),
+    name: asStr(c.name),
+    displayName: asStr(c.displayName) || asStr(c.name),
+    normalizedName: asStr(c.normalizedName) || undefined,
+    source: c.source === "order-line" ? "order-line" : (c.source === "manual" ? "manual" : undefined),
+    phone: asStr(c.phone) || undefined,
+    email: asStr(c.email) || undefined,
+    wechatId: asStr(c.wechatId) || undefined,
+    country: asStr(c.country) || undefined,
+    city: asStr(c.city) || undefined,
+    address: asStr(c.address) || undefined,
+    status: asStatus(c.status),
+    totalOrders: asNum(c.totalOrders) ?? 0,
+    totalSpent: asNum(c.totalSpent) ?? 0,
+    outstandingAmount: asNum(c.outstandingAmount) ?? 0,
+    totalReceived: asNum(c.totalReceived),
+    storeCreditBalance: asNum(c.storeCreditBalance),
+    totalReceivableGenerated: asNum(c.totalReceivableGenerated),
+    currentReceivable: asNum(c.currentReceivable),
+    sourceOrderIds: Array.isArray(c.sourceOrderIds) ? c.sourceOrderIds.filter((x): x is string => typeof x === "string") : undefined,
+    createdAt: asStr(c.createdAt, now),
+    updatedAt: asStr(c.updatedAt, now),
+  };
+};
 export const customerToFirestore = (entity: Customer): Record<string, unknown> => ({ ...entity });
 export const supplierFromFirestore = (doc: unknown): Supplier => doc as Supplier;
 export const supplierToFirestore = (entity: Supplier): Record<string, unknown> => ({ ...entity });
