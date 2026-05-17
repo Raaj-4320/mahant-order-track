@@ -22,10 +22,10 @@ export function getDashboardRows(orders: Order[], suppliers: Supplier[], custome
     id: o.id,
     orderNumber: o.orderNumber || o.number,
     supplierSummary: Array.from(new Set(o.lines.map((l) => (l.supplierName || l.supplierSnapshot?.name || "").trim()).filter(Boolean))).join(", ") || uniqNames(o.lines.map((l) => l.supplierId), suppliers).join(", ") || "—",
-    customerSummary: uniqNames(o.lines.map((l) => l.customerId), customers).join(", ") || "—",
+    customerSummary: uniqNames(o.lines.map((l) => l.customerId), customers).join(", ") || Array.from(new Set(o.lines.map((l) => (l.customerName || l.customerSnapshot?.name || "").trim()).filter(Boolean))).join(", ") || "Deleted customer",
     totalUniqueItems: new Set(o.lines.map((l) => l.productId)).size,
     orderTotal: orderTotal(o),
-    paidBy: paymentAgents.find((a) => a.id === (o.paymentAgentId || o.paymentBy))?.name ?? "—",
+    paidBy: paymentAgents.find((a) => a.id === (o.paymentAgentId || o.paymentBy))?.name ?? o.paymentAgentSnapshot?.name ?? o.paymentBy ?? "Deleted payment agent",
     loadingDate: o.loadingDate,
     status: o.status,
   }));
