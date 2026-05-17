@@ -13,10 +13,11 @@ export function usePaymentAgents() {
   const reload = useCallback(async () => { setIsLoading(true); setError(null); try { setData(await service.listPaymentAgents()); } catch (e) { setError(e instanceof Error ? e.message : "Failed to load payment agents"); } finally { setIsLoading(false); } }, [service]);
   useEffect(() => { reload(); }, [reload, service]);
   const upsertPaymentAgent = useCallback(async (agent: PaymentAgent) => { await service.upsertPaymentAgent(agent); await reload(); }, [reload, service]);
+  const archivePaymentAgent = useCallback(async (agentId: string) => { if (service.archivePaymentAgent) await service.archivePaymentAgent(agentId); await reload(); }, [reload, service]);
   const recalculateFromOrders = useCallback(async (orders: Order[]) => { const savedOrders = orders.filter((o) => o.status === "saved"); if (PAYMENT_AGENTS_SOURCE !== "firebase") await service.recalculatePaymentAgentsFromOrders(savedOrders); await reload(); }, [reload, service]);
   const recordPaymentToAgent = useCallback(async (agentId: string, payment: { amount: number; paymentDate: string; note?: string }) => { await service.recordPaymentToAgent(agentId, payment); await reload(); }, [reload, service]);
   const listPaymentAgentLedger = useCallback(async (agentId: string) => service.listPaymentAgentLedger(agentId), [service]);
   const applyOrderSettlement = useCallback(async (order: Order) => { if (service.applyOrderSettlement) await service.applyOrderSettlement(order); await reload(); }, [reload, service]);
   const reverseOrderSettlement = useCallback(async (order: Order) => { if (service.reverseOrderSettlement) await service.reverseOrderSettlement(order); await reload(); }, [reload, service]);
-  return { data, isLoading, error, isEmpty: !isLoading && data.length === 0, reload, upsertPaymentAgent, recalculateFromOrders, recordPaymentToAgent, listPaymentAgentLedger, applyOrderSettlement, reverseOrderSettlement };
+  return { data, isLoading, error, isEmpty: !isLoading && data.length === 0, reload, upsertPaymentAgent, archivePaymentAgent, recalculateFromOrders, recordPaymentToAgent, listPaymentAgentLedger, applyOrderSettlement, reverseOrderSettlement };
 }

@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocs, runTransaction, setDoc } from "firebase/firestore";
+import { collection, deleteDoc, doc, getDoc, getDocs, runTransaction, setDoc } from "firebase/firestore";
 import { getFirestoreDb } from "@/lib/firebase/client";
 import { customerPath, customersPath } from "@/lib/firebase/paths";
 import type { Customer } from "@/lib/types";
@@ -68,5 +68,10 @@ export const customersFirebaseService: CustomersService = {
     });
 
     return updated;
-  }
+  },
+  async deleteCustomer(id) {
+    const existing = await this.getCustomerById(id);
+    if (!existing) throw new Error("Customer not found.");
+    await deleteDoc(doc(requireDb(), customerPath(BUSINESS_ID, id)));
+  },
 };
