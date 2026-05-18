@@ -46,7 +46,7 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
   return (
     <div className="flex flex-col gap-3 px-5 py-4">
       <section className="card p-3.5">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-[minmax(260px,1.2fr)_minmax(150px,0.55fr)_minmax(160px,0.55fr)_minmax(260px,1.2fr)]">
           <Field label="Payment By">
             <Select
               value={draft.paymentBy}
@@ -55,7 +55,9 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
               }
               options={paymentAgents.map((p) => ({
                 value: p.id,
-                label: p.name,
+                label: (p.creditBalance ?? 0) > 0
+                  ? `${p.name} — Credit: ${(p.creditBalance ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                  : p.name,
               }))}
               placeholder={paymentAgents.length ? "Select payment agent" : "No payment agents yet"}
             />
@@ -92,21 +94,15 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
       </section>
 
       <section className="card overflow-hidden">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
-          <h2 className="text-[14px] font-semibold">Order Lines</h2>
-          <span className="text-[11.5px] text-fg-subtle">
-            {draft.lines.length} line{draft.lines.length === 1 ? "" : "s"}
-          </span>
-        </div>
-
         <div className="px-2 py-1.5 overflow-x-auto">
+          <div className="flex justify-end px-2 pb-1 text-[11px] text-fg-subtle">{draft.lines.length} line{draft.lines.length === 1 ? "" : "s"}</div>
           <div className="min-w-[960px]">
             <div
               className={`${LINE_GRID} px-2 py-1.5 text-[11px] font-medium uppercase tracking-wide text-fg-subtle border-b border-border`}
             >
               <span>Supplier</span>
-              <span className="text-center">Product</span>
               <span className="text-center">Pic + Dim</span>
+              <span className="text-center">Product</span>
               <span>MARKA</span>
               <span>Details</span>
               <span className="text-center">CTNs</span>

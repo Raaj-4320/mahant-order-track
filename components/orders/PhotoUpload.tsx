@@ -75,7 +75,7 @@ export function PhotoUpload({
     }
   };
 
-  const boxClasses = compact ? "h-[44px] w-full max-w-[50px] rounded-md" : "h-[68px] w-full max-w-[100px] rounded-lg";
+  const boxClasses = compact ? "h-[68px] w-full max-w-[72px] rounded-lg" : "h-[72px] w-full max-w-[110px] rounded-lg";
 
   return (
     <div className="flex w-full flex-col items-center gap-0.5 min-w-0">
@@ -134,7 +134,10 @@ export function PhotoUpload({
             </button>
           </>
         ) : compact ? (
-          <Plus size={14} />
+          <div className="flex flex-col items-center gap-0.5 px-1 text-center">
+            <Plus size={14} />
+            <span className="text-[8.5px] leading-tight text-fg-subtle">click · drag · paste</span>
+          </div>
         ) : (
           <div className="flex flex-col items-center gap-0.5 px-1 text-center">
             <div className="grid h-6 w-6 place-items-center rounded-full border border-dashed border-fg-subtle/60"><Plus size={13} /></div>
