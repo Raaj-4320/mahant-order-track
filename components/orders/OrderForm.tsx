@@ -55,7 +55,9 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
               }
               options={paymentAgents.map((p) => ({
                 value: p.id,
-                label: p.name,
+                label: (p.creditBalance ?? 0) > 0
+                  ? `${p.name} — Credit: ${(p.creditBalance ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                  : p.name,
               }))}
               placeholder={paymentAgents.length ? "Select payment agent" : "No payment agents yet"}
             />

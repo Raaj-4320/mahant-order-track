@@ -28,6 +28,12 @@ export function useProducts() {
     return saved;
   }, [service]);
 
+  const archiveProduct = useCallback(async (productId: string) => {
+    if (!service.archiveProduct) throw new Error("Product archive is not available for this data source.");
+    await service.archiveProduct(productId);
+    await reload();
+  }, [service, reload]);
+
   useEffect(() => { reload(); }, [reload]);
-  return { data, isLoading, error, isEmpty: !isLoading && data.length === 0, reload, upsertProduct };
+  return { data, isLoading, error, isEmpty: !isLoading && data.length === 0, reload, upsertProduct, archiveProduct };
 }
