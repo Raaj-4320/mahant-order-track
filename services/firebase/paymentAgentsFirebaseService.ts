@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocs, runTransaction, setDoc } from "firebase/firestore";
+import { collection, deleteDoc, doc, getDoc, getDocs, runTransaction, setDoc } from "firebase/firestore";
 import { getFirestoreDb } from "@/lib/firebase/client";
 import { paymentAgentFromFirestore, paymentAgentLedgerEntryToFirestore, paymentAgentToFirestore } from "@/lib/firebase/mappers";
 import { paymentAgentLedgerPath, paymentAgentsPath, paymentAgentPath } from "@/lib/firebase/paths";
@@ -59,10 +59,10 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
   async recalculatePaymentAgentsFromOrders() {
     return this.listPaymentAgents();
   },
-  async archivePaymentAgent(id: string) {
+  async deletePaymentAgent(id: string) {
     const existing = await this.getPaymentAgentById(id);
-    if (!existing) return;
-    await this.upsertPaymentAgent({ ...existing, status: "inactive" });
+    if (!existing) throw new Error("Payment agent not found.");
+    await deleteDoc(doc(requireDb(), paymentAgentPath(BUSINESS_ID, id)));
   },
   async applyOrderSettlement(order) {
     if (order.status !== "saved" || !order.paymentAgentSettlementSnapshot) return;
