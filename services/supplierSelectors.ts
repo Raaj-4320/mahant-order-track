@@ -1,8 +1,12 @@
 import { lineTotalPcs, lineTotalRmb, type Order } from "@/lib/types";
 
+const SUPPLIER_SOURCE_STATUSES = ["saved", "loading", "shipped", "received", "completed", "cancelled", "delayed"] as const;
+export const isSupplierSourceOrder = (order: Order) =>
+  (SUPPLIER_SOURCE_STATUSES as readonly string[]).includes((order.status || "").toString());
+
 const norm = (v: string) => v.trim().replace(/\s+/g, " ");
 const key = (v: string) => norm(v).toLowerCase();
-const lineSupplier = (line: Order["lines"][number]) => norm(line.supplierName || line.supplierSnapshot?.name || "");
+const lineSupplier = (line: Order["lines"][number]) => norm(line.supplierName || line.supplierSnapshot?.name || line.supplierId || "");
 
 export function getWechatSupplierGroups(orders: Order[]) {
   const groups = new Map<string, any>();

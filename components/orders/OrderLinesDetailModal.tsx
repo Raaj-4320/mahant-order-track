@@ -1,6 +1,7 @@
 "use client";
 
 import { formatAmount, formatDate } from "@/lib/data";
+import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
 import { Order } from "@/lib/types";
 import { orderTotal } from "@/lib/types";
 import { Button } from "@/components/ui/Button";
@@ -47,7 +48,7 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
                 {order.lines.map((line) => {
                   const totalPcs = (line.totalCtns || 0) * (line.pcsPerCtn || 0);
                   const lineTotal = totalPcs * (line.rmbPerPcs || 0);
-                  return <tr key={line.id} className="border-t border-border align-top"><td className="px-3 py-2">{line.photoUrl ? <img src={line.photoUrl} alt="dimension" className="h-10 w-10 rounded border border-border object-cover" /> : "No photo"}</td><td className="px-3 py-2">{line.productPhotoUrl ? <img src={line.productPhotoUrl} alt="product" className="h-10 w-10 rounded border border-border object-cover" /> : "No photo"}</td><td className="px-3 py-2 font-medium">{line.marka || "—"}</td><td className="px-3 py-2">{line.details || "—"}</td><td className="px-3 py-2 tabular-nums">{line.totalCtns || 0}</td><td className="px-3 py-2 tabular-nums">{line.pcsPerCtn || 0}</td><td className="px-3 py-2 tabular-nums">{formatAmount(line.rmbPerPcs || 0)}</td><td className="px-3 py-2 font-semibold tabular-nums">{formatAmount(lineTotal)}</td><td className="px-3 py-2">{line.customerName || line.customerSnapshot?.name || line.customerId || "—"}</td></tr>;
+                  return <tr key={line.id} className="border-t border-border align-top"><td className="px-3 py-2">{line.photoUrl ? <img src={getCloudinaryOptimizedUrl(line.photoUrl, { width: 96, height: 96, crop: "fill" })} alt="dimension" className="h-10 w-10 rounded border border-border object-cover" loading="lazy" decoding="async" /> : "No photo"}</td><td className="px-3 py-2">{line.productPhotoUrl ? <img src={getCloudinaryOptimizedUrl(line.productPhotoUrl, { width: 96, height: 96, crop: "fill" })} alt="product" className="h-10 w-10 rounded border border-border object-cover" loading="lazy" decoding="async" /> : "No photo"}</td><td className="px-3 py-2 font-medium">{line.marka || "—"}</td><td className="px-3 py-2">{line.details || "—"}</td><td className="px-3 py-2 tabular-nums">{line.totalCtns || 0}</td><td className="px-3 py-2 tabular-nums">{line.pcsPerCtn || 0}</td><td className="px-3 py-2 tabular-nums">{formatAmount(line.rmbPerPcs || 0)}</td><td className="px-3 py-2 font-semibold tabular-nums">{formatAmount(lineTotal)}</td><td className="px-3 py-2">{line.customerName || line.customerSnapshot?.name || line.customerId || "—"}</td></tr>;
                 })}
                 {order.lines.length === 0 ? <tr><td colSpan={9} className="px-3 py-8 text-center text-fg-subtle">No order lines to display.</td></tr> : null}
               </tbody>

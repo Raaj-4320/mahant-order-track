@@ -1,4 +1,5 @@
 import { Customer, Order, PaymentAgent, Product, Supplier } from "./types";
+import { formatIndianDate } from "./dateFormat";
 
 const now = "2026-05-01T00:00:00.000Z";
 
@@ -46,4 +47,4 @@ export function formatAmount(value: number | string | undefined | null): string 
   return safe.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 export const formatCNY = formatAmount;
-export const formatDate = (iso: string) => new Date(iso).toLocaleDateString("en-US", { day: "2-digit", month: "short", year: "numeric" });
+export const formatDate = (iso: string) => formatIndianDate(iso);
