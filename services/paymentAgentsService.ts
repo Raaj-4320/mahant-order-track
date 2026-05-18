@@ -17,7 +17,7 @@ export function getPaymentAgentsService(): PaymentAgentsService {
     async recordPaymentToAgent(agentId, payment) { const { paymentAgentsFirebaseService } = await import("@/services/firebase/paymentAgentsFirebaseService"); return paymentAgentsFirebaseService.recordPaymentToAgent(agentId, payment); },
     async listPaymentAgentLedger(agentId) { const { paymentAgentsFirebaseService } = await import("@/services/firebase/paymentAgentsFirebaseService"); return paymentAgentsFirebaseService.listPaymentAgentLedger(agentId); },
     async recalculatePaymentAgentsFromOrders(orders) { const { paymentAgentsFirebaseService } = await import("@/services/firebase/paymentAgentsFirebaseService"); return paymentAgentsFirebaseService.recalculatePaymentAgentsFromOrders(orders); },
-    async archivePaymentAgent(id) { const { paymentAgentsFirebaseService } = await import("@/services/firebase/paymentAgentsFirebaseService"); return paymentAgentsFirebaseService.archivePaymentAgent?.(id); },
+    async deletePaymentAgent(id) { const { paymentAgentsFirebaseService } = await import("@/services/firebase/paymentAgentsFirebaseService"); return paymentAgentsFirebaseService.deletePaymentAgent?.(id); },
     async applyOrderSettlement(order) { const { paymentAgentsFirebaseService } = await import("@/services/firebase/paymentAgentsFirebaseService"); return paymentAgentsFirebaseService.applyOrderSettlement?.(order); },
     async reverseOrderSettlement(order) { const { paymentAgentsFirebaseService } = await import("@/services/firebase/paymentAgentsFirebaseService"); return paymentAgentsFirebaseService.reverseOrderSettlement?.(order); },
   };
