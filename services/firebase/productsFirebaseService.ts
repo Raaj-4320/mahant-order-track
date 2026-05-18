@@ -57,7 +57,7 @@ export const productsFirebaseService: ProductsService = {
   },
   async archiveProduct(id: string) {
     const existing = await this.getProductById(id);
-    if (!existing || existing.source === "manual") return;
+    if (!existing) return;
     await this.upsertProduct({ ...existing, status: "inactive", updatedAt: new Date().toISOString() });
   },
 
