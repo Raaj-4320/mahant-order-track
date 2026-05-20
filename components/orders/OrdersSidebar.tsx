@@ -1,20 +1,29 @@
 "use client";
 
 import { List } from "lucide-react";
-import { customers, formatCNY, formatDate, suppliers } from "@/lib/data";
+import { formatAmount, formatDate } from "@/lib/data";
 import { useStore } from "@/lib/store";
 import { orderTotal } from "@/lib/types";
 import { cn } from "@/lib/cn";
+import type { Order, OrderLine } from "@/lib/types";
 
 export function OrdersSidebar() {
   const { orders, selectedOrderId, selectOrder } = useStore();
 
-  const summarize = (ids: string[], items: { id: string; name: string }[]) => {
-    const names = Array.from(new Set(ids.map((id) => items.find((x) => x.id === id)?.name).filter(Boolean))) as string[];
+  const summarize = (namesInput: string[]) => {
+    const names = Array.from(new Set(namesInput.map((v) => v.trim()).filter(Boolean)));
     if (names.length === 0) return "—";
     if (names.length === 1) return names[0];
     return `${names[0]} & ${names.length - 1} more`;
   };
+  const resolveCustomerName = (line: OrderLine) =>
+    line.customerSnapshot?.name?.trim() || line.customerName?.trim() || line.customerId?.trim() || "Deleted customer";
+  const resolveSupplierName = (line: OrderLine) =>
+    line.supplierSnapshot?.name?.trim() || line.supplierName?.trim() || line.supplierId?.trim() || "Unknown supplier";
+  const getOrderCustomerNames = (order: Order) => summarize(order.lines.map(resolveCustomerName));
+  const getOrderSupplierNames = (order: Order) => summarize(order.lines.map(resolveSupplierName));
+  const getOrderPaymentAgentName = (order: Order) =>
+    order.paymentAgentSnapshot?.name?.trim() || (order as any).paymentByName?.trim?.() || order.paymentBy?.trim() || "Deleted payment agent";
 
   return (
     <aside className="w-[260px] shrink-0 border-l border-border bg-bg-subtle">
@@ -26,8 +35,9 @@ export function OrdersSidebar() {
         <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
           {orders.map((o) => {
             const active = o.id === selectedOrderId;
-            const supplierNames = summarize(o.lines.map((l) => l.supplierId), suppliers);
-            const customerNames = summarize(o.lines.map((l) => l.customerId), customers);
+            const supplierNames = getOrderSupplierNames(o);
+            const customerNames = getOrderCustomerNames(o);
+            const paymentAgentName = getOrderPaymentAgentName(o);
             const total = orderTotal(o);
             return (
               <button
@@ -47,9 +57,10 @@ export function OrdersSidebar() {
                 <div className="mt-1.5 flex items-center justify-between gap-2">
                   <span className="truncate text-[11.5px] text-fg-muted">{customerNames}</span>
                   <span className="text-[12px] font-semibold text-[var(--success)] tabular-nums whitespace-nowrap">
-                    {formatCNY(total)}
+                    {formatAmount(total)}
                   </span>
                 </div>
+                <div className="mt-0.5 truncate text-[10.5px] text-fg-subtle">{paymentAgentName}</div>
               </button>
             );
           })}

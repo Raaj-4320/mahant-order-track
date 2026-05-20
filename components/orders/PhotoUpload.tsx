@@ -1,9 +1,38 @@
 "use client";
 
 import { Plus, X } from "lucide-react";
-import { ChangeEvent, ClipboardEvent, DragEvent, useRef, useState } from "react";
+import { ChangeEvent, ClipboardEvent, DragEvent, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import { isCloudinaryConfigured, uploadImageUnsigned } from "@/lib/cloudinary/client";
+import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
+
+
+const COMPRESS_MAX_SIDE = 1200;
+const COMPRESS_QUALITY = 0.78;
+const COMPRESS_SKIP_BYTES = 250 * 1024;
+
+async function compressImageForUpload(file: File): Promise<File> {
+  if (file.size < COMPRESS_SKIP_BYTES) return file;
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, COMPRESS_MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+  const w = Math.max(1, Math.round(bitmap.width * scale));
+  const h = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return file;
+  ctx.drawImage(bitmap, 0, 0, w, h);
+  const hasTransparency = file.type === 'image/png';
+  const mime = hasTransparency ? 'image/png' : 'image/webp';
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, mime, COMPRESS_QUALITY));
+  bitmap.close();
+  if (!blob) return file;
+  const ext = mime === 'image/png' ? 'png' : 'webp';
+  const name = file.name.replace(/\.[^/.]+$/, '') + `.${ext}`;
+  if (blob.size >= file.size) return file;
+  return new File([blob], name, { type: mime, lastModified: Date.now() });
+}
 
 type Props = {
   value?: string;
@@ -29,6 +58,15 @@ export function PhotoUpload({
   const [focused, setFocused] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [localPreviewUrl, setLocalPreviewUrl] = useState<string | null>(null);
+  const [lastFile, setLastFile] = useState<File | null>(null);
+
+  const clearLocalPreview = () => {
+    setLocalPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+  };
 
   const ingest = async (file: File | undefined | null) => {
     if (!file || !file.type.startsWith("image/")) return;
@@ -37,18 +75,30 @@ export function PhotoUpload({
       setError("Cloudinary is not configured. Please check upload settings.");
       return;
     }
+    clearLocalPreview();
+    const local = URL.createObjectURL(file);
+    setLocalPreviewUrl(local);
+    setLastFile(file);
     try {
       setIsUploading(true);
       onUploadingChange?.(true);
-      const uploaded = await uploadImageUnsigned(file, "tradeflow/orders");
+      const compressed = await compressImageForUpload(file);
+      const uploaded = await uploadImageUnsigned(compressed, "tradeflow/orders");
       if (!uploaded.secureUrl) throw new Error("Upload succeeded but image URL was missing.");
       onChange(uploaded.secureUrl);
+      clearLocalPreview();
+      setLastFile(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Image upload failed.");
     } finally {
       setIsUploading(false);
       onUploadingChange?.(false);
     }
+  };
+
+  const onRetry = async () => {
+    if (!lastFile || isUploading) return;
+    await ingest(lastFile);
   };
 
   const onPick = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -75,7 +125,9 @@ export function PhotoUpload({
     }
   };
 
-  const boxClasses = compact ? "h-[44px] w-full max-w-[50px] rounded-md" : "h-[68px] w-full max-w-[100px] rounded-lg";
+  const boxClasses = compact ? "h-[68px] w-full max-w-[72px] rounded-lg" : "h-[72px] w-full max-w-[110px] rounded-lg";
+
+  useEffect(() => () => { clearLocalPreview(); }, []);
 
   return (
     <div className="flex w-full flex-col items-center gap-0.5 min-w-0">
@@ -112,11 +164,14 @@ export function PhotoUpload({
           isUploading && "opacity-70 cursor-wait"
         )}
       >
-        {isUploading ? (
-          <span className="text-[9px] text-fg-subtle">Uploading...</span>
+        {(isUploading && (localPreviewUrl || value)) ? (
+          <>
+            <img src={localPreviewUrl || getCloudinaryOptimizedUrl(value || "", { width: 300, height: 300, crop: "fill" })} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" />
+            <div className="absolute inset-0 grid place-items-center bg-black/25 text-[9px] text-white">Uploading...</div>
+          </>
         ) : value ? (
           <>
-            <img src={value} alt="" className="h-full w-full object-cover" />
+            <img src={value ? getCloudinaryOptimizedUrl(value, { width: 300, height: 300, crop: "fill" }) : ""} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" />
             <button
               type="button"
               onClick={(e) => {
@@ -134,7 +189,10 @@ export function PhotoUpload({
             </button>
           </>
         ) : compact ? (
-          <Plus size={14} />
+          <div className="flex flex-col items-center gap-0.5 px-1 text-center">
+            <Plus size={14} />
+            <span className="text-[8.5px] leading-tight text-fg-subtle">click · drag · paste</span>
+          </div>
         ) : (
           <div className="flex flex-col items-center gap-0.5 px-1 text-center">
             <div className="grid h-6 w-6 place-items-center rounded-full border border-dashed border-fg-subtle/60"><Plus size={13} /></div>
@@ -144,6 +202,12 @@ export function PhotoUpload({
         <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onPick} disabled={isUploading} />
       </div>
       {error && <div className="text-[9px] text-[var(--danger)] text-center leading-tight">{error}</div>}
+      {error && lastFile && (
+        <div className="flex items-center gap-1 text-[9px]">
+          <button type="button" onClick={onRetry} className="rounded border border-border px-1.5 py-0.5 hover:bg-bg-subtle">Retry</button>
+          <button type="button" onClick={() => { setLastFile(null); setError(null); clearLocalPreview(); }} className="rounded border border-border px-1.5 py-0.5 hover:bg-bg-subtle">Remove</button>
+        </div>
+      )}
       {onDimChange && (
         <input
           value={dimLabel ?? ""}
