@@ -1,9 +1,11 @@
 "use client";
 
 import { formatAmount, formatDate } from "@/lib/data";
+import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
 import { Order } from "@/lib/types";
 import { orderTotal } from "@/lib/types";
 import { Button } from "@/components/ui/Button";
+import { PAYMENT_AGENT_NOT_SET } from "@/lib/orderDisplay";
 
 type OrderLinesDetailModalProps = {
   order: Order | null;
@@ -30,7 +32,7 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
             <div><div className={label}>Date</div><div className={value}>{order.date ? formatDate(order.date) : "—"}</div></div>
             <div><div className={label}>Loading Date</div><div className={value}>{order.loadingDate ? formatDate(order.loadingDate) : "—"}</div></div>
             <div><div className={label}>Status</div><div className={value}>{order.status}</div></div>
-            <div><div className={label}>Payment Agent</div><div className="text-[14px] font-medium">{order.paymentBy || "—"}</div></div>
+            <div><div className={label}>Payment Agent</div><div className="text-[14px] font-medium">{order.paymentAgentSnapshot?.name || (order as any).paymentByName || order.paymentBy || PAYMENT_AGENT_NOT_SET}</div></div>
             <div><div className={label}>WeChat ID</div><div className="text-[14px] font-medium">{order.wechatId || "—"}</div></div>
             <div><div className={label}>Total Lines</div><div className={value}>{order.lines.length}</div></div>
             <div><div className={label}>Total Amount</div><div className="text-[24px] font-bold text-[var(--success)]">{formatAmount(orderTotal(order))}</div></div>
@@ -47,7 +49,7 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
                 {order.lines.map((line) => {
                   const totalPcs = (line.totalCtns || 0) * (line.pcsPerCtn || 0);
                   const lineTotal = totalPcs * (line.rmbPerPcs || 0);
-                  return <tr key={line.id} className="border-t border-border align-top"><td className="px-3 py-2">{line.photoUrl ? <img src={line.photoUrl} alt="dimension" className="h-10 w-10 rounded border border-border object-cover" /> : "No photo"}</td><td className="px-3 py-2">{line.productPhotoUrl ? <img src={line.productPhotoUrl} alt="product" className="h-10 w-10 rounded border border-border object-cover" /> : "No photo"}</td><td className="px-3 py-2 font-medium">{line.marka || "—"}</td><td className="px-3 py-2">{line.details || "—"}</td><td className="px-3 py-2 tabular-nums">{line.totalCtns || 0}</td><td className="px-3 py-2 tabular-nums">{line.pcsPerCtn || 0}</td><td className="px-3 py-2 tabular-nums">{formatAmount(line.rmbPerPcs || 0)}</td><td className="px-3 py-2 font-semibold tabular-nums">{formatAmount(lineTotal)}</td><td className="px-3 py-2">{line.customerName || line.customerSnapshot?.name || line.customerId || "—"}</td></tr>;
+                  return <tr key={line.id} className="border-t border-border align-top"><td className="px-3 py-2">{line.photoUrl ? <img src={getCloudinaryOptimizedUrl(line.photoUrl, { width: 96, height: 96, crop: "fill" })} alt="dimension" className="h-10 w-10 rounded border border-border object-cover" loading="lazy" decoding="async" /> : "No photo"}</td><td className="px-3 py-2">{line.productPhotoUrl ? <img src={getCloudinaryOptimizedUrl(line.productPhotoUrl, { width: 96, height: 96, crop: "fill" })} alt="product" className="h-10 w-10 rounded border border-border object-cover" loading="lazy" decoding="async" /> : "No photo"}</td><td className="px-3 py-2 font-medium">{line.marka || "—"}</td><td className="px-3 py-2">{line.details || "—"}</td><td className="px-3 py-2 tabular-nums">{line.totalCtns || 0}</td><td className="px-3 py-2 tabular-nums">{line.pcsPerCtn || 0}</td><td className="px-3 py-2 tabular-nums">{formatAmount(line.rmbPerPcs || 0)}</td><td className="px-3 py-2 font-semibold tabular-nums">{formatAmount(lineTotal)}</td><td className="px-3 py-2">{line.customerName || line.customerSnapshot?.name || line.customerId || "—"}</td></tr>;
                 })}
                 {order.lines.length === 0 ? <tr><td colSpan={9} className="px-3 py-8 text-center text-fg-subtle">No order lines to display.</td></tr> : null}
               </tbody>

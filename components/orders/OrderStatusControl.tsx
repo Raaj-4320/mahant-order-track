@@ -1,0 +1,92 @@
+"use client";
+
+import { Check, ChevronDown } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { cn } from "@/lib/cn";
+import type { Order } from "@/lib/types";
+
+const STATUS_OPTIONS: Array<{ value: Order["status"]; label: string }> = [
+  { value: "saved", label: "Saved" },
+  { value: "scheduled", label: "Scheduled" },
+  { value: "pending", label: "Pending" },
+  { value: "packed", label: "Packed" },
+  { value: "cancelled", label: "Cancelled" },
+  { value: "delayed", label: "Delayed" },
+];
+
+const statusClasses: Record<string, string> = {
+  saved: "bg-slate-100 text-slate-700 border-slate-200",
+  scheduled: "bg-amber-100 text-amber-700 border-amber-200",
+  pending: "bg-blue-100 text-blue-700 border-blue-200",
+  packed: "bg-emerald-100 text-emerald-700 border-emerald-200",
+  cancelled: "bg-rose-100 text-rose-700 border-rose-200",
+  delayed: "bg-red-100 text-red-700 border-red-200",
+  draft: "bg-zinc-100 text-zinc-700 border-zinc-200",
+  archived: "bg-zinc-100 text-zinc-500 border-zinc-200",
+};
+
+type Props = {
+  value: Order["status"];
+  onChange: (next: Order["status"]) => void;
+  disabled?: boolean;
+};
+
+export function OrderStatusControl({ value, onChange, disabled = false }: Props) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const selected = STATUS_OPTIONS.find((s) => s.value === value);
+
+  useEffect(() => {
+    const onDocClick = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onEsc = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onEsc);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onEsc);
+    };
+  }, []);
+
+  return (
+    <div ref={rootRef} className="relative inline-block">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+        className={cn(
+          "inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[12px] font-medium transition-colors",
+          statusClasses[value] || statusClasses.saved,
+          disabled ? "cursor-not-allowed opacity-60" : "hover:brightness-95",
+        )}
+      >
+        <span>{selected?.label || value}</span>
+        <ChevronDown size={13} className={cn("transition-transform", open && "rotate-180")} />
+      </button>
+      {open && !disabled ? (
+        <div className="absolute right-0 top-full z-30 mt-1 w-44 rounded-xl border border-border bg-bg-card p-1.5 shadow-card">
+          {STATUS_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                if (option.value !== value) onChange(option.value);
+              }}
+              className={cn(
+                "flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-[12.5px]",
+                option.value === value ? "bg-bg-subtle font-medium" : "hover:bg-bg-subtle"
+              )}
+            >
+              <span>{option.label}</span>
+              {option.value === value ? <Check size={13} className="text-fg-subtle" /> : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
