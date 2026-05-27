@@ -1,5 +1,5 @@
 export type EntityStatus = "active" | "inactive";
-export type OrderStatus = "scheduled" | "pending" | "packed" | "delayed" | "draft" | "saved" | "cancelled" | "archived";
+export type OrderStatus = "scheduled" | "pending" | "packed" | "received" | "completed" | "delayed" | "draft" | "saved" | "cancelled" | "archived";
 export type PaymentStatus = "unpaid" | "partial" | "paid" | "pending";
 export type LoadingStatus = "idle" | "loading" | "success" | "error";
 
@@ -16,6 +16,6 @@ export type Order = { id: string; orderNumber: string; number: string; date: str
 export type PaymentAgentLedgerEntry = { id: string; agentId: string; type: "opening_credit" | "order_settlement" | "order_settlement_reversal" | "agent_payment" | "agent_payment_reversal"; sourceOrderId?: string; sourceOrderNumber?: string; amount: number; dueReduced?: number; creditCreated?: number; creditUsed?: number; paidNow?: number; payableAfterCredit?: number; remainingPayable?: number; newCreditCreated?: number; resultingCreditBalance?: number; settlementHash?: string; isReversed?: boolean; active?: boolean; note?: string; createdAt: string; updatedAt?: string; paymentDate?: string; reversalOfId?: string; };
 export type CustomerLedgerEntry = { id: string; customerId: string; type: "order_receivable" | "order_receivable_reversal" | "customer_payment" | "customer_payment_reversal"; sourceOrderId?: string; sourceOrderNumber?: string; sourceLineId?: string; amount: number; debit?: number; credit?: number; balance?: number; receivableReduced?: number; creditCreated?: number; resultingReceivable?: number; resultingStoreCredit?: number; note?: string; settlementHash?: string; active?: boolean; isReversed?: boolean; reversalOfId?: string; paymentDate?: string; createdAt: string; updatedAt?: string; };
 
-export type DashboardOrderRow = { id: string; orderNumber: string; supplierSummary: string; customerSummary: string; totalUniqueItems: number; orderTotal: number; paidBy: string; loadingDate?: string; status: OrderStatus; };
+export type DashboardOrderRow = { id: string; orderNumber: string; supplierSummary: string; customerSummary: string; totalUniqueItems: number; totalCtns?: number; orderTotal: number; paidBy: string; paymentAgentId?: string; wechatId?: string; orderDate?: string; productsSummary?: string; markaSummary?: string; loadingDate?: string; status: OrderStatus; };
 export type PaginationState = { page: number; pageSize: number; total: number };
 export type FilterState = { query?: string; status?: string[]; city?: string[]; dateFrom?: string; dateTo?: string };
