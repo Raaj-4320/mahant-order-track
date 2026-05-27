@@ -15,13 +15,8 @@ export type OrderValidationResult = {
 const hasProductIdentity = (line: Order["lines"][number]) =>
   Boolean(line.marka?.trim() || line.details?.trim() || line.productPhotoUrl || line.photoUrl);
 
-const hasSupplier = (line: Order["lines"][number]) =>
-  Boolean(line.supplierName?.trim() || line.supplierId?.trim());
-
 const isMeaningfulLine = (line: Order["lines"][number]) =>
   Boolean(
-    line.supplierName?.trim() ||
-      line.supplierId?.trim() ||
       line.marka?.trim() ||
       line.details?.trim() ||
       line.productPhotoUrl ||
@@ -33,9 +28,7 @@ const isMeaningfulLine = (line: Order["lines"][number]) =>
 
 export const validateOrderForSave = (order: Order): OrderValidationResult => {
   const missingFields: string[] = [];
-  if (!(order.paymentAgentId || order.paymentBy)) missingFields.push("Payment Agent is required.");
   if (!order.date?.trim()) missingFields.push("Date is required.");
-  if (!(order.number || order.orderNumber)?.trim()) missingFields.push("Order Number is required.");
   if (!order.wechatId?.trim()) missingFields.push("WeChat ID is required.");
 
   const meaningfulLines = order.lines.filter(isMeaningfulLine);
@@ -47,7 +40,6 @@ export const validateOrderForSave = (order: Order): OrderValidationResult => {
     if (!isMeaningfulLine(line)) {
       issues.push("Line is blank. Fill required fields or remove it.");
     } else {
-      if (!hasSupplier(line)) issues.push("Supplier is required.");
       if (!hasProductIdentity(line)) issues.push("MARKA, Details, or product image is required.");
       if (!(Number(line.totalCtns) > 0)) issues.push("CTNs must be greater than 0.");
       if (!(Number(line.pcsPerCtn) > 0)) issues.push("PCS/CTN must be greater than 0.");

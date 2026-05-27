@@ -1,31 +1,42 @@
 import type { Customer, DashboardOrderRow, Order, PaymentAgent, Product, Supplier } from "@/lib/types";
+import { getOrderPaymentAgentDisplay } from "@/lib/orderDisplay";
 import { orderTotal } from "@/lib/types";
 import type { DashboardStats } from "./contracts";
+
+const DASHBOARD_INCLUDED_STATUSES = ["saved", "packed", "received", "completed", "cancelled", "delayed"] as const;
+export const isDashboardOrder = (order: Order) => (DASHBOARD_INCLUDED_STATUSES as readonly string[]).includes(order.status);
+export const getDashboardIncludedStatuses = () => [...DASHBOARD_INCLUDED_STATUSES];
 
 const uniqNames = (ids: string[], rows: { id: string; name: string }[]) =>
   Array.from(new Set(ids.map((id) => rows.find((x) => x.id === id)?.name).filter(Boolean) as string[]));
 
 export function getDashboardStats(orders: Order[]): DashboardStats {
   const today = new Date().toISOString().slice(0, 10);
-  const savedOrders = orders.filter((o) => o.status === "saved");
+  const dashboardOrders = orders.filter(isDashboardOrder);
   return {
-    totalOrders: savedOrders.length,
-    totalOrderAmount: savedOrders.reduce((s, o) => s + orderTotal(o), 0),
-    ordersLoadingToday: savedOrders.filter((o) => o.loadingDate === today).length,
-    pendingPayments: savedOrders.filter((o) => o.paymentStatus === "pending" || o.paymentStatus === "partial").length,
-    delayedShipments: savedOrders.filter((o) => o.status === "delayed").length,
+    totalOrders: dashboardOrders.length,
+    totalOrderAmount: dashboardOrders.reduce((s, o) => s + orderTotal(o), 0),
+    ordersLoadingToday: dashboardOrders.filter((o) => o.loadingDate === today).length,
+    pendingPayments: dashboardOrders.filter((o) => o.paymentStatus === "pending" || o.paymentStatus === "partial").length,
+    delayedShipments: dashboardOrders.filter((o) => o.status === "delayed").length,
   };
 }
 
-export function getDashboardRows(orders: Order[], suppliers: Supplier[], customers: Customer[], paymentAgents: PaymentAgent[]): DashboardOrderRow[] {
-  return orders.filter((o) => o.status === "saved").map((o) => ({
+export function getDashboardRows(orders: Order[], _suppliers: Supplier[], customers: Customer[], paymentAgents: PaymentAgent[]): DashboardOrderRow[] {
+  return orders.filter(isDashboardOrder).map((o) => ({
     id: o.id,
     orderNumber: o.orderNumber || o.number,
-    supplierSummary: Array.from(new Set(o.lines.map((l) => (l.supplierName || l.supplierSnapshot?.name || "").trim()).filter(Boolean))).join(", ") || uniqNames(o.lines.map((l) => l.supplierId), suppliers).join(", ") || "—",
-    customerSummary: uniqNames(o.lines.map((l) => l.customerId), customers).join(", ") || "—",
+    supplierSummary: "",
+    customerSummary: uniqNames(o.lines.map((l) => l.customerId), customers).join(", ") || Array.from(new Set(o.lines.map((l) => (l.customerName || l.customerSnapshot?.name || "").trim()).filter(Boolean))).join(", ") || "Deleted customer",
     totalUniqueItems: new Set(o.lines.map((l) => l.productId)).size,
     orderTotal: orderTotal(o),
-    paidBy: paymentAgents.find((a) => a.id === (o.paymentAgentId || o.paymentBy))?.name ?? "—",
+    paidBy: getOrderPaymentAgentDisplay(o, paymentAgents).value,
+    paymentAgentId: o.paymentAgentId || o.paymentBy,
+    wechatId: o.wechatId,
+    orderDate: o.date,
+    productsSummary: o.lines.map((l) => l.details || l.productSnapshot?.name || "").filter(Boolean).join(", "),
+    markaSummary: o.lines.map((l) => l.marka || "").filter(Boolean).join(", "),
+    totalCtns: o.lines.reduce((sum, l) => sum + (Number(l.totalCtns) || 0), 0),
     loadingDate: o.loadingDate,
     status: o.status,
   }));

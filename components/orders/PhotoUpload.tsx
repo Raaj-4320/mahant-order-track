@@ -1,9 +1,38 @@
 "use client";
 
-import { Plus, X } from "lucide-react";
-import { ChangeEvent, ClipboardEvent, DragEvent, useRef, useState } from "react";
+import { Plus, Search, X } from "lucide-react";
+import { ChangeEvent, ClipboardEvent, DragEvent, useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import { isCloudinaryConfigured, uploadImageUnsigned } from "@/lib/cloudinary/client";
+import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
+
+
+const COMPRESS_MAX_SIDE = 1200;
+const COMPRESS_QUALITY = 0.78;
+const COMPRESS_SKIP_BYTES = 250 * 1024;
+
+async function compressImageForUpload(file: File): Promise<File> {
+  if (file.size < COMPRESS_SKIP_BYTES) return file;
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, COMPRESS_MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+  const w = Math.max(1, Math.round(bitmap.width * scale));
+  const h = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return file;
+  ctx.drawImage(bitmap, 0, 0, w, h);
+  const hasTransparency = file.type === 'image/png';
+  const mime = hasTransparency ? 'image/png' : 'image/webp';
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, mime, COMPRESS_QUALITY));
+  bitmap.close();
+  if (!blob) return file;
+  const ext = mime === 'image/png' ? 'png' : 'webp';
+  const name = file.name.replace(/\.[^/.]+$/, '') + `.${ext}`;
+  if (blob.size >= file.size) return file;
+  return new File([blob], name, { type: mime, lastModified: Date.now() });
+}
 
 type Props = {
   value?: string;
@@ -13,6 +42,7 @@ type Props = {
   compact?: boolean;
   ariaLabel?: string;
   onUploadingChange?: (isUploading: boolean) => void;
+  onPreview?: (src: string) => void;
 };
 
 export function PhotoUpload({
@@ -23,12 +53,23 @@ export function PhotoUpload({
   compact,
   ariaLabel = "Upload photo — click, drag, or paste",
   onUploadingChange,
+  onPreview,
 }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [focused, setFocused] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [localPreviewUrl, setLocalPreviewUrl] = useState<string | null>(null);
+  const [lastFile, setLastFile] = useState<File | null>(null);
+
+  const clearLocalPreview = () => {
+    setLocalPreviewUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+  };
 
   const ingest = async (file: File | undefined | null) => {
     if (!file || !file.type.startsWith("image/")) return;
@@ -37,18 +78,30 @@ export function PhotoUpload({
       setError("Cloudinary is not configured. Please check upload settings.");
       return;
     }
+    clearLocalPreview();
+    const local = URL.createObjectURL(file);
+    setLocalPreviewUrl(local);
+    setLastFile(file);
     try {
       setIsUploading(true);
       onUploadingChange?.(true);
-      const uploaded = await uploadImageUnsigned(file, "tradeflow/orders");
+      const compressed = await compressImageForUpload(file);
+      const uploaded = await uploadImageUnsigned(compressed, "tradeflow/orders");
       if (!uploaded.secureUrl) throw new Error("Upload succeeded but image URL was missing.");
       onChange(uploaded.secureUrl);
+      clearLocalPreview();
+      setLastFile(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Image upload failed.");
     } finally {
       setIsUploading(false);
       onUploadingChange?.(false);
     }
+  };
+
+  const onRetry = async () => {
+    if (!lastFile || isUploading) return;
+    await ingest(lastFile);
   };
 
   const onPick = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -75,7 +128,9 @@ export function PhotoUpload({
     }
   };
 
-  const boxClasses = compact ? "h-[44px] w-full max-w-[50px] rounded-md" : "h-[68px] w-full max-w-[100px] rounded-lg";
+  const boxClasses = compact ? "h-[68px] w-full max-w-[72px] rounded-lg" : "h-[72px] w-full max-w-[110px] rounded-lg";
+
+  useEffect(() => () => { clearLocalPreview(); }, []);
 
   return (
     <div className="flex w-full flex-col items-center gap-0.5 min-w-0">
@@ -83,7 +138,9 @@ export function PhotoUpload({
         tabIndex={0}
         role="button"
         aria-label={ariaLabel}
-        onClick={() => !isUploading && fileRef.current?.click()}
+        ref={rootRef}
+        onClick={() => rootRef.current?.focus()}
+        onDoubleClick={() => !isUploading && fileRef.current?.click()}
         onKeyDown={(e) => {
           if ((e.key === "Enter" || e.key === " ") && !isUploading) {
             e.preventDefault();
@@ -104,7 +161,7 @@ export function PhotoUpload({
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
         className={cn(
-          "group relative grid cursor-pointer place-items-center overflow-hidden border border-dashed border-border bg-bg-subtle text-fg-subtle transition-all",
+          "group relative grid cursor-default place-items-center overflow-hidden border border-dashed border-border bg-bg-subtle text-fg-subtle transition-all",
           boxClasses,
           "hover:border-fg-subtle hover:bg-bg",
           (dragOver || focused) && "border-fg ring-2 ring-fg/15",
@@ -112,11 +169,15 @@ export function PhotoUpload({
           isUploading && "opacity-70 cursor-wait"
         )}
       >
-        {isUploading ? (
-          <span className="text-[9px] text-fg-subtle">Uploading...</span>
+        {(isUploading && (localPreviewUrl || value)) ? (
+          <>
+            <img src={localPreviewUrl || getCloudinaryOptimizedUrl(value || "", { width: 300, height: 300, crop: "fill" })} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" />
+            <div className="absolute inset-0 grid place-items-center bg-black/25 text-[9px] text-white">Uploading...</div>
+          </>
         ) : value ? (
           <>
-            <img src={value} alt="" className="h-full w-full object-cover" />
+            <img src={value ? getCloudinaryOptimizedUrl(value, { width: 300, height: 300, crop: "fill" }) : ""} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" />
+            {onPreview ? <button type="button" title="Open image preview" aria-label="Open image preview" className={cn("absolute grid place-items-center rounded-full bg-bg-card/95 text-fg shadow-soft border border-border", compact ? "left-0.5 top-0.5 h-4 w-4" : "left-1 top-1 h-5 w-5")} onClick={(e) => { e.stopPropagation(); onPreview(value); }}><Search size={compact ? 9 : 11} /></button> : null}
             <button
               type="button"
               onClick={(e) => {
@@ -134,16 +195,25 @@ export function PhotoUpload({
             </button>
           </>
         ) : compact ? (
-          <Plus size={14} />
+          <div className="flex flex-col items-center gap-0.5 px-1 text-center">
+            <Plus size={14} />
+            <span className="text-[8.5px] leading-tight text-fg-subtle">Click to select · Paste image · Double-click</span>
+          </div>
         ) : (
           <div className="flex flex-col items-center gap-0.5 px-1 text-center">
             <div className="grid h-6 w-6 place-items-center rounded-full border border-dashed border-fg-subtle/60"><Plus size={13} /></div>
-            <span className="text-[9.5px] leading-tight text-fg-subtle">{dragOver ? "Drop image" : focused ? "Paste image" : "click · drag · paste"}</span>
+            <span className="text-[9.5px] leading-tight text-fg-subtle">{dragOver ? "Drop image" : focused ? "Paste image now" : "Click to select · Paste image · Double-click to browse"}</span>
           </div>
         )}
         <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onPick} disabled={isUploading} />
       </div>
       {error && <div className="text-[9px] text-[var(--danger)] text-center leading-tight">{error}</div>}
+      {error && lastFile && (
+        <div className="flex items-center gap-1 text-[9px]">
+          <button type="button" onClick={onRetry} className="rounded border border-border px-1.5 py-0.5 hover:bg-bg-subtle">Retry</button>
+          <button type="button" onClick={() => { setLastFile(null); setError(null); clearLocalPreview(); }} className="rounded border border-border px-1.5 py-0.5 hover:bg-bg-subtle">Remove</button>
+        </div>
+      )}
       {onDimChange && (
         <input
           value={dimLabel ?? ""}
