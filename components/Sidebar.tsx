@@ -6,7 +6,6 @@ import {
   LayoutDashboard,
   ClipboardList,
   Users,
-  Truck,
   Package,
   Wallet,
   LucideIcon,
@@ -26,7 +25,6 @@ const items: Item[] = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { label: "Order Booking", href: "/orders", icon: ClipboardList },
   { label: "Customers", href: "/customers", icon: Users },
-  { label: "Suppliers", href: "/suppliers", icon: Truck },
   { label: "Payment Agents", href: "/payment-agents", icon: Wallet },
   { label: "Products", href: "/products", icon: Package },
 ];
