@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocs, runTransaction, setDoc } from "firebase/firestore";
+import { collection, deleteDoc, doc, getDoc, getDocs, runTransaction, setDoc } from "firebase/firestore";
 import { getFirestoreDb } from "@/lib/firebase/client";
 import { customerPath, customersPath } from "@/lib/firebase/paths";
 import type { Customer } from "@/lib/types";
@@ -68,5 +68,28 @@ export const customersFirebaseService: CustomersService = {
     });
 
     return updated;
-  }
+  },
+  async deleteCustomer(id) {
+    console.log("[CUSTOMER_DELETE_TRACE] firebase_delete_start", JSON.stringify({
+      customerId: id,
+      path: customerPath(BUSINESS_ID, id),
+    }, null, 2));
+    const existing = await this.getCustomerById(id);
+    if (!existing) throw new Error("Customer not found.");
+    try {
+      await deleteDoc(doc(requireDb(), customerPath(BUSINESS_ID, id)));
+      console.log("[CUSTOMER_DELETE_TRACE] firebase_delete_success", JSON.stringify({
+        customerId: id,
+        path: customerPath(BUSINESS_ID, id),
+      }, null, 2));
+    } catch (e: unknown) {
+      console.log("[CUSTOMER_DELETE_TRACE] firebase_delete_failed", JSON.stringify({
+        customerId: id,
+        path: customerPath(BUSINESS_ID, id),
+        error: e instanceof Error ? e.message : String(e),
+        errorCode: typeof e === "object" && e !== null && "code" in e ? (e as { code?: unknown }).code : undefined,
+      }, null, 2));
+      throw e;
+    }
+  },
 };
