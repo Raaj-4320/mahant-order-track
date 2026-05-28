@@ -4,6 +4,14 @@ import { logDataFlow, logError } from "@/lib/logger";
 
 const ORDER_NO_RE = /^YY-(\d+)$/;
 
+function normalizeOrderNumberError(error: unknown, action: "preview" | "allocate"): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/Missing or insufficient permissions/i.test(message)) {
+    return new Error(`Firestore denied access while trying to ${action} the next order number. Orders are using Firebase mode, but your Firestore rules do not currently allow this request.`);
+  }
+  return error instanceof Error ? error : new Error(message);
+}
+
 export const isValidFinalOrderNumber = (value?: string | null): boolean => {
   if (!value) return false;
   return ORDER_NO_RE.test(value.trim());
@@ -24,8 +32,9 @@ export async function ensureFinalOrderNumber(order: Order): Promise<string> {
     logDataFlow("Orders", JSON.stringify({ event: "order_number_allocate_success", orderId: order.id, orderNumber }, null, 2));
     return orderNumber;
   } catch (e) {
-    logError("order_number_allocate_failure", { orderId: order.id, error: e instanceof Error ? e.message : String(e) });
-    throw e;
+    const normalized = normalizeOrderNumberError(e, "allocate");
+    logError("order_number_allocate_failure", { orderId: order.id, error: normalized.message });
+    throw normalized;
   }
 }
 
@@ -39,7 +48,8 @@ export async function peekNextOrderNumber(): Promise<string> {
     logDataFlow("Orders", JSON.stringify({ event: "order_number_peek_success", orderNumber }, null, 2));
     return orderNumber;
   } catch (e) {
-    logError("order_number_peek_failure", { error: e instanceof Error ? e.message : String(e) });
-    throw e;
+    const normalized = normalizeOrderNumberError(e, "preview");
+    logError("order_number_peek_failure", { error: normalized.message });
+    throw normalized;
   }
 }

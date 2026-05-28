@@ -12,7 +12,7 @@ import { useOrders } from "@/hooks/useOrders";
 import { formatAmount } from "@/lib/data";
 import { formatIndianDate } from "@/lib/dateFormat";
 import { openStatementPdfPrint } from "@/services/statementPdf";
-import { isAnyFirebaseModeEnabled, isMaintenanceToolsEnabled } from "@/lib/runtimeConfig";
+import { customersDataSourceSelection, isAnyFirebaseModeEnabled, isMaintenanceToolsEnabled, ordersDataSource } from "@/lib/runtimeConfig";
 import { useStore } from "@/lib/store";
 import type { CustomerLedgerEntry } from "@/lib/types";
 import { customerLedgerService } from "@/services/customerLedgerService";
@@ -34,6 +34,8 @@ export default function CustomersPage() {
   const { canManageMaintenance } = useBusinessAccess();
   const { data: customers, isLoading, error, recordPaymentToCustomer, deleteCustomer, reload } = useCustomers();
   const { data: firebaseOrders } = useOrders();
+  const customersSourceSelection = useMemo(() => customersDataSourceSelection(), []);
+  const ordersSource = ordersDataSource();
   const base = customers;
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("all");
@@ -57,7 +59,7 @@ export default function CustomersPage() {
     riskDetected: boolean;
   }>(null);
 
-  useEffect(() => { logPageAccess("Customers", { component: "app/customers/page.tsx", source: process.env.NEXT_PUBLIC_CUSTOMERS_DATA_SOURCE ?? process.env.NEXT_PUBLIC_ORDERS_DATA_SOURCE ?? "mock" }); }, []);
+  useEffect(() => { logPageAccess("Customers", { component: "app/customers/page.tsx", source: customersSourceSelection.source, sourceReason: customersSourceSelection.reason }); }, [customersSourceSelection]);
 
   const scopeBase = useMemo(() => base.filter((c) => status === "all" || c.status === status), [base, status]);
   const filtered = useMemo(
@@ -185,7 +187,7 @@ export default function CustomersPage() {
       blocksDueToReceivable: currentReceivable > 0,
       blocksDueToStoreCredit: storeCredit > 0,
     }, null, 2));
-    const sourceOrders = process.env.NEXT_PUBLIC_ORDERS_DATA_SOURCE === "firebase" ? firebaseOrders : localOrders;
+    const sourceOrders = ordersSource === "firebase" ? firebaseOrders : localOrders;
     const customerName = (customer.displayName || customer.name || "").trim().toLowerCase();
     const matchedSavedOrders = sourceOrders
       .filter((o) => o.status === "saved")
@@ -269,7 +271,7 @@ export default function CustomersPage() {
     if (deleteCtx.riskDetected) logUI("customer_delete_force_confirmed", { customerId: deleteCtx.customerId });
     logUI("customer_delete_started", JSON.parse(JSON.stringify({ customerId: deleteCtx.customerId, status: deleteCtx.status }, null, 2)));
     try {
-      console.log("[CUSTOMER_DELETE_TRACE] service_delete_start", JSON.stringify({ customerId: deleteCtx.customerId, source: process.env.NEXT_PUBLIC_CUSTOMERS_DATA_SOURCE ?? (process.env.NEXT_PUBLIC_ORDERS_DATA_SOURCE ?? "mock") }, null, 2));
+      console.log("[CUSTOMER_DELETE_TRACE] service_delete_start", JSON.stringify({ customerId: deleteCtx.customerId, source: customersSourceSelection.source, reason: customersSourceSelection.reason }, null, 2));
       await deleteCustomer(deleteCtx.customerId);
       logUI("customer_delete_success", JSON.parse(JSON.stringify({ customerId: deleteCtx.customerId }, null, 2)));
       pushToast({ tone: "success", text: deleteCtx.riskDetected ? "Customer deleted. Historical orders and ledger entries were kept." : `Customer ${deleteCtx.customerName} deleted.` });

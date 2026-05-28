@@ -1,5 +1,5 @@
 import { collection, doc, getDocs, query, runTransaction, where } from "firebase/firestore";
-import { getFirestoreDb } from "@/lib/firebase/client";
+import { getFirestoreDb, requireFirebaseBusinessId } from "@/lib/firebase/client";
 import { customerLedgerEntryFromFirestore, customerLedgerEntryToFirestore } from "@/lib/firebase/mappers";
 import { customerLedgerPath, customerPath, customersPath, ordersPath } from "@/lib/firebase/paths";
 import type { Customer, CustomerLedgerEntry, Order } from "@/lib/types";
@@ -10,13 +10,13 @@ import { buildCustomerSummaryFromLedger } from "@/services/customers/customerLed
 import { getCustomerCurrentReceivable, getCustomerStoreCredit, getCustomerTotalOrders, getCustomerTotalReceived, getCustomerTotalReceivable } from "@/services/customers/customerFinance";
 import { logDB, logError, logLedger } from "@/lib/logger";
 
-const BUSINESS_ID = process.env.NEXT_PUBLIC_FIREBASE_BUSINESS_ID ?? "mahant";
 const requireDb = () => { const db = getFirestoreDb(); if (!db) throw new Error("Firebase not configured."); return db; };
+const businessId = () => requireFirebaseBusinessId();
 
 export const customerLedgerFirebaseService = {
   async listCustomerLedgerEntries(customerId?: string): Promise<CustomerLedgerEntry[]> {
     const db = requireDb();
-    const base = collection(db, customerLedgerPath(BUSINESS_ID));
+    const base = collection(db, customerLedgerPath(businessId()));
     const snap = customerId ? await getDocs(query(base, where("customerId", "==", customerId))) : await getDocs(base);
     return snap.docs.map((d) => customerLedgerEntryFromFirestore({ id: d.id, ...(d.data() as Record<string, unknown>) })).sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
   },
@@ -25,8 +25,9 @@ export const customerLedgerFirebaseService = {
 
   async recalculateCustomerFromLedger(customerId: string): Promise<Customer> {
     const db = requireDb();
-    const customerRef = doc(db, customerPath(BUSINESS_ID, customerId));
-    const customerSnap = await getDocs(query(collection(db, customersPath(BUSINESS_ID)), where("__name__", "==", customerId)));
+    const bizId = businessId();
+    const customerRef = doc(db, customerPath(bizId, customerId));
+    const customerSnap = await getDocs(query(collection(db, customersPath(bizId)), where("__name__", "==", customerId)));
     if (customerSnap.empty) throw new Error("Customer not found.");
     const customer = { ...(customerSnap.docs[0].data() as Customer), id: customerId } as Customer;
     const ledger = await this.listCustomerLedgerEntries(customerId);
@@ -39,7 +40,7 @@ export const customerLedgerFirebaseService = {
 
   async recalculateAllCustomersFromLedger(): Promise<Customer[]> {
     const db = requireDb();
-    const snap = await getDocs(collection(db, customersPath(BUSINESS_ID)));
+    const snap = await getDocs(collection(db, customersPath(businessId())));
     const out: Customer[] = [];
     for (const d of snap.docs) {
       out.push(await this.recalculateCustomerFromLedger(d.id));
@@ -51,8 +52,9 @@ export const customerLedgerFirebaseService = {
 
   async repairCustomerLedgerFromSavedOrders(): Promise<{ savedOrdersScanned: number; missingLedgerEntriesCreated: number; customersRecalculated: number }> {
     const db = requireDb();
-    logLedger("repair_start", { path: ordersPath(BUSINESS_ID) });
-    const ordersSnap = await getDocs(collection(db, ordersPath(BUSINESS_ID)));
+    const bizId = businessId();
+    logLedger("repair_start", { path: ordersPath(bizId) });
+    const ordersSnap = await getDocs(collection(db, ordersPath(bizId)));
     const savedOrders = ordersSnap.docs.map((d) => orderFromFirestore({ id: d.id, ...(d.data() as Record<string, unknown>) })).filter((o) => o.status === "saved");
     let created = 0;
 
@@ -62,7 +64,7 @@ export const customerLedgerFirebaseService = {
           const amount = lineTotalRmb(line as any);
           if (!line.id || !line.customerId || amount <= 0) continue;
           const entryId = `customer-receivable-${order.id}-${line.id}`;
-          const ref = doc(db, customerLedgerPath(BUSINESS_ID), entryId);
+          const ref = doc(db, customerLedgerPath(bizId), entryId);
           const snap = await tx.get(ref);
           if (snap.exists()) continue;
           const entry = buildOrderReceivableEntry(order, line as any, line.customerId);
@@ -78,12 +80,13 @@ export const customerLedgerFirebaseService = {
   },
   async reverseOrderCustomerReceivables(order: Order): Promise<void> {
     const db = requireDb();
-    const active = await getDocs(query(collection(db, customerLedgerPath(BUSINESS_ID)), where("sourceOrderId", "==", order.id), where("type", "==", "order_receivable"), where("active", "==", true)));
+    const bizId = businessId();
+    const active = await getDocs(query(collection(db, customerLedgerPath(bizId)), where("sourceOrderId", "==", order.id), where("type", "==", "order_receivable"), where("active", "==", true)));
     if (active.empty) return;
     await runTransaction(db, async (tx) => {
       for (const docSnap of active.docs) {
         const prev = customerLedgerEntryFromFirestore({ id: docSnap.id, ...(docSnap.data() as Record<string, unknown>) });
-        const customerRef = doc(db, customerPath(BUSINESS_ID, prev.customerId));
+        const customerRef = doc(db, customerPath(bizId, prev.customerId));
         const customerSnap = await tx.get(customerRef);
         if (customerSnap.exists()) {
           const c = customerSnap.data() as Customer;
@@ -95,14 +98,15 @@ export const customerLedgerFirebaseService = {
           tx.set(customerRef, { updatedAt: new Date().toISOString(), totalReceivableGenerated, currentReceivable, totalReceived: getCustomerTotalReceived(c), storeCreditBalance: getCustomerStoreCredit(c), totalOrders, sourceOrderIds: nextOrderIds, outstandingAmount: currentReceivable, totalSpent: totalReceivableGenerated }, { merge: true });
         }
         const reversal = buildOrderReceivableReversalEntry(order, prev);
-        tx.set(doc(db, customerLedgerPath(BUSINESS_ID), reversal.id), customerLedgerEntryToFirestore(reversal), { merge: true });
-        tx.set(doc(db, customerLedgerPath(BUSINESS_ID), prev.id), { active: false, isReversed: true, updatedAt: new Date().toISOString() }, { merge: true });
+        tx.set(doc(db, customerLedgerPath(bizId), reversal.id), customerLedgerEntryToFirestore(reversal), { merge: true });
+        tx.set(doc(db, customerLedgerPath(bizId), prev.id), { active: false, isReversed: true, updatedAt: new Date().toISOString() }, { merge: true });
       }
     });
   },
 
   async applyOrderCustomerReceivables(order: Order): Promise<void> {
-    logLedger("apply_order_customer_receivables_tx_start", { orderId: order.id, status: order.status, path: customerLedgerPath(BUSINESS_ID) });
+    const bizId = businessId();
+    logLedger("apply_order_customer_receivables_tx_start", { orderId: order.id, status: order.status, path: customerLedgerPath(bizId) });
     if (order.status !== "saved") return;
     const db = requireDb();
     await this.reverseOrderCustomerReceivables(order);
@@ -112,12 +116,12 @@ export const customerLedgerFirebaseService = {
     await runTransaction(db, async (tx) => {
       for (const line of lines) {
         const entry = buildOrderReceivableEntry(order, line, line.customerId);
-        const existing = await tx.get(doc(db, customerLedgerPath(BUSINESS_ID), entry.id));
+        const existing = await tx.get(doc(db, customerLedgerPath(bizId), entry.id));
         if (existing.exists()) {
           const prev = customerLedgerEntryFromFirestore({ id: existing.id, ...(existing.data() as Record<string, unknown>) });
           if (prev.active && prev.settlementHash === entry.settlementHash) continue;
         }
-        const customerRef = doc(db, customerPath(BUSINESS_ID, line.customerId));
+        const customerRef = doc(db, customerPath(bizId, line.customerId));
         const customerSnap = await tx.get(customerRef);
         if (customerSnap.exists()) {
           const c = customerSnap.data() as Customer;
@@ -128,8 +132,8 @@ export const customerLedgerFirebaseService = {
           logLedger("customer_receivable_apply_summary", { customerId: line.customerId, before: { totalReceivableGenerated: getCustomerTotalReceivable(c), currentReceivable: getCustomerCurrentReceivable(c), totalReceived: getCustomerTotalReceived(c), storeCreditBalance: getCustomerStoreCredit(c), totalOrders: getCustomerTotalOrders(c) }, after: { totalReceivableGenerated, currentReceivable, totalReceived: getCustomerTotalReceived(c), storeCreditBalance: getCustomerStoreCredit(c), totalOrders } });
           tx.set(customerRef, { updatedAt: new Date().toISOString(), totalReceivableGenerated, currentReceivable, totalReceived: getCustomerTotalReceived(c), storeCreditBalance: getCustomerStoreCredit(c), totalOrders, sourceOrderIds, outstandingAmount: currentReceivable, totalSpent: totalReceivableGenerated }, { merge: true });
         }
-        logDB("customer_ledger_entry_write_start", { entryId: entry.id, customerId: line.customerId, path: customerLedgerPath(BUSINESS_ID) });
-        tx.set(doc(db, customerLedgerPath(BUSINESS_ID), entry.id), customerLedgerEntryToFirestore(entry), { merge: true });
+        logDB("customer_ledger_entry_write_start", { entryId: entry.id, customerId: line.customerId, path: customerLedgerPath(bizId) });
+        tx.set(doc(db, customerLedgerPath(bizId), entry.id), customerLedgerEntryToFirestore(entry), { merge: true });
         logDB("customer_ledger_entry_write_success", { entryId: entry.id, customerId: line.customerId });
       }
     });

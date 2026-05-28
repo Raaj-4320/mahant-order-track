@@ -1,5 +1,5 @@
 import { collection, deleteDoc, doc, getDoc, getDocs, runTransaction, setDoc } from "firebase/firestore";
-import { getFirestoreDb } from "@/lib/firebase/client";
+import { getFirestoreDb, requireFirebaseBusinessId } from "@/lib/firebase/client";
 import { customerPath, customersPath } from "@/lib/firebase/paths";
 import type { Customer } from "@/lib/types";
 import type { CustomersService } from "@/services/contracts";
@@ -10,39 +10,48 @@ import { normalizeCustomerName } from "@/services/customers/customerIdentity";
 import { getCustomerCurrentReceivable, getCustomerStoreCredit, getCustomerTotalReceived, getCustomerTotalReceivable } from "@/services/customers/customerFinance";
 import { logCustomer, logDB } from "@/lib/logger";
 
-const BUSINESS_ID = process.env.NEXT_PUBLIC_FIREBASE_BUSINESS_ID ?? "mahant";
 const makeId = () => (globalThis.crypto?.randomUUID?.() ?? `cus-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+const businessId = () => requireFirebaseBusinessId();
 
 const requireDb = () => { const db = getFirestoreDb(); if (!db) throw new Error("Firebase not configured"); return db; };
 
 export const customersFirebaseService: CustomersService = {
   async listCustomers() {
     const db = requireDb();
-    const snap = await getDocs(collection(db, customersPath(BUSINESS_ID)));
+    const snap = await getDocs(collection(db, customersPath(businessId())));
     const rows = snap.docs.map((d) => ({ ...(d.data() as Customer), id: d.id } as Customer));
     return rows;
   },
   async getCustomerById(id) {
     const db = requireDb();
-    const snap = await getDoc(doc(db, customerPath(BUSINESS_ID, id)));
+    const snap = await getDoc(doc(db, customerPath(businessId(), id)));
     if (!snap.exists()) return null;
     return { ...(snap.data() as Customer), id: snap.id } as Customer;
   },
   async upsertCustomer(customer) {
-    logCustomer("upsert_customer_start", { incomingId: customer.id, name: customer.name || customer.displayName, path: customersPath(BUSINESS_ID) });
+    const bizId = businessId();
+    console.log("[CUSTOMER_SYNC_TRACE] sync_start", JSON.stringify({ action: "upsert_customer", incomingId: customer.id, name: customer.name || customer.displayName, businessId: bizId, path: customersPath(bizId) }, null, 2));
+    logCustomer("upsert_customer_start", { incomingId: customer.id, name: customer.name || customer.displayName, path: customersPath(bizId) });
     const db = requireDb();
     const now = new Date().toISOString();
     const id = customer.id || makeId();
     const next: Customer = { ...customer, id, normalizedName: normalizeCustomerName(customer.name || customer.displayName || ""), createdAt: customer.createdAt || now, updatedAt: now };
-    await setDoc(doc(db, customerPath(BUSINESS_ID, id)), next, { merge: true });
-    logDB("upsert_customer_success", { customerId: id, path: customerPath(BUSINESS_ID, id), normalizedName: next.normalizedName });
+    try {
+      await setDoc(doc(db, customerPath(bizId, id)), next, { merge: true });
+      console.log("[CUSTOMER_SYNC_TRACE] sync_success", JSON.stringify({ action: "upsert_customer", customerId: id, businessId: bizId, path: customerPath(bizId, id) }, null, 2));
+    } catch (e) {
+      console.log("[CUSTOMER_SYNC_TRACE] sync_failed", JSON.stringify({ action: "upsert_customer", customerId: id, businessId: bizId, path: customerPath(bizId, id), error: e instanceof Error ? e.message : String(e) }, null, 2));
+      throw e;
+    }
+    logDB("upsert_customer_success", { customerId: id, path: customerPath(bizId, id), normalizedName: next.normalizedName });
     return next;
   },
   async recordPaymentToCustomer(customerId, input) {
     const amount = Number(input.amount || 0);
     if (!(amount > 0)) throw new Error("Payment amount must be greater than 0.");
     const db = requireDb();
-    const ref = doc(db, customerPath(BUSINESS_ID, customerId));
+    const bizId = businessId();
+    const ref = doc(db, customerPath(bizId, customerId));
 
     const updated = await runTransaction(db, async (tx) => {
       const snap = await tx.get(ref);
@@ -59,7 +68,7 @@ export const customersFirebaseService: CustomersService = {
       const totalReceivableGenerated = getCustomerTotalReceivable(customer);
 
       const entry = buildCustomerPaymentEntry(customer, { amount, paymentDate: input.paymentDate, note: input.note }, { receivableReduced, creditCreated, newCurrentReceivable, newStoreCreditBalance });
-      tx.set(doc(db, customerLedgerPath(BUSINESS_ID), entry.id), customerLedgerEntryToFirestore(entry), { merge: true });
+      tx.set(doc(db, customerLedgerPath(bizId), entry.id), customerLedgerEntryToFirestore(entry), { merge: true });
 
       logCustomer("customer_payment_update_summary", { customerId, before: { currentReceivable, totalReceivableGenerated, totalReceived: getCustomerTotalReceived(customer), storeCreditBalance }, after: { currentReceivable: newCurrentReceivable, totalReceivableGenerated, totalReceived, storeCreditBalance: newStoreCreditBalance } });
       const next: Customer = { ...customer, updatedAt: new Date().toISOString(), totalReceivableGenerated, totalReceived, storeCreditBalance: newStoreCreditBalance, currentReceivable: newCurrentReceivable, outstandingAmount: newCurrentReceivable, totalSpent: totalReceivableGenerated };
@@ -72,20 +81,21 @@ export const customersFirebaseService: CustomersService = {
   async deleteCustomer(id) {
     console.log("[CUSTOMER_DELETE_TRACE] firebase_delete_start", JSON.stringify({
       customerId: id,
-      path: customerPath(BUSINESS_ID, id),
+      path: customerPath(businessId(), id),
     }, null, 2));
     const existing = await this.getCustomerById(id);
     if (!existing) throw new Error("Customer not found.");
+    const bizId = businessId();
     try {
-      await deleteDoc(doc(requireDb(), customerPath(BUSINESS_ID, id)));
+      await deleteDoc(doc(requireDb(), customerPath(bizId, id)));
       console.log("[CUSTOMER_DELETE_TRACE] firebase_delete_success", JSON.stringify({
         customerId: id,
-        path: customerPath(BUSINESS_ID, id),
+        path: customerPath(bizId, id),
       }, null, 2));
     } catch (e: unknown) {
       console.log("[CUSTOMER_DELETE_TRACE] firebase_delete_failed", JSON.stringify({
         customerId: id,
-        path: customerPath(BUSINESS_ID, id),
+        path: customerPath(bizId, id),
         error: e instanceof Error ? e.message : String(e),
         errorCode: typeof e === "object" && e !== null && "code" in e ? (e as { code?: unknown }).code : undefined,
       }, null, 2));

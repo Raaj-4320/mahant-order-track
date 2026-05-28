@@ -28,6 +28,7 @@ import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
 import { useTheme } from "@/components/ThemeProvider";
 import { FloatingPortal } from "@/components/ui/FloatingPortal";
 import { ImageLightbox } from "@/components/ui/ImageLightbox";
+import { ordersDataSourceSelection } from "@/lib/runtimeConfig";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const createEmptyDraft = (_orders: Order[], reservedOrderNumber = ""): Order => ({
@@ -81,16 +82,20 @@ const summarizeOrderForLog = (o: Order) => ({
 
 export default function OrdersPage() {
   type OrdersMode = "history" | "add" | "drafts" | "edit";
+  const ordersSourceSelection = useMemo(() => ordersDataSourceSelection(), []);
+  const ordersDataSource = ordersSourceSelection.source;
+  const isFirebaseOrdersMode = ordersDataSource === "firebase";
   useEffect(() => {
-    logPageAccess("Orders", { component: "app/orders/page.tsx", source: process.env.NEXT_PUBLIC_ORDERS_DATA_SOURCE ?? "mock" });
-  }, []);
+    logPageAccess("Orders", { component: "app/orders/page.tsx", source: ordersSourceSelection.source, sourceReason: ordersSourceSelection.reason });
+    console.log("[DATA_SOURCE_TRACE] selected_source", JSON.stringify({ component: "app/orders/page.tsx", selectedSource: ordersSourceSelection.source, reason: ordersSourceSelection.reason, explicitSource: ordersSourceSelection.explicitSource, explicitMockEnabled: ordersSourceSelection.explicitMockEnabled }, null, 2));
+    console.log("[DATA_SOURCE_TRACE] firebase_config_check", JSON.stringify({ component: "app/orders/page.tsx", hasFirebaseConfig: ordersSourceSelection.hasFirebaseConfig, missingFirebaseKeys: ordersSourceSelection.missingFirebaseKeys, hasBusinessId: ordersSourceSelection.hasBusinessId, businessId: ordersSourceSelection.businessId, authRequired: process.env.NEXT_PUBLIC_REQUIRE_AUTH === "true", hasProfileContext: ordersSourceSelection.hasBusinessId }, null, 2));
+    if (ordersSourceSelection.source === "mock" && !ordersSourceSelection.hasFirebaseConfig) console.warn("Firebase is not configured; app is running in mock mode and data will not persist.");
+  }, [ordersSourceSelection]);
 
   const { orders, upsertOrder, deleteOrder, pushToast } = useStore();
   const { data: paymentAgents, recalculateFromOrders, applyOrderSettlement, reverseOrderSettlement } = usePaymentAgents();
   const { data: firebaseOrders, isLoading: isOrdersLoading, error: ordersLoadError, draftOrders: firebaseDraftOrders, autosaveDraft, upsertOrder: upsertFirebaseOrder, archiveOrder: archiveFirebaseOrder, reload: reloadFirebaseOrders } = useOrders();
   const { data: customers, isLoading: isCustomersLoading, reload: reloadCustomers } = useCustomers();
-  const ordersDataSource = process.env.NEXT_PUBLIC_ORDERS_DATA_SOURCE ?? "mock";
-  const isFirebaseOrdersMode = ordersDataSource === "firebase";
   const [query, setQuery] = useState("");
   const [activeUploads, setActiveUploads] = useState(0);
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
@@ -174,8 +179,19 @@ export default function OrdersPage() {
 
   const onUploadingChange = (isUploading: boolean) => setActiveUploads((p) => Math.max(0, p + (isUploading ? 1 : -1)));
 
+  const ensureFirebaseOrderWriteReady = () => {
+    if (!isFirebaseOrdersMode) return true;
+    if (!ordersSourceSelection.hasBusinessId) {
+      pushToast({ tone: "danger", text: "Firebase business id is missing. Set NEXT_PUBLIC_FIREBASE_BUSINESS_ID before saving orders." });
+      return false;
+    }
+    return true;
+  };
+
   const onSave = async (status: Order["status"], forceDraft = false) => {
     logDataFlow("Orders", JSON.stringify({ event: status === "draft" ? "draft_save_started" : "order_save_started", status, lineCount: draft.lines.length, displayedOrderNumber: draft.number || draft.orderNumber }, null, 2));
+    console.log("[ORDER_SAVE_TRACE] save_source", JSON.stringify({ component: "app/orders/page.tsx", saveSource: ordersDataSource, reason: ordersSourceSelection.reason, status, hasFirebaseConfig: ordersSourceSelection.hasFirebaseConfig, hasBusinessId: ordersSourceSelection.hasBusinessId, businessId: ordersSourceSelection.businessId, orderId: draft.id, ordersWritePath: ordersSourceSelection.businessId ? `businesses/${ordersSourceSelection.businessId}/orders` : null, customersSyncPath: ordersSourceSelection.businessId ? `businesses/${ordersSourceSelection.businessId}/customers` : null }, null, 2));
+    if (!ensureFirebaseOrderWriteReady()) return;
     if (activeUploads > 0) return pushToast({ tone: "info", text: "Please wait for image uploads to finish before saving." });
     if ((draft.paidToPaymentAgentNow ?? 0) < 0) return pushToast({ tone: "danger", text: "Paid Now cannot be negative." });
 
@@ -186,11 +202,18 @@ export default function OrdersPage() {
         return;
       }
       const draftOrder = { ...draft, number: "", orderNumber: "", status: "draft" as const, paymentAgentId: selectedPaymentAgentId || "", paymentBy: selectedPaymentAgentId || "" };
-      if (isFirebaseOrdersMode) {
-        await upsertFirebaseOrder({ ...draftOrder, draftAutosavedAt: new Date().toISOString() } as any);
-        await reloadFirebaseOrders();
-      } else {
-        upsertOrder(draftOrder);
+      try {
+        if (isFirebaseOrdersMode) {
+          await upsertFirebaseOrder({ ...draftOrder, draftAutosavedAt: new Date().toISOString() } as any);
+          await reloadFirebaseOrders();
+        } else {
+          upsertOrder(draftOrder);
+        }
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Draft save failed.";
+        console.log("[ORDER_SAVE_TRACE] firebase_write_failed", JSON.stringify({ orderId: draftOrder.id, status: draftOrder.status, source: ordersDataSource, error: message }, null, 2));
+        pushToast({ tone: "danger", text: message });
+        return;
       }
       setEditingOrderId(null);
       setRemovedLineIds([]);
@@ -248,8 +271,10 @@ export default function OrdersPage() {
       }
       logDB("upsert_order_success", { orderId: savedOrder.id, status: savedOrder.status });
     } catch (e) {
-      logError("upsert_order_failure", { orderId: savedOrder.id, error: e instanceof Error ? e.message : String(e) });
-      throw e;
+      const message = e instanceof Error ? e.message : String(e);
+      logError("upsert_order_failure", { orderId: savedOrder.id, error: message });
+      pushToast({ tone: "danger", text: message });
+      return;
     }
     const mergedOrders = activeOrders.some((o) => o.id === savedOrder.id) ? activeOrders.map((o) => (o.id === savedOrder.id ? savedOrder : o)) : [savedOrder, ...activeOrders];
     logCustomer("skipped_unrelated_customer_upserts", { reason: "normal_save_should_not_rewrite_unrelated_customers", affectedCustomerIds: Array.from(new Set(savedOrder.lines.map((l) => l.customerId).filter(Boolean))) });
@@ -298,6 +323,7 @@ export default function OrdersPage() {
   const onCancel = () => { setEditingOrderId(null); setRemovedLineIds([]); setOriginalLineIds(new Set()); setDraft(createEmptyDraft(orders)); setMode("history"); setHasAttemptedFinalSave(false); setShowDraftIncompleteConfirm(false); setValidationWarning({ visible: false, items: [] }); pushToast({ tone: "info", text: "Draft reset to new order." }); };
 
   const startEdit = async (o: Order) => {
+    if (o.status === "draft" && !ensureFirebaseOrderWriteReady()) return;
     setEditingOrderId(o.id); setRemovedLineIds([]); setOriginalLineIds(new Set(o.lines.map(l=>l.id)));
     const copy = JSON.parse(JSON.stringify(o));
     if (copy.status === "draft") {
@@ -313,6 +339,7 @@ export default function OrdersPage() {
   };
   const startAdd = async () => {
     logDataFlow("Orders", JSON.stringify({ event: "add_order_started" }, null, 2));
+    if (!ensureFirebaseOrderWriteReady()) return;
     setEditingOrderId(null);
     setRemovedLineIds([]);
     setOriginalLineIds(new Set());
@@ -445,6 +472,7 @@ type HoverPreview = { key: string; anchor: HTMLElement | null; lines: Array<{ li
         <button aria-label="Notifications" className="relative grid h-8 w-8 place-items-center rounded-full border border-border bg-bg-card hover:border-fg-subtle transition-colors"><Bell size={14} /></button>
         <button aria-label="Toggle theme" onClick={toggle} className="grid h-8 w-8 place-items-center rounded-full border border-border bg-bg-card hover:border-fg-subtle transition-colors">{theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}</button>
       </div>
+      {ordersDataSource === "mock" ? <div className="border-b border-amber-300 bg-amber-50 px-5 py-2 text-[12px] font-medium text-amber-900">{ordersSourceSelection.hasFirebaseConfig ? "Mock mode is enabled; order and customer data is local and will not persist to Firebase." : "Firebase is not configured; app is running in mock mode and data will not persist."}</div> : null}
       <main className="min-h-0 flex-1 overflow-y-auto p-4 space-y-4">
         {mode === "drafts" && <section className="card overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-border"><h3 className="font-semibold">Draft Orders</h3><div className="text-[12px] text-fg-subtle">{drafts.length} draft{drafts.length === 1 ? "" : "s"}</div></div>

@@ -12,12 +12,13 @@ import { Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { logPageAccess, logDataFlow } from "@/lib/logger";
 import { useOrders } from "@/hooks/useOrders";
+import { ordersDataSource } from "@/lib/runtimeConfig";
 
 export default function SuppliersPage() {
   const { orders, pushToast } = useStore();
   const { data: remoteOrders, isLoading: ordersLoading } = useOrders();
   const { isLoading: suppliersLoading } = useSuppliers();
-  const ordersSource = process.env.NEXT_PUBLIC_ORDERS_DATA_SOURCE ?? "mock";
+  const ordersSource = ordersDataSource();
   const isFirebaseOrdersMode = ordersSource === "firebase";
   const [tab, setTab] = useState<"wechat" | "unique">("wechat");
   const [query, setQuery] = useState("");

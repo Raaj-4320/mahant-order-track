@@ -18,6 +18,7 @@ import { Download, Filter, Plus, Search, Wallet } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { logPageAccess, logDataFlow, logUI } from "@/lib/logger";
 import type { PaymentAgent, PaymentAgentLedgerEntry } from "@/lib/types";
+import { ordersDataSource } from "@/lib/runtimeConfig";
 
 type LedgerViewRow = {
   id: string;
@@ -34,7 +35,9 @@ export default function PaymentAgentsPage() {
   const { data: agents, isLoading: isPaymentAgentsLoading, upsertPaymentAgent, deletePaymentAgent, recordPaymentToAgent, listPaymentAgentLedger } = usePaymentAgents();
   const { orders, pushToast } = useStore();
   const { data: firebaseOrders } = useOrders();
-  const rows = getPaymentAgentFinanceSummary(agents, orders);
+  const ordersSource = ordersDataSource();
+  const sourceOrders = ordersSource === "firebase" ? firebaseOrders : orders;
+  const rows = getPaymentAgentFinanceSummary(agents, sourceOrders);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("all");
   const [open, setOpen] = useState(false);
@@ -174,7 +177,6 @@ export default function PaymentAgentsPage() {
   };
 
   const removePaymentAgent = async (agent: PaymentAgent, currentDue: number, currentCredit: number, totalOrders: number) => {
-    const sourceOrders = process.env.NEXT_PUBLIC_ORDERS_DATA_SOURCE === "firebase" ? firebaseOrders : orders;
     const agentId = agent.id;
     const normalizedName = agent.name.trim().toLowerCase();
     const linkedSavedOrdersCount = sourceOrders

@@ -1,12 +1,11 @@
-"use client";
+﻿"use client";
 
 import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
-import { Order } from "@/lib/types";
-import { orderTotal } from "@/lib/types";
+import { Order, orderTotal } from "@/lib/types";
 import { Button } from "@/components/ui/Button";
 import { ImageLightbox } from "@/components/ui/ImageLightbox";
+import { Copy, X } from "lucide-react";
 import { useRef, useState } from "react";
-import { Copy } from "lucide-react";
 
 type OrderLinesDetailModalProps = {
   order: Order | null;
@@ -14,30 +13,36 @@ type OrderLinesDetailModalProps = {
   onClose: () => void;
 };
 
-const label = "text-[12px] uppercase tracking-wide text-fg-subtle";
-
 const formatPlainAmount = (value: number) =>
   value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+const EXPORT_HIDDEN_ATTR = "data-export-hidden";
 
 export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDetailModalProps) {
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
-  const [jpgState, setJpgState] = useState<"idle" | "copying" | "copied" | "downloaded">("idle");
+  const [jpgState, setJpgState] = useState<"idle" | "copying" | "copied" | "failed">("idle");
   const exportRef = useRef<HTMLDivElement | null>(null);
+
   if (!isOpen || !order) return null;
+
   const getLineProductPhoto = (line: Order["lines"][number]) => {
     const candidate = line as Order["lines"][number] & { productImage?: string; image?: string };
     return candidate.productPhotoUrl || candidate.productImage || candidate.image || candidate.photoUrl || "";
   };
+
   const getLineDimensionPhoto = (line: Order["lines"][number]) => {
     const candidate = line as Order["lines"][number] & { dimensionPhotoUrl?: string; sizePhotoUrl?: string };
     return candidate.photoUrl || candidate.dimensionPhotoUrl || candidate.sizePhotoUrl || "";
   };
+
   const orderNo = order.number || order.orderNumber || "—";
+
   const buildLineCopyText = (line: Order["lines"][number]) => {
     const totalPcs = (line.totalCtns || 0) * (line.pcsPerCtn || 0);
     return `外套编织袋唛头一 正一侧唛头如下:\n\n${line.marka || "—"}\n\nQTY - ${totalPcs} PCS\n\nGW:填毛重\n\nMEAS:填外箱尺寸\n\n(${orderNo || "—"})`;
   };
+
   const copyText = async (text: string, key: string) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -48,99 +53,232 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
     }
   };
 
+  const scheduleJpgStateReset = (delayMs = 1500) => {
+    window.setTimeout(() => {
+      setJpgState("idle");
+      console.log("[ORDER_DETAILS_JPG_TRACE] state_reset", { delayMs });
+    }, delayMs);
+  };
+
+  const imageUrlToDataUrl = async (url: string): Promise<string | null> => {
+    try {
+      if (!url) return null;
+      if (url.startsWith("data:")) return url;
+      const normalizedUrl = /^https?:\/\//i.test(url) ? url : new URL(url, window.location.origin).toString();
+      const response = await fetch(normalizedUrl, { mode: "cors", cache: "no-store" });
+      if (!response.ok) return null;
+      const blob = await response.blob();
+      return await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(typeof reader.result === "string" ? reader.result : null);
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(blob);
+      });
+    } catch {
+      return null;
+    }
+  };
+
+  const copyComputedStyles = (source: HTMLElement, target: HTMLElement) => {
+    const computedStyle = window.getComputedStyle(source);
+    const cssText = Array.from(computedStyle)
+      .map((property) => `${property}:${computedStyle.getPropertyValue(property)};`)
+      .join("");
+    target.setAttribute("style", cssText);
+  };
+
+  const prepareCloneImages = async (source: HTMLElement, clone: HTMLElement) => {
+    const sourceImages = Array.from(source.querySelectorAll("img"));
+    const cloneImages = Array.from(clone.querySelectorAll("img"));
+
+    console.log("[ORDER_DETAILS_JPG_TRACE] images_prepared_start", { count: cloneImages.length });
+
+    await Promise.all(
+      cloneImages.map(async (cloneImage, index) => {
+        const sourceImage = sourceImages[index];
+        const rawSrc = sourceImage?.currentSrc || sourceImage?.getAttribute("src") || cloneImage.getAttribute("src") || "";
+
+        if (!rawSrc) {
+          cloneImage.removeAttribute("src");
+          cloneImage.removeAttribute("srcset");
+          cloneImage.removeAttribute("sizes");
+          console.warn("[ORDER_DETAILS_JPG_TRACE] image_prepare_failed", { index, reason: "missing_src" });
+          return;
+        }
+
+        const inlinedSrc = await imageUrlToDataUrl(rawSrc);
+        if (inlinedSrc) {
+          cloneImage.setAttribute("src", inlinedSrc);
+          cloneImage.removeAttribute("srcset");
+          cloneImage.removeAttribute("sizes");
+          cloneImage.setAttribute("crossorigin", "anonymous");
+          console.log("[ORDER_DETAILS_JPG_TRACE] images_prepared", { index, status: "inlined" });
+          return;
+        }
+
+        cloneImage.removeAttribute("src");
+        cloneImage.removeAttribute("srcset");
+        cloneImage.removeAttribute("sizes");
+        console.warn("[ORDER_DETAILS_JPG_TRACE] image_prepare_failed", { index, url: rawSrc });
+      }),
+    );
+  };
+
+  const prepareExportClone = async (source: HTMLElement) => {
+    const clone = source.cloneNode(true) as HTMLElement;
+    const sourceElements = [source, ...Array.from(source.querySelectorAll("*"))] as HTMLElement[];
+    const cloneElements = [clone, ...Array.from(clone.querySelectorAll("*"))] as HTMLElement[];
+
+    sourceElements.forEach((sourceElement, index) => {
+      const cloneElement = cloneElements[index];
+      if (!cloneElement) return;
+      copyComputedStyles(sourceElement, cloneElement);
+    });
+
+    clone.querySelectorAll(`[${EXPORT_HIDDEN_ATTR}="true"]`).forEach((node) => node.remove());
+    clone.style.margin = "0";
+    clone.style.width = `${Math.ceil(source.getBoundingClientRect().width)}px`;
+    clone.style.maxWidth = "none";
+    clone.style.background = "#ffffff";
+    clone.style.boxSizing = "border-box";
+
+    await prepareCloneImages(source, clone);
+
+    console.log("[ORDER_DETAILS_JPG_TRACE] export_clone_prepared", {
+      width: clone.style.width,
+      childCount: clone.querySelectorAll("*").length,
+    });
+
+    return clone;
+  };
+
+  const renderExportNodeToCanvas = async (source: HTMLElement) => {
+    console.log("[ORDER_DETAILS_JPG_TRACE] render_start", {
+      width: Math.ceil(source.getBoundingClientRect().width),
+      height: Math.ceil(source.getBoundingClientRect().height),
+    });
+
+    const clone = await prepareExportClone(source);
+    const width = Math.ceil(source.scrollWidth || source.getBoundingClientRect().width);
+    const height = Math.ceil(source.scrollHeight || source.getBoundingClientRect().height);
+    const serializedNode = new XMLSerializer().serializeToString(clone);
+    const svgMarkup = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+        <foreignObject width="100%" height="100%">
+          <div xmlns="http://www.w3.org/1999/xhtml" style="width:${width}px;height:${height}px;background:#ffffff;overflow:hidden;">
+            ${serializedNode}
+          </div>
+        </foreignObject>
+      </svg>
+    `;
+    const svgDataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgMarkup)}`;
+    const image = new Image();
+
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error("Failed to load export SVG image."));
+      image.src = svgDataUrl;
+    });
+
+    const scale = 2;
+    const canvas = document.createElement("canvas");
+    canvas.width = width * scale;
+    canvas.height = height * scale;
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Canvas not supported");
+
+    ctx.scale(scale, scale);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, width, height);
+    ctx.drawImage(image, 0, 0, width, height);
+
+    console.log("[ORDER_DETAILS_JPG_TRACE] render_success", { width, height, scale });
+    return canvas;
+  };
+
   const copyViewAsJpg = async () => {
-    const node = exportRef.current;
-    if (!node || jpgState === "copying") return;
+    console.log("[ORDER_DETAILS_JPG_TRACE] copy_start", { orderId: order.id, orderNumber: orderNo || null });
+    if (jpgState === "copying") return;
     setJpgState("copying");
 
     try {
-      const width = Math.ceil(node.scrollWidth);
-      const height = Math.ceil(node.scrollHeight);
-      const serialized = new XMLSerializer().serializeToString(node);
-      const svg = `
-        <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
-          <foreignObject width="100%" height="100%">${serialized}</foreignObject>
-        </svg>
-      `;
-      const svgUrl = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
+      const source = exportRef.current;
+      console.log("[ORDER_DETAILS_JPG_TRACE] export_node_found", { found: Boolean(source) });
+      if (!source) throw new Error("Export node not found.");
 
-      const image = new Image();
-      image.decoding = "async";
-      await new Promise<void>((resolve, reject) => {
-        image.onload = () => resolve();
-        image.onerror = () => reject(new Error("Failed to load export image"));
-        image.src = svgUrl;
-      });
+      const canvas = await renderExportNodeToCanvas(source);
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+      if (!blob) throw new Error("Failed to create clipboard image blob");
+      console.log("[ORDER_DETAILS_JPG_TRACE] blob_created", { size: blob.size, mimeType: blob.type || "image/png" });
 
-      const canvas = document.createElement("canvas");
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) throw new Error("Canvas not supported");
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0, 0, width, height);
-      ctx.drawImage(image, 0, 0);
+      const canWriteClipboardImage =
+        typeof navigator !== "undefined" &&
+        Boolean(navigator.clipboard?.write) &&
+        typeof ClipboardItem !== "undefined" &&
+        window.isSecureContext;
 
-      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.95));
-      URL.revokeObjectURL(svgUrl);
-      if (!blob) throw new Error("Failed to create JPG blob");
-
-      const filename = `order-details-${orderNo || "order"}.jpg`;
-      const supportsClipboardImage =
-        typeof window !== "undefined" &&
-        "ClipboardItem" in window &&
-        navigator.clipboard &&
-        typeof navigator.clipboard.write === "function";
-
-      if (supportsClipboardImage) {
-        try {
-          const item = new ClipboardItem({ "image/jpeg": blob });
-          await navigator.clipboard.write([item]);
-          setJpgState("copied");
-          window.setTimeout(() => setJpgState("idle"), 1500);
-          return;
-        } catch {
-          // fallback to download
-        }
+      if (!canWriteClipboardImage) {
+        throw new Error("Image clipboard write is not supported or page is not secure context.");
       }
 
-      const downloadUrl = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = downloadUrl;
-      anchor.download = filename;
-      anchor.click();
-      URL.revokeObjectURL(downloadUrl);
-      setJpgState("downloaded");
-      window.setTimeout(() => setJpgState("idle"), 1800);
-    } catch {
-      setJpgState("idle");
+      try {
+        console.log("[ORDER_DETAILS_JPG_TRACE] clipboard_write_start", { size: blob.size, mimeType: blob.type || "image/png" });
+        await navigator.clipboard.write([new ClipboardItem({ [blob.type || "image/png"]: blob })]);
+        console.log("[ORDER_DETAILS_JPG_TRACE] clipboard_write_success", { size: blob.size, mimeType: blob.type || "image/png" });
+        setJpgState("copied");
+      } catch (error) {
+        const failure = error instanceof Error ? error : new Error("Clipboard image write failed");
+        console.error("[ORDER_DETAILS_JPG_TRACE] clipboard_write_failed", {
+          name: failure.name,
+          message: failure.message,
+          isSecureContext: window.isSecureContext,
+          hasClipboardWrite: Boolean(navigator.clipboard?.write),
+          hasClipboardItem: typeof ClipboardItem !== "undefined",
+          blobType: blob.type,
+          blobSize: blob.size,
+        });
+        setJpgState("failed");
+      }
+    } catch (error) {
+      console.error("[ORDER_DETAILS_JPG_TRACE] copy_failed", error);
+      setJpgState("failed");
+    } finally {
+      scheduleJpgStateReset(1500);
     }
   };
 
   return (
     <div className="fixed inset-0 z-50 bg-black/45 p-4" onClick={onClose}>
-      <div className="mx-auto mt-4 w-[96vw] max-w-[1280px] rounded-2xl border border-border bg-bg-card shadow-card" onClick={(e) => e.stopPropagation()}>
+      <div
+        className="mx-auto mt-4 w-[96vw] max-w-[1280px] rounded-2xl border border-border bg-bg-card shadow-card"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
           <h3 className="text-[18px] font-semibold">Order Details</h3>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2" data-export-hidden="true">
             <Button size="sm" variant="secondary" onClick={copyViewAsJpg} disabled={jpgState === "copying"}>
-              {jpgState === "copying" ? "Copying..." : jpgState === "copied" ? "Copied JPG" : jpgState === "downloaded" ? "Downloaded JPG" : "Copy as JPG"}
+              {jpgState === "copying"
+                ? "Copying..."
+                : jpgState === "copied"
+                  ? "Copied Image"
+                  : jpgState === "failed"
+                    ? "Copy failed"
+                    : "Copy as JPG"}
             </Button>
-            <Button size="sm" variant="secondary" onClick={onClose}>✕</Button>
+            <Button size="sm" variant="secondary" onClick={onClose} aria-label="Close">
+              <X size={18} />
+            </Button>
           </div>
         </div>
 
         <div ref={exportRef} className="space-y-2.5 p-3">
           <div className="overflow-hidden rounded-xl border-2 border-border bg-bg">
-            <div className="grid grid-cols-1 sm:grid-cols-2">
-              <div className="space-y-0.5 border-r-2 border-border p-2.5">
-                <div className={label}>Order Number</div>
-                <div className="text-[20px] font-extrabold tabular-nums">{order.number || order.orderNumber || "—"}</div>
-              </div>
-              <div className="space-y-0.5 p-2.5">
-                <div className={label}>WECHAT</div>
-                <div className="text-[20px] font-extrabold leading-tight">WECHAT : {order.wechatId || "—"}</div>
-              </div>
+            <div className="grid grid-cols-[180px_1fr] items-center p-2.5">
+              <div className="text-[22px] font-bold tabular-nums leading-tight">{order.number || order.orderNumber || "—"}</div>
+              <div className="text-left text-[22px] font-bold leading-tight">WECHAT : {order.wechatId || "—"}</div>
             </div>
           </div>
 
@@ -157,21 +295,21 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
                 <col className="w-[100px]" />
                 <col className="w-[105px]" />
                 <col className="w-[130px]" />
-                <col className="w-[100px]" />
+                <col className="w-[100px]" data-export-hidden="true" />
               </colgroup>
-              <thead className="bg-[var(--brand)] text-left uppercase tracking-wide text-[var(--brand-fg)]">
+              <thead className="bg-[var(--brand-fg)] text-center uppercase tracking-wide text-[var(--brand)]">
                 <tr>
                   <th className="border border-border px-2 py-3">#</th>
-                  <th className="border border-border px-1 py-2 text-[10px] leading-tight whitespace-nowrap">DIM/WEIGHT</th>
-                  <th className="border border-border px-1 py-2 text-[10px] leading-tight whitespace-nowrap">产品图片</th>
-                  <th className="border border-border px-2 py-2.5 text-[11px] whitespace-nowrap">MARKA</th>
-                  <th className="border border-border px-2 py-2.5 text-[11px] whitespace-nowrap">DETAILS</th>
-                  <th className="border border-border px-1 py-2 text-[10px] leading-tight whitespace-nowrap">件数 PCS/CTN</th>
-                  <th className="border border-border px-1 py-2 text-[10px] leading-tight whitespace-nowrap">装箱数 CTN</th>
-                  <th className="border border-border px-1 py-2 text-[10px] leading-tight whitespace-nowrap">TOTAL P</th>
-                  <th className="border border-border px-1 py-2 text-[10px] leading-tight whitespace-nowrap">单价 PRICE/PC</th>
-                  <th className="border border-border px-1 py-2 text-[10px] leading-tight whitespace-nowrap">金额 TOTAL AMOUNT</th>
-                  <th className="border border-border px-1 py-2 text-[10px] leading-tight whitespace-nowrap">COPY</th>
+                  <th className="border border-border px-1 py-2 text-[14px] leading-tight whitespace-nowrap">DIM/WEIGHT</th>
+                  <th className="border border-border px-1 py-2 text-[14px] leading-tight whitespace-nowrap">产品图片</th>
+                  <th className="border border-border px-2 py-2.5 text-[14px] whitespace-nowrap">MARKA</th>
+                  <th className="border border-border px-2 py-2.5 text-[14px] whitespace-nowrap">DETAILS</th>
+                  <th className="border border-border px-1 py-2 text-[14px] leading-tight whitespace-nowrap">件数 PCS/CTN</th>
+                  <th className="border border-border px-1 py-2 text-[14px] leading-tight whitespace-nowrap">装箱数 CTN</th>
+                  <th className="border border-border px-1 py-2 text-[14px] leading-tight whitespace-nowrap">TOTAL Pieces</th>
+                  <th className="border border-border px-1 py-2 text-[14px] leading-tight whitespace-nowrap">单价 PRICE/PC</th>
+                  <th className="border border-border px-1 py-2 text-[13px] leading-tight whitespace-nowrap">金额 TOTAL AMOUNT</th>
+                  <th className="border border-border px-1 py-2 text-[14px] leading-tight whitespace-nowrap" data-export-hidden="true">COPY</th>
                 </tr>
               </thead>
               <tbody>
@@ -181,51 +319,115 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
                   const productPhoto = getLineProductPhoto(line);
                   const dimPhoto = getLineDimensionPhoto(line);
                   const copyTextBlock = buildLineCopyText(line);
+
                   return (
                     <tr key={line.id} className="align-middle">
                       <td className="border border-border px-1 py-2 text-center font-bold tabular-nums">{idx + 1}</td>
-                      <td className="border border-border px-1.5 py-1.5">
-                        <div className="grid h-[76px] w-[76px] place-items-center overflow-hidden rounded border border-border bg-bg-subtle text-[10px] font-semibold text-fg-subtle">
-                          {dimPhoto ? <button type="button" title="Open image preview" aria-label="Open image preview" className="grid h-full w-full place-items-center cursor-zoom-in" onClick={() => setPreviewImage(dimPhoto)}><img src={getCloudinaryOptimizedUrl(dimPhoto, { width: 180, height: 180, crop: "fit" })} alt="dimension" className="h-full w-full object-contain object-center" loading="lazy" decoding="async" /></button> : "No photo"}
+                      <td className="px-1.5 py-1.5 align-middle">
+                        <div className="mx-auto flex h-[90px] w-[90px] items-center justify-center overflow-hidden rounded bg-bg-subtle text-[10px] font-semibold text-fg-subtle">
+                          {dimPhoto ? (
+                            <button
+                              type="button"
+                              title="Open image preview"
+                              aria-label="Open image preview"
+                              className="flex h-full w-full cursor-zoom-in items-center justify-center"
+                              onClick={() => setPreviewImage(dimPhoto)}
+                            >
+                              <img
+                                src={getCloudinaryOptimizedUrl(dimPhoto, { width: 360, height: 360, crop: "fit" })}
+                                crossOrigin="anonymous"
+                                alt="dimension"
+                                className="block max-h-full max-w-full object-contain object-center"
+                                loading="lazy"
+                                decoding="async"
+                              />
+                            </button>
+                          ) : (
+                            "No photo"
+                          )}
                         </div>
                       </td>
-                      <td className="border border-border px-1.5 py-1.5">
-                        <div className="grid h-[76px] w-[76px] place-items-center rounded border border-border bg-bg-subtle text-[10px] font-semibold text-fg-subtle">
-                          {productPhoto ? <button type="button" title="Open image preview" aria-label="Open image preview" className="h-full w-full cursor-zoom-in" onClick={() => setPreviewImage(productPhoto)}><img src={getCloudinaryOptimizedUrl(productPhoto, { width: 180, height: 180, crop: "fit" })} alt="product" className="h-full w-full object-contain" loading="lazy" decoding="async" /></button> : "No photo"}
+                      <td className="px-1.5 py-1.5 align-middle">
+                        <div className="mx-auto flex h-[90px] w-[90px] items-center justify-center overflow-hidden rounded bg-bg-subtle text-[10px] font-semibold text-fg-subtle">
+                          {productPhoto ? (
+                            <button
+                              type="button"
+                              title="Open image preview"
+                              aria-label="Open image preview"
+                              className="flex h-full w-full cursor-zoom-in items-center justify-center"
+                              onClick={() => setPreviewImage(productPhoto)}
+                            >
+                              <img
+                                src={getCloudinaryOptimizedUrl(productPhoto, { width: 360, height: 360, crop: "fit" })}
+                                crossOrigin="anonymous"
+                                alt="product"
+                                className="block max-h-full max-w-full object-contain object-center"
+                                loading="lazy"
+                                decoding="async"
+                              />
+                            </button>
+                          ) : (
+                            "No photo"
+                          )}
                         </div>
                       </td>
-                      <td className="border border-border px-2 py-2 text-[13px] font-semibold leading-tight break-words">{line.marka || "—"}</td>
-                      <td className="border border-border px-2 py-2 text-[13px] font-semibold leading-tight break-words">{line.details || "—"}</td>
-                      <td className="border border-border px-1 py-2 text-center text-[13px] font-bold leading-tight tabular-nums">{line.pcsPerCtn || 0}</td>
-                      <td className="border border-border px-1 py-2 text-center text-[13px] font-bold leading-tight tabular-nums">{line.totalCtns || 0}</td>
-                      <td className="border border-border px-1 py-2 text-center text-[13px] font-bold leading-tight tabular-nums">{totalPcs || 0}</td>
-                      <td className="border border-border px-1 py-2 text-center text-[13px] font-bold leading-tight tabular-nums">{line.rmbPerPcs ? formatPlainAmount(line.rmbPerPcs) : "0.00"}</td>
-                      <td className="border border-border px-1 py-2 text-center text-[13px] font-bold leading-tight tabular-nums">{lineTotal ? formatPlainAmount(lineTotal) : "0.00"}</td>
-                      <td className="border border-border px-1 py-1 text-center">
-                        <button type="button" onClick={() => copyText(copyTextBlock, `line-${line.id}`)} className="inline-flex w-full items-center justify-center gap-1 rounded border border-border bg-bg-subtle px-1 py-1 text-[10px] font-semibold">
+                      <td className="border border-border px-2 py-2 text-[16px] font-semibold leading-tight break-words">{line.marka || "—"}</td>
+                      <td className="border border-border px-2 py-2 text-[16px] font-semibold leading-tight break-words">{line.details || "—"}</td>
+                      <td className="border border-border px-1 py-2 text-center text-[16px] font-bold leading-tight tabular-nums">{line.pcsPerCtn || 0}</td>
+                      <td className="border border-border px-1 py-2 text-center text-[16px] font-bold leading-tight tabular-nums">{line.totalCtns || 0}</td>
+                      <td className="border border-border px-1 py-2 text-center text-[16px] font-bold leading-tight tabular-nums">{totalPcs || 0}</td>
+                      <td className="border border-border px-1 py-2 text-center text-[16px] font-bold leading-tight tabular-nums">
+                        {line.rmbPerPcs ? formatPlainAmount(line.rmbPerPcs) : "0.00"}
+                      </td>
+                      <td className="border border-border px-1 py-2 text-center text-[16px] font-bold leading-tight tabular-nums">
+                        {lineTotal ? formatPlainAmount(lineTotal) : "0.00"}
+                      </td>
+                      <td className="border border-border px-1 py-1 text-center" data-export-hidden="true">
+                        <button
+                          type="button"
+                          onClick={() => copyText(copyTextBlock, `line-${line.id}`)}
+                          className="inline-flex w-full items-center justify-center gap-1 rounded border border-border bg-bg-subtle px-1 py-1 text-[10px] font-semibold"
+                        >
                           <Copy size={10} /> {copiedKey === `line-${line.id}` ? "Copied" : "Copy"}
                         </button>
                       </td>
                     </tr>
                   );
                 })}
-                {order.lines.length === 0 ? <tr><td colSpan={11} className="border border-border px-3 py-8 text-center text-fg-subtle">No order lines to display.</td></tr> : null}
+                {order.lines.length === 0 ? (
+                  <tr>
+                    <td colSpan={11} className="border border-border px-3 py-8 text-center text-fg-subtle">
+                      No order lines to display.
+                    </td>
+                  </tr>
+                ) : null}
               </tbody>
+              <tfoot>
+                <tr className="bg-bg-subtle">
+                  <td colSpan={7} className="border-t-2 border-border px-2 py-3" />
+                  <td colSpan={2} className="border-t-2 border-border px-1 py-3 text-right align-middle">
+                    <div className="inline-flex bg-bg-card px-2 py-1 text-right text-[16px] font-bold uppercase leading-tight tracking-wide text-danger whitespace-nowrap">
+                      TOTAL ORDER AMOUNT
+                    </div>
+                  </td>
+                  <td className="border-t-2 border-border px-1 py-3 text-center align-middle">
+                    <div className="mx-auto inline-flex rounded border-2 border-border bg-[var(--brand-fg)] px-3 py-1 text-[18px] font-bold text-[var(--danger)] tabular-nums">
+                      {formatPlainAmount(orderTotal(order))}
+                    </div>
+                  </td>
+                  <td className="border-t-2 border-border px-1 py-3 text-center align-middle" data-export-hidden="true">
+                    <button
+                      type="button"
+                      onClick={() => copyText(order.lines.map((line) => buildLineCopyText(line)).join("\n\n\n"), "all")}
+                      className="inline-flex items-center justify-center gap-1 rounded border border-border bg-bg-card px-2 py-1 text-[11px] font-semibold"
+                    >
+                      <Copy size={13} />
+                      {copiedKey === "all" ? "Copied all" : "Copy All"}
+                    </button>
+                  </td>
+                </tr>
+              </tfoot>
             </table>
-          </div>
-
-          <div className="rounded-xl border-2 border-border bg-bg-subtle px-2 py-2">
-            <div className="grid grid-cols-[34px_115px_115px_140px_130px_95px_85px_100px_105px_130px_100px] items-center gap-0">
-              <div className="col-start-10 justify-self-end text-right">
-                <div className="text-[11px] font-bold uppercase tracking-wide text-fg">TOTAL ORDER AMOUNT</div>
-                <div className="mt-0.5 inline-flex rounded border-2 border-border bg-[var(--brand)] px-3 py-1 text-[15px] font-extrabold text-[var(--brand-fg)] tabular-nums">{formatPlainAmount(orderTotal(order))}</div>
-              </div>
-              <div className="col-start-11 justify-self-end text-right">
-                <button type="button" onClick={() => copyText(order.lines.map((line) => buildLineCopyText(line)).join("\n\n\n"), "all")} className="inline-flex items-center gap-1 rounded border border-border bg-bg-card px-2 py-1 text-[11px]">
-                  <Copy size={13} />{copiedKey === "all" ? "Copied all" : "Copy All"}
-                </button>
-              </div>
-            </div>
           </div>
         </div>
       </div>
@@ -233,3 +435,6 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
     </div>
   );
 }
+
+
+

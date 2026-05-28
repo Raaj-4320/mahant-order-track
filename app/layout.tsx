@@ -8,7 +8,7 @@ import { Toasts } from "@/components/ui/Toasts";
 import { DebugAppLoaded } from "@/components/DebugAppLoaded";
 
 export const metadata: Metadata = {
-  title: "TradeFlow — Order Booking",
+  title: "TradeFlow - Order Booking",
   description: "TradeFlow order booking dashboard",
 };
 

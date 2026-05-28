@@ -16,7 +16,7 @@ import { CalendarDays, ClipboardList, Download, Eye, Filter, Package, Search, Sq
 import { useEffect, useMemo, useRef, useState } from "react";
 import { logPageAccess, logDataFlow } from "@/lib/logger";
 import { runDevReset } from "@/services/devResetService";
-import { isAuthRequiredModeEnabled, isDevResetEnabled } from "@/lib/runtimeConfig";
+import { isAuthRequiredModeEnabled, isDevResetEnabled, ordersDataSource } from "@/lib/runtimeConfig";
 import { useRouter } from "next/navigation";
 import { OrderLinesDetailModal } from "@/components/orders/OrderLinesDetailModal";
 import { useBusinessAccess } from "@/hooks/useBusinessAccess";
@@ -28,7 +28,7 @@ export default function DashboardPage() {
   const { data: remoteOrders, isLoading: ordersLoading, upsertOrder: upsertRemoteOrder, reload: reloadRemoteOrders } = useOrders();
   const { data: customers, isLoading: customersLoading } = useCustomers();
   const { data: paymentAgents, isLoading: paymentAgentsLoading } = usePaymentAgents();
-  const ordersSource = process.env.NEXT_PUBLIC_ORDERS_DATA_SOURCE ?? "mock";
+  const ordersSource = ordersDataSource();
   const isFirebaseOrdersMode = ordersSource === "firebase";
   const sourceOrders = useMemo(() => {
     const base = isFirebaseOrdersMode ? remoteOrders : orders;

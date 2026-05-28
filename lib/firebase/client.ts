@@ -13,6 +13,33 @@ export type FirebaseClientConfig = {
   measurementId?: string;
 };
 
+const REQUIRED_PUBLIC_FIREBASE_KEYS = [
+  "NEXT_PUBLIC_FIREBASE_API_KEY",
+  "NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN",
+  "NEXT_PUBLIC_FIREBASE_PROJECT_ID",
+  "NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET",
+  "NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID",
+  "NEXT_PUBLIC_FIREBASE_APP_ID",
+] as const;
+
+export const getFirebaseConfigStatus = () => {
+  const env = {
+    NEXT_PUBLIC_FIREBASE_API_KEY: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+    NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+    NEXT_PUBLIC_FIREBASE_PROJECT_ID: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+    NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+    NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+    NEXT_PUBLIC_FIREBASE_APP_ID: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+  };
+  const missingKeys = REQUIRED_PUBLIC_FIREBASE_KEYS.filter((key) => !env[key]);
+  return {
+    hasFirebaseConfig: missingKeys.length === 0,
+    missingKeys,
+    hasBusinessId: Boolean(process.env.NEXT_PUBLIC_FIREBASE_BUSINESS_ID),
+    businessId: process.env.NEXT_PUBLIC_FIREBASE_BUSINESS_ID || null,
+  };
+};
+
 export const getFirebaseClientConfig = (): FirebaseClientConfig | null => {
   const apiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
   const authDomain = process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN;
@@ -26,6 +53,14 @@ export const getFirebaseClientConfig = (): FirebaseClientConfig | null => {
 };
 
 export const isFirebaseConfigured = () => getFirebaseClientConfig() !== null;
+
+export const getFirebaseBusinessId = () => process.env.NEXT_PUBLIC_FIREBASE_BUSINESS_ID || null;
+
+export const requireFirebaseBusinessId = () => {
+  const businessId = getFirebaseBusinessId();
+  if (!businessId) throw new Error("Firebase business id missing; set NEXT_PUBLIC_FIREBASE_BUSINESS_ID before saving orders or customers.");
+  return businessId;
+};
 
 export const getFirebaseApp = (): FirebaseApp | null => {
   const config = getFirebaseClientConfig();

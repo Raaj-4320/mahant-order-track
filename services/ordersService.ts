@@ -1,12 +1,17 @@
 import { isFirebaseConfigured } from "@/lib/firebase/client";
+import { ordersDataSourceSelection } from "@/lib/runtimeConfig";
 import type { OrdersService } from "@/services/contracts";
 import { ordersMockService } from "@/services/mock/ordersMockService";
 
-const ORDERS_SOURCE = process.env.NEXT_PUBLIC_ORDERS_DATA_SOURCE ?? "mock";
-
 export function getOrdersService(): OrdersService {
-  if (ORDERS_SOURCE !== "firebase") return ordersMockService;
-  if (!isFirebaseConfigured()) return ordersMockService;
+  const selection = ordersDataSourceSelection();
+  console.log("[DATA_SOURCE_TRACE] selected_source", JSON.stringify({ service: "orders", selectedSource: selection.source, reason: selection.reason, explicitSource: selection.explicitSource, explicitMockEnabled: selection.explicitMockEnabled }, null, 2));
+  console.log("[DATA_SOURCE_TRACE] firebase_config_check", JSON.stringify({ service: "orders", hasFirebaseConfig: selection.hasFirebaseConfig, missingFirebaseKeys: selection.missingFirebaseKeys, hasBusinessId: selection.hasBusinessId, businessId: selection.businessId }, null, 2));
+  if (selection.source !== "firebase") {
+    if (!selection.hasFirebaseConfig) console.warn("Firebase is not configured; app is running in mock mode and data will not persist.");
+    return ordersMockService;
+  }
+  if (!isFirebaseConfigured()) throw new Error("Firebase mode selected for orders but Firebase is not configured.");
   return {
     async listOrders() { const { ordersFirebaseService } = await import("@/services/firebase/ordersFirebaseService"); return ordersFirebaseService.listOrders(); },
     async getOrderById(id) { const { ordersFirebaseService } = await import("@/services/firebase/ordersFirebaseService"); return ordersFirebaseService.getOrderById(id); },

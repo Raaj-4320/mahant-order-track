@@ -1,14 +1,14 @@
 import { collection, doc, getDoc, getDocs, query, runTransaction, setDoc, where } from "firebase/firestore";
-import { getFirestoreDb } from "@/lib/firebase/client";
+import { getFirestoreDb, requireFirebaseBusinessId } from "@/lib/firebase/client";
 import { orderFromFirestore, orderToFirestore, sanitizeFirestorePayload } from "@/lib/firebase/mappers";
 import { orderNumberCounterPath, orderPath, ordersPath } from "@/lib/firebase/paths";
 import type { OrdersService } from "@/services/contracts";
 import type { Order } from "@/lib/types";
 import { logDB, logError } from "@/lib/logger";
 
-const BUSINESS_ID = process.env.NEXT_PUBLIC_FIREBASE_BUSINESS_ID ?? "mahant";
 const makeId = () => (globalThis.crypto?.randomUUID?.() ?? `ord-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
 const requireDb = () => { const db = getFirestoreDb(); if (!db) throw new Error("Firebase not configured."); return db; };
+const businessId = () => requireFirebaseBusinessId();
 const ORDER_NO_RE = /^YY-(\d+)$/;
 
 function parseOrderNo(value?: string | null): number | null {
@@ -22,26 +22,27 @@ function parseOrderNo(value?: string | null): number | null {
 export const ordersFirebaseService: OrdersService = {
   async listOrders() {
     const db = requireDb();
-    const snap = await getDocs(collection(db, ordersPath(BUSINESS_ID)));
+    const snap = await getDocs(collection(db, ordersPath(businessId())));
     return snap.docs.map((d) => orderFromFirestore({ id: d.id, ...(d.data() as Record<string, unknown>) })).sort((a, b) => (b.updatedAt || b.date || "").localeCompare(a.updatedAt || a.date || ""));
   },
   async getOrderById(id) {
     const db = requireDb();
-    const snap = await getDoc(doc(db, orderPath(BUSINESS_ID, id)));
+    const snap = await getDoc(doc(db, orderPath(businessId(), id)));
     if (!snap.exists()) return null;
     return orderFromFirestore({ id: snap.id, ...(snap.data() as Record<string, unknown>) });
   },
 
   async peekNextOrderNumber() {
     const db = requireDb();
-    const counterRef = doc(db, orderNumberCounterPath(BUSINESS_ID));
+    const bizId = businessId();
+    const counterRef = doc(db, orderNumberCounterPath(bizId));
     const counterSnap = await getDoc(counterRef);
     if (counterSnap.exists()) {
       const maybeNext = Number((counterSnap.data() as any).nextNumber);
       const next = Number.isFinite(maybeNext) && maybeNext >= 301 ? maybeNext : 301;
       return `YY-${next}`;
     }
-    const allOrders = await getDocs(collection(db, ordersPath(BUSINESS_ID)));
+    const allOrders = await getDocs(collection(db, ordersPath(bizId)));
     let maxExisting = 300;
     for (const d of allOrders.docs) {
       const data = d.data() as any;
@@ -54,7 +55,8 @@ export const ordersFirebaseService: OrdersService = {
   },
   async allocateNextOrderNumber() {
     const db = requireDb();
-    const counterRef = doc(db, orderNumberCounterPath(BUSINESS_ID));
+    const bizId = businessId();
+    const counterRef = doc(db, orderNumberCounterPath(bizId));
     return runTransaction(db, async (tx) => {
       const counterSnap = await tx.get(counterRef);
       let next = 301;
@@ -62,7 +64,7 @@ export const ordersFirebaseService: OrdersService = {
         const maybeNext = Number((counterSnap.data() as any).nextNumber);
         next = Number.isFinite(maybeNext) && maybeNext >= 301 ? maybeNext : 301;
       } else {
-        const allOrders = await getDocs(collection(db, ordersPath(BUSINESS_ID)));
+        const allOrders = await getDocs(collection(db, ordersPath(bizId)));
         let maxExisting = 300;
         for (const d of allOrders.docs) {
           const data = d.data() as any;
@@ -79,6 +81,7 @@ export const ordersFirebaseService: OrdersService = {
   },
   async upsertOrder(order: Order) {
     const db = requireDb();
+    const bizId = businessId();
     const now = new Date().toISOString();
     const id = order.id || makeId();
     const existing = await this.getOrderById(id);
@@ -87,9 +90,12 @@ export const ordersFirebaseService: OrdersService = {
     const mapped = orderToFirestore(next);
     const sanitized = sanitizeFirestorePayload(mapped);
     logDB("order_payload_sanitized", { orderId: id, removedUndefinedPaths: sanitized.removedUndefinedPaths });
+    console.log("[ORDER_SAVE_TRACE] firebase_write_start", JSON.stringify({ orderId: id, status: next.status, businessId: bizId, path: orderPath(bizId, id), collectionPath: ordersPath(bizId) }, null, 2));
     try {
-      await setDoc(doc(db, orderPath(BUSINESS_ID, id)), sanitized.value, { merge: true });
+      await setDoc(doc(db, orderPath(bizId, id)), sanitized.value, { merge: true });
+      console.log("[ORDER_SAVE_TRACE] firebase_write_success", JSON.stringify({ orderId: id, status: next.status, businessId: bizId, path: orderPath(bizId, id) }, null, 2));
     } catch (e: any) {
+      console.log("[ORDER_SAVE_TRACE] firebase_write_failed", JSON.stringify({ orderId: id, status: order.status, businessId: bizId, path: orderPath(bizId, id), errorCode: e?.code ?? undefined, errorMessage: e?.message ?? String(e) }, null, 2));
       logError("upsert_order_failure", { orderId: id, status: order.status, errorCode: e?.code ?? undefined, errorMessage: e?.message ?? String(e), removedUndefinedPaths: sanitized.removedUndefinedPaths });
       throw e;
     }
@@ -102,7 +108,7 @@ export const ordersFirebaseService: OrdersService = {
   },
   async listDraftOrders() {
     const db = requireDb();
-    const q = query(collection(db, ordersPath(BUSINESS_ID)), where("status", "==", "draft"));
+    const q = query(collection(db, ordersPath(businessId())), where("status", "==", "draft"));
     const snap = await getDocs(q);
     return snap.docs.map((d) => orderFromFirestore({ id: d.id, ...(d.data() as Record<string, unknown>) }));
   },
