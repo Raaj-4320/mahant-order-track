@@ -297,7 +297,7 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
                 <col className="w-[130px]" />
                 <col className="w-[100px]" data-export-hidden="true" />
               </colgroup>
-              <thead className="bg-[var(--brand-fg)] text-center uppercase tracking-wide text-[var(--brand)]">
+              <thead className="bg-[var(--brand)] text-center uppercase tracking-wide text-[var(--brand-fg)]">
                 <tr>
                   <th className="border border-border px-2 py-3">#</th>
                   <th className="border border-border px-1 py-2 text-[14px] leading-tight whitespace-nowrap">DIM/WEIGHT</th>
@@ -411,7 +411,7 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
                     </div>
                   </td>
                   <td className="border-t-2 border-border px-1 py-3 text-center align-middle">
-                    <div className="mx-auto inline-flex rounded border-2 border-border bg-[var(--brand-fg)] px-3 py-1 text-[18px] font-bold text-[var(--danger)] tabular-nums">
+                    <div className="mx-auto inline-flex rounded border-2 border-border bg-[var(--brand)] px-3 py-1 text-[18px] font-bold text-[var(--brand-fg)] tabular-nums">
                       {formatPlainAmount(orderTotal(order))}
                     </div>
                   </td>
