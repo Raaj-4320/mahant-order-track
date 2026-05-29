@@ -324,7 +324,7 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
                     <tr key={line.id} className="align-middle">
                       <td className="border border-border px-1 py-2 text-center font-bold tabular-nums">{idx + 1}</td>
                       <td className="px-1.5 py-1.5 align-middle">
-                        <div className="mx-auto flex h-[90px] w-[90px] items-center justify-center overflow-hidden rounded bg-bg-subtle text-[10px] font-semibold text-fg-subtle">
+                        <div className="mx-auto flex h-[120px] w-[120px] items-center justify-center overflow-hidden rounded bg-bg-subtle text-[10px] font-semibold text-fg-subtle">
                           {dimPhoto ? (
                             <button
                               type="button"
@@ -348,7 +348,7 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
                         </div>
                       </td>
                       <td className="px-1.5 py-1.5 align-middle">
-                        <div className="mx-auto flex h-[90px] w-[90px] items-center justify-center overflow-hidden rounded bg-bg-subtle text-[10px] font-semibold text-fg-subtle">
+                        <div className="mx-auto flex h-[120px] w-[120px] items-center justify-center overflow-hidden rounded bg-bg-subtle text-[10px] font-semibold text-fg-subtle">
                           {productPhoto ? (
                             <button
                               type="button"
