@@ -1,18 +1,26 @@
 import type { Order, PaymentAgent, PaymentAgentLedgerEntry } from "@/lib/types";
+import { getOrderCreditExclusionReason, isOrderEligibleForCreditSettlement } from "@/services/settlement/orderCreditEligibility";
 
 const clamp = (n: number) => Math.max(0, Number.isFinite(n) ? n : 0);
 
 export function recalculateAgentFromOpeningAndOrders(agent: PaymentAgent, orders: Order[]): PaymentAgent {
   const own = orders.filter((o) => (o.paymentAgentId || o.paymentBy) === agent.id && o.paymentAgentSettlementSnapshot);
+  const eligible = own.filter((order) => {
+    const included = isOrderEligibleForCreditSettlement(order);
+    if (included) console.log("[PAYMENT_CREDIT_TRACE] finalized_order_included", { orderId: order.id, status: order.status, loadingDate: order.loadingDate });
+    else console.log("[PAYMENT_CREDIT_TRACE] order_excluded_reason", { orderId: order.id, reason: getOrderCreditExclusionReason(order) });
+    return included;
+  });
   let creditBalance = clamp(agent.openingCreditBalance ?? agent.creditBalance ?? 0);
   let totalOrderAmount = 0; let totalPaidAmount = 0; let currentDuePayable = 0;
-  for (const o of own) {
+  for (const o of eligible) {
     const s = o.paymentAgentSettlementSnapshot!;
     totalOrderAmount += clamp((s as any).orderTotal);
     totalPaidAmount += clamp(s.paidNow);
     currentDuePayable += clamp(s.remainingPayable);
     creditBalance = clamp(creditBalance - clamp(s.creditUsed) + clamp(s.newCreditCreated));
   }
+  console.log("[PAYMENT_CREDIT_TRACE] committed_credit_balance_result", { agentId: agent.id, creditBalance, totalOrderAmount, totalPaidAmount, currentDuePayable });
   return { ...agent, creditBalance, totalOrderAmount, totalPaidAmount, currentDuePayable, updatedAt: new Date().toISOString() };
 }
 

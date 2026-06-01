@@ -1,340 +1,419 @@
 "use client";
 
 import { PageShell } from "@/components/PageShell";
-import { StatusBadge } from "@/components/table/StatusBadge";
 import { TablePagination } from "@/components/table/TablePagination";
-import { StatCard } from "@/components/StatCard";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
+import { ImageLightbox } from "@/components/ui/ImageLightbox";
 import { useCustomers } from "@/hooks/useCustomers";
 import { useOrders } from "@/hooks/useOrders";
+import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
 import { formatAmount } from "@/lib/data";
-import { formatIndianDate } from "@/lib/dateFormat";
-import { openStatementPdfPrint } from "@/services/statementPdf";
-import { customersDataSourceSelection, isAnyFirebaseModeEnabled, isMaintenanceToolsEnabled, ordersDataSource } from "@/lib/runtimeConfig";
+import { lineTotalPcs, lineTotalRmb, orderTotal, type Customer, type Order } from "@/lib/types";
 import { useStore } from "@/lib/store";
-import type { CustomerLedgerEntry } from "@/lib/types";
-import { customerLedgerService } from "@/services/customerLedgerService";
-import { getCustomerCurrentReceivable, getCustomerStoreCredit, getCustomerTotalOrders, getCustomerTotalReceived, getCustomerTotalReceivable } from "@/services/customers/customerFinance";
-import { Download, Filter, Plus, Search, Users } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { logPageAccess, logDataFlow, logUI } from "@/lib/logger";
-import { useBusinessAccess } from "@/hooks/useBusinessAccess";
+import { ordersDataSource } from "@/lib/runtimeConfig";
+import { joinLineDetails } from "@/lib/orderLineDetails";
+import { Download, Filter, Search } from "lucide-react";
+import { useMemo, useState } from "react";
 
-const typeLabel = (type: CustomerLedgerEntry["type"]) => {
-  if (type === "order_receivable") return "Order Receivable";
-  if (type === "order_receivable_reversal") return "Receivable Reversal";
-  if (type === "customer_payment") return "Customer Payment";
-  return "Payment Reversal";
+type CustomerOrderLineRow = {
+  orderId: string;
+  orderNumber: string;
+  wechatId: string;
+  orderDate: string;
+  productImage: string;
+  dimImage: string;
+  marka: string;
+  details1: string;
+  details2: string;
+  details3: string;
+  ctn: number;
+  pcsPerCtn: number;
+  totalPieces: number;
+  totalAmount: number;
+};
+
+type CustomerSummaryRow = {
+  customer: Customer;
+  latestOrderDate: string;
+  latestOrderAmount: number;
+  latestProductImage: string;
+  latestProductMarka: string;
+  totalOrders: number;
+  totalOrdersAmount: number;
+  allLineRows: CustomerOrderLineRow[];
+};
+
+const getLineImage = (line: Order["lines"][number]) => {
+  const candidate = line as Order["lines"][number] & { productImage?: string; image?: string };
+  return candidate.productPhotoUrl || candidate.productImage || candidate.image || candidate.photoUrl || "";
+};
+
+const getLineDimImage = (line: Order["lines"][number]) => {
+  const candidate = line as Order["lines"][number] & { dimensionPhotoUrl?: string; sizePhotoUrl?: string };
+  return candidate.photoUrl || candidate.dimensionPhotoUrl || candidate.sizePhotoUrl || "";
+};
+
+const sameCustomer = (line: Order["lines"][number], customer: Customer) => {
+  const customerName = (customer.displayName || customer.name || "").trim().toLowerCase();
+  const lineCustomerName = (line.customerName || line.customerSnapshot?.name || "").trim().toLowerCase();
+  return line.customerId === customer.id || (Boolean(customerName) && lineCustomerName === customerName);
 };
 
 export default function CustomersPage() {
-  const { orders: localOrders, pushToast } = useStore();
-  const { canManageMaintenance } = useBusinessAccess();
-  const { data: customers, isLoading, error, recordPaymentToCustomer, deleteCustomer, reload } = useCustomers();
+  const { data: customers, isLoading, error } = useCustomers();
   const { data: firebaseOrders } = useOrders();
-  const customersSourceSelection = useMemo(() => customersDataSourceSelection(), []);
-  const ordersSource = ordersDataSource();
-  const base = customers;
-  const [q, setQ] = useState("");
-  const [status, setStatus] = useState("all");
+  const { orders: localOrders } = useStore();
+  const source = ordersDataSource();
+  const orders = source === "firebase" ? firebaseOrders : localOrders;
+
+  const [query, setQuery] = useState("");
+  const [sortBy, setSortBy] = useState("name");
   const [viewCustomerId, setViewCustomerId] = useState<string | null>(null);
-  const [ledgerRows, setLedgerRows] = useState<CustomerLedgerEntry[]>([]);
-  const [ledgerError, setLedgerError] = useState<string | null>(null);
-  const [payCustomerId, setPayCustomerId] = useState<string | null>(null);
-  const [payAmount, setPayAmount] = useState("");
-  const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10));
-  const [payNote, setPayNote] = useState("");
-  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
-  const [deleteTyped, setDeleteTyped] = useState("");
-  const [deleteCtx, setDeleteCtx] = useState<null | {
-    customerId: string;
-    customerName: string;
-    status: string;
-    currentReceivable: number;
-    storeCredit: number;
-    orderHistoryCount: number;
-    ledgerHistoryCount: number;
-    riskDetected: boolean;
-  }>(null);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
-  useEffect(() => { logPageAccess("Customers", { component: "app/customers/page.tsx", source: customersSourceSelection.source, sourceReason: customersSourceSelection.reason }); }, [customersSourceSelection]);
+  const [exportTick, setExportTick] = useState(0);
+  void exportTick;
 
-  const scopeBase = useMemo(() => base.filter((c) => status === "all" || c.status === status), [base, status]);
-  const filtered = useMemo(
-    () => scopeBase.filter((c) => [c.name, c.phone, c.wechatId, c.city].join(" ").toLowerCase().includes(q.toLowerCase().trim())),
-    [scopeBase, q]
-  );
-
-  const customersFlowLoggedRef = useRef(false);
-  useEffect(() => {
-    if (customersFlowLoggedRef.current) return;
-    if (isLoading) return;
-    customersFlowLoggedRef.current = true;
-    logDataFlow("Customers", {
-      functionsCalled: ["useCustomers.reload", "customersService.listCustomers"],
-      dbPaths: ["businesses/{businessId}/customers"],
-      result: { count: base.length, renderedRows: filtered.length, reachedComponent: true },
-      totals: {
-        totalReceivable: base.reduce((s, c) => s + getCustomerTotalReceivable(c), 0),
-        currentReceivable: base.reduce((s, c) => s + getCustomerCurrentReceivable(c), 0),
-        totalReceived: base.reduce((s, c) => s + getCustomerTotalReceived(c), 0),
-        storeCredit: base.reduce((s, c) => s + getCustomerStoreCredit(c), 0),
-      },
-      sampleCustomers: base.slice(0, 5).map((c) => ({ id: c.id, name: c.displayName || c.name, totalOrders: getCustomerTotalOrders(c), totalReceivable: getCustomerTotalReceivable(c), currentReceivable: getCustomerCurrentReceivable(c), totalReceived: getCustomerTotalReceived(c), storeCredit: getCustomerStoreCredit(c) })),
-      staleCustomers: base.filter((c) => getCustomerTotalOrders(c) > 0 && getCustomerTotalReceivable(c) === 0).length,
-      customersWithOrdersButZeroReceivable: base.filter((c) => getCustomerTotalOrders(c) > 0 && getCustomerTotalReceivable(c) === 0).length,
-      visibleActionsSummary: ["Recalculate Customer Totals (firebase only)", "Receive Payment", "Statement"],
+  const summaries = useMemo(() => {
+    console.log("[CUSTOMER_ORDERS_PAGE_TRACE] summary_build_start", {
+      customersCount: customers.length,
+      ordersCount: orders.length,
+      source,
     });
-  }, [isLoading, base, filtered.length]);
 
-  const hiddenInactiveCount = base.filter((c) => c.status !== "active").length;
-  const kpiScopeLabel = status === "all" ? "All status" : status === "active" ? "Active only" : "Inactive only";
-  const scopeTitle = status === "all" ? "Total Customers" : status === "active" ? "Active Customers" : "Inactive Customers";
-  const totals = useMemo(() => ({
-    totalCustomers: scopeBase.length,
-    totalOrders: scopeBase.reduce((s, c) => s + getCustomerTotalOrders(c), 0),
-    totalReceivable: scopeBase.reduce((s, c) => s + getCustomerTotalReceivable(c), 0),
-    currentReceivable: scopeBase.reduce((s, c) => s + getCustomerCurrentReceivable(c), 0),
-    storeCredit: scopeBase.reduce((s, c) => s + getCustomerStoreCredit(c), 0),
-  }), [scopeBase]);
-  const firebaseMode = isAnyFirebaseModeEnabled();
-  const canSeeMaintenanceTools = isMaintenanceToolsEnabled() || canManageMaintenance;
-  const viewCustomer = base.find((c) => c.id === viewCustomerId) ?? null;
-  const payCustomer = base.find((c) => c.id === payCustomerId) ?? null;
+    const rows: CustomerSummaryRow[] = customers.map((customer) => {
+      const matchedOrders = orders.filter((order) => order.lines.some((line) => sameCustomer(line, customer)));
+      const orderRows: CustomerOrderLineRow[] = matchedOrders.flatMap((order) =>
+        order.lines
+          .filter((line) => sameCustomer(line, customer))
+          .map((line) => {
+            const totalPieces = lineTotalPcs(line);
+            const totalAmount = lineTotalRmb(line);
+            return {
+              orderId: order.id,
+              orderNumber: order.number || order.orderNumber || "—",
+              wechatId: order.wechatId || "—",
+              orderDate: order.updatedAt || order.createdAt || order.date || "",
+              productImage: getLineImage(line),
+              dimImage: getLineDimImage(line),
+              marka: line.marka || "—",
+              details1: line.detail1 || line.details || "",
+              details2: line.detail2 || "",
+              details3: line.detail3 || "",
+              ctn: Number(line.totalCtns) || 0,
+              pcsPerCtn: Number(line.pcsPerCtn) || 0,
+              totalPieces,
+              totalAmount,
+            };
+          }),
+      );
 
-  useEffect(() => {
-    if (!payCustomer) return;
-    const helperReceivable = getCustomerCurrentReceivable(payCustomer);
-    if ((payCustomer.currentReceivable ?? payCustomer.outstandingAmount ?? 0) !== helperReceivable) {
-      logUI("customer_summary_maybe_stale", { customerId: payCustomer.id, helperReceivable, rawCurrentReceivable: payCustomer.currentReceivable, rawOutstandingAmount: payCustomer.outstandingAmount });
-    }
-    logUI("customer_receive_payment_modal_open", {
-      customerId: payCustomer.id,
-      currentReceivable: getCustomerCurrentReceivable(payCustomer),
-      rawCurrentReceivable: payCustomer.currentReceivable,
-      rawOutstandingAmount: payCustomer.outstandingAmount,
-      totalReceived: getCustomerTotalReceived(payCustomer),
-      storeCreditBalance: getCustomerStoreCredit(payCustomer),
+      const latestOrder = [...matchedOrders].sort((a, b) => {
+        const ad = a.updatedAt || a.createdAt || a.date || "";
+        const bd = b.updatedAt || b.createdAt || b.date || "";
+        return bd.localeCompare(ad);
+      })[0];
+      const latestLine =
+        latestOrder?.lines.find((line) => sameCustomer(line, customer)) ||
+        latestOrder?.lines[0] ||
+        null;
+
+      return {
+        customer,
+        latestOrderDate: latestOrder?.updatedAt || latestOrder?.createdAt || latestOrder?.date || "",
+        latestOrderAmount: latestOrder ? orderTotal(latestOrder) : 0,
+        latestProductImage: latestLine ? getLineImage(latestLine) : "",
+        latestProductMarka: latestLine?.marka || "—",
+        totalOrders: matchedOrders.length,
+        totalOrdersAmount: matchedOrders.reduce((sum, order) => sum + orderTotal(order), 0),
+        allLineRows: orderRows.sort((a, b) => b.orderDate.localeCompare(a.orderDate)),
+      };
     });
-  }, [payCustomer]);
 
-  const openStatement = async (customerId: string) => {
-    setViewCustomerId(customerId);
-    setLedgerError(null);
-    try {
-      setLedgerRows(await customerLedgerService.listCustomerLedgerEntries(customerId));
-    } catch (e) {
-      setLedgerRows([]);
-      setLedgerError(e instanceof Error ? e.message : "Failed to load statement.");
-    }
+    console.log("[CUSTOMER_ORDERS_PAGE_TRACE] summary_build_success", { rows: rows.length });
+    return rows;
+  }, [customers, orders, source]);
+
+  const filteredAndSorted = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const filtered = summaries.filter((row) => {
+      if (!q) return true;
+      const name = (row.customer.displayName || row.customer.name || "").toLowerCase();
+      const wechat = row.allLineRows.map((line) => line.wechatId.toLowerCase()).join(" ");
+      const marka = row.allLineRows.map((line) => line.marka.toLowerCase()).join(" ");
+      const orderNo = row.allLineRows.map((line) => line.orderNumber.toLowerCase()).join(" ");
+      return [name, wechat, marka, orderNo].join(" ").includes(q);
+    });
+
+    return [...filtered].sort((a, b) => {
+      if (sortBy === "total_orders") return b.totalOrders - a.totalOrders;
+      if (sortBy === "total_amount") return b.totalOrdersAmount - a.totalOrdersAmount;
+      if (sortBy === "last_amount") return b.latestOrderAmount - a.latestOrderAmount;
+      if (sortBy === "latest_date") return b.latestOrderDate.localeCompare(a.latestOrderDate);
+      return (a.customer.displayName || a.customer.name || "").localeCompare(b.customer.displayName || b.customer.name || "");
+    });
+  }, [summaries, query, sortBy]);
+
+  const activeSummary = filteredAndSorted.find((row) => row.customer.id === viewCustomerId) || null;
+
+  const exportVisible = () => {
+    console.log("[CUSTOMER_ORDERS_PAGE_TRACE] export_start", { rows: filteredAndSorted.length });
+    const header = [
+      "Customer Name",
+      "Last Order Product Marka Name",
+      "Last Order Total Amount",
+      "Total Orders",
+      "Total Orders Total Amount",
+    ];
+    const rows = filteredAndSorted.map((row) => [
+      row.customer.displayName || row.customer.name || "—",
+      row.latestProductMarka || "—",
+      row.latestOrderAmount.toFixed(2),
+      String(row.totalOrders),
+      row.totalOrdersAmount.toFixed(2),
+    ]);
+    const csv = [header, ...rows]
+      .map((line) => line.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "customer-order-summary.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+    setExportTick((x) => x + 1);
+    console.log("[CUSTOMER_ORDERS_PAGE_TRACE] export_success", { rows: filteredAndSorted.length });
   };
-
-  const submitPayment = async () => {
-    if (!payCustomerId) return;
-    const amount = Number(payAmount);
-    if (!(amount > 0)) return pushToast({ tone: "danger", text: "Payment amount must be greater than 0." });
-    try {
-      await recordPaymentToCustomer(payCustomerId, { amount, paymentDate: payDate, note: payNote || undefined });
-      await reload();
-      if (viewCustomerId === payCustomerId) await openStatement(payCustomerId);
-      setPayCustomerId(null);
-      setPayAmount("");
-      setPayNote("");
-      setPayDate(new Date().toISOString().slice(0, 10));
-      pushToast({ tone: "success", text: "Customer payment recorded." });
-    } catch (e) {
-      pushToast({ tone: "danger", text: e instanceof Error ? e.message : "Could not record payment." });
-    }
-  };
-  const removeCustomer = async (customerId: string) => {
-    const customer = base.find((c) => c.id === customerId);
-    if (!customer) return;
-    const totalOrders = getCustomerTotalOrders(customer);
-    const totalReceivable = getCustomerTotalReceivable(customer);
-    const totalReceived = getCustomerTotalReceived(customer);
-    const currentReceivable = getCustomerCurrentReceivable(customer);
-    const storeCredit = getCustomerStoreCredit(customer);
-    const safeCustomerSummary = {
-      id: customer.id,
-      displayName: customer.displayName,
-      name: customer.name,
-      status: customer.status,
-      customerCode: customer.customerCode,
-      phone: customer.phone ? "***" : undefined,
-      wechatId: customer.wechatId ? "***" : undefined,
-      email: customer.email ? "***" : undefined,
-      country: customer.country,
-      city: customer.city,
-      totals: { totalOrders, totalReceivable, totalReceived, currentReceivable, storeCredit },
-    };
-    console.log("[CUSTOMER_DELETE_TRACE] click", JSON.stringify({
-      customerId,
-      customerName: customer.displayName || customer.name,
-      status: customer.status,
-      customerSummary: safeCustomerSummary,
-      helperValues: { totalOrders, totalReceivable, totalReceived, currentReceivable, storeCredit },
-    }, null, 2));
-    console.log("[CUSTOMER_DELETE_TRACE] safety_check_start", JSON.stringify({
-      customerId,
-      checks: ["receivable_balance", "store_credit_balance", "saved_order_history", "ledger_history"],
-    }, null, 2));
-    console.log("[CUSTOMER_DELETE_TRACE] balance_check_result", JSON.stringify({
-      customerId,
-      currentReceivable,
-      storeCredit,
-      blocksDueToReceivable: currentReceivable > 0,
-      blocksDueToStoreCredit: storeCredit > 0,
-    }, null, 2));
-    const sourceOrders = ordersSource === "firebase" ? firebaseOrders : localOrders;
-    const customerName = (customer.displayName || customer.name || "").trim().toLowerCase();
-    const matchedSavedOrders = sourceOrders
-      .filter((o) => o.status === "saved")
-      .filter((o) => o.lines.some((l) => l.customerId === customerId || ((l.customerName || "").trim().toLowerCase() === customerName)));
-    const orderHistoryCount = matchedSavedOrders.length;
-    const orderMatchDetails = matchedSavedOrders.slice(0, 20).map((o) => ({
-      orderNumber: o.orderNumber,
-      matchedBy: o.lines.some((l) => l.customerId === customerId) ? "customerId" : "customerName",
-    }));
-    console.log("[CUSTOMER_DELETE_TRACE] order_history_check_result", JSON.stringify({
-      customerId,
-      customerName,
-      matchedOrdersCount: orderHistoryCount,
-      matchedOrderNumbers: orderMatchDetails.map((x) => x.orderNumber),
-      matchMethod: ["customerId", "customerName", "normalized_name"],
-      matchDetails: orderMatchDetails,
-    }, null, 2));
-    let ledgerHistoryCount = 0;
-    let ledgerSample: Array<{ id: string; type: string; amount: number }> = [];
-    console.log("[CUSTOMER_DELETE_TRACE] ledger_history_check_start", JSON.stringify({ customerId }, null, 2));
-    try {
-      const ledgerRows = await customerLedgerService.listCustomerLedgerEntries(customerId);
-      ledgerHistoryCount = ledgerRows.length;
-      ledgerSample = ledgerRows.slice(0, 10).map((entry) => ({ id: entry.id, type: entry.type, amount: Number(entry.amount || 0) }));
-    } catch (e) {
-      console.log("[CUSTOMER_DELETE_TRACE] ledger_history_check_result", JSON.stringify({
-        customerId,
-        ledgerCount: -1,
-        error: e instanceof Error ? e.message : String(e),
-        sampleLedgerEntries: [],
-        blocksDueToLedger: false,
-      }, null, 2));
-    }
-    console.log("[CUSTOMER_DELETE_TRACE] ledger_history_check_result", JSON.stringify({
-      customerId,
-      ledgerCount: ledgerHistoryCount,
-      sampleLedgerEntries: ledgerSample,
-      blocksDueToLedger: ledgerHistoryCount > 0,
-    }, null, 2));
-    const riskDetected = currentReceivable > 0 || storeCredit > 0 || totalOrders > 0 || orderHistoryCount > 0 || ledgerHistoryCount > 0;
-    if (riskDetected) {
-      const riskPayload = { customerId, currentReceivable, storeCredit, totalOrders, orderHistoryCount, ledgerHistoryCount };
-      logUI("customer_delete_blocked", { ...riskPayload, reason: "risk_detected_requires_force_confirmation" });
-      logUI("customer_delete_risk_detected", riskPayload);
-      logUI("customer_delete_force_confirm_opened", riskPayload);
-      logUI("customer_delete_modal_opened", { customerId, riskDetected: true });
-      setDeleteTyped("");
-      setDeleteCtx({
-        customerId,
-        customerName: customer.displayName || customer.name || customerId,
-        status: customer.status,
-        currentReceivable,
-        storeCredit,
-        orderHistoryCount: Math.max(totalOrders, orderHistoryCount),
-        ledgerHistoryCount,
-        riskDetected: true,
-      });
-      setDeleteModalOpen(true);
-      return;
-    } else {
-      logUI("customer_delete_modal_opened", { customerId, riskDetected: false });
-      setDeleteTyped("");
-      setDeleteCtx({
-        customerId,
-        customerName: customer.displayName || customer.name || customerId,
-        status: customer.status,
-        currentReceivable,
-        storeCredit,
-        orderHistoryCount: Math.max(totalOrders, orderHistoryCount),
-        ledgerHistoryCount,
-        riskDetected: false,
-      });
-      setDeleteModalOpen(true);
-      return;
-    }
-  };
-
-  const confirmDeleteCustomer = async () => {
-    if (!deleteCtx) return;
-    if (deleteCtx.riskDetected && deleteTyped !== "DELETE CUSTOMER") return;
-    if (deleteCtx.riskDetected) logUI("customer_delete_force_confirmed", { customerId: deleteCtx.customerId });
-    logUI("customer_delete_started", JSON.parse(JSON.stringify({ customerId: deleteCtx.customerId, status: deleteCtx.status }, null, 2)));
-    try {
-      console.log("[CUSTOMER_DELETE_TRACE] service_delete_start", JSON.stringify({ customerId: deleteCtx.customerId, source: customersSourceSelection.source, reason: customersSourceSelection.reason }, null, 2));
-      await deleteCustomer(deleteCtx.customerId);
-      logUI("customer_delete_success", JSON.parse(JSON.stringify({ customerId: deleteCtx.customerId }, null, 2)));
-      pushToast({ tone: "success", text: deleteCtx.riskDetected ? "Customer deleted. Historical orders and ledger entries were kept." : `Customer ${deleteCtx.customerName} deleted.` });
-    } catch (e) {
-      logUI("customer_delete_failed", JSON.parse(JSON.stringify({ customerId: deleteCtx.customerId, error: e instanceof Error ? e.message : String(e) }, null, 2)));
-      pushToast({ tone: "danger", text: e instanceof Error ? e.message : "Could not delete customer." });
-    }
-    setDeleteModalOpen(false);
-    setDeleteCtx(null);
-    setDeleteTyped("");
-  };
-
-  const statementRows = [...ledgerRows].sort((a, b) => (a.paymentDate || a.createdAt || "").localeCompare(b.paymentDate || b.createdAt || ""));
-
-  let running = 0;
 
   return (
     <PageShell title="Customers">
       <div className="space-y-4 p-6">
         <div className="flex items-center justify-between">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5 flex-1">
-            <StatCard label={`${scopeTitle} (${kpiScopeLabel})`} value={totals.totalCustomers.toString()} icon={<Users size={16} />} />
-            <StatCard label={`Total Orders (${kpiScopeLabel})`} value={totals.totalOrders.toString()} />
-            <StatCard label={`Total Receivable (${kpiScopeLabel})`} value={formatAmount(totals.totalReceivable)} />
-            <StatCard label={`Current Receivable (${kpiScopeLabel})`} value={formatAmount(totals.currentReceivable)} />
-            <StatCard label={`Store Credit (${kpiScopeLabel})`} value={formatAmount(totals.storeCredit)} />
-          </div>
-          <div className="ml-3 flex gap-2">
-            {firebaseMode && canSeeMaintenanceTools ? <Button onClick={async () => { try { await customerLedgerService.recalculateAllCustomersFromLedger(); await reload(); pushToast({ tone: "success", text: "Customer totals recalculated from ledger." }); } catch (e) { pushToast({ tone: "danger", text: e instanceof Error ? e.message : "Could not recalculate customer totals." }); } }} variant="secondary"><Plus size={14} />Recalculate Customer Totals</Button> : null}
-                        <Button disabled title="Manual customer creation is not enabled. Customers are created from saved orders." variant="primary"><Plus size={14} />Add Customer</Button>
-          </div>
-        </div>
-        {status === "active" && hiddenInactiveCount > 0 ? <div className="text-[12px] text-fg-subtle">{hiddenInactiveCount} inactive customers are hidden by the Active filter.</div> : null}
 
-        <div className="card p-3 flex flex-wrap gap-2 items-center">
-          <div className="min-w-[280px] flex-1"><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by customer name, phone, wechat id, city..." leadingIcon={<Search size={14} />} /></div>
-          <div className="w-[160px]"><Select value={status} onChange={(e) => setStatus(e.target.value)} options={[{ value: "all", label: "All Statuses" }, { value: "active", label: "Active" }, { value: "inactive", label: "Inactive" }]} /></div>
-          <div className="w-[160px]"><Select value="all" disabled options={[{ value: "all", label: "All Locations" }]} /></div>
-          <Button disabled title="Additional filtering is not enabled in this phase." size="sm" variant="secondary"><Filter size={14} />More Filters</Button>
-          <Button disabled title="Export is not enabled in this phase." size="sm" variant="secondary"><Download size={14} />Export</Button>
         </div>
-        {error && <div className="text-[12px] text-fg-subtle">{error}</div>}
-        
+
+        <div className="card flex flex-wrap items-center gap-2 p-3">
+          <div className="min-w-[280px] flex-1">
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search by customer name, WeChat ID, marka, order number..."
+              leadingIcon={<Search size={14} />}
+            />
+          </div>
+          <div className="w-[200px]">
+            <Select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              options={[
+                { value: "name", label: "Sort: Customer Name" },
+                { value: "total_orders", label: "Sort: Total Orders" },
+                { value: "total_amount", label: "Sort: Total Orders Total Amount" },
+                { value: "last_amount", label: "Sort: Last Order Amount" },
+                { value: "latest_date", label: "Sort: Latest Order Date" },
+              ]}
+            />
+          </div>
+          <Button size="sm" variant="secondary" disabled title="Additional filtering is not enabled in this phase.">
+            <Filter size={14} />
+            Filter
+          </Button>
+          <Button size="sm" variant="secondary" onClick={exportVisible}>
+            <Download size={14} />
+            Export
+          </Button>
+        </div>
+
+        {error ? <div className="text-[12px] text-fg-subtle">{error}</div> : null}
+
         <div className="card overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1040px] text-[13px]"><thead className="bg-bg-subtle"><tr className="text-left text-[11.5px] uppercase tracking-wide text-fg-subtle"><th className="px-4 py-2">Customer</th><th>Contact</th><th>Location</th><th>Total Orders</th><th>Total Receivable</th><th>Total Received</th><th>Current Receivable</th><th>Store Credit</th><th>Status</th><th className="text-right px-4">Actions</th></tr></thead>
-              <tbody>{filtered.map((c) => <tr key={c.id} className="border-t border-border"><td className="px-4 py-3"><div className="flex items-center gap-3"><div className="grid h-9 w-9 place-items-center rounded-lg border border-border bg-bg-subtle text-[12px] font-semibold">{c.displayName.split(" ").map((x) => x[0]).join("").slice(0, 2)}</div><div><div className="font-semibold">{c.displayName}</div><div className="text-[11.5px] text-fg-subtle">{c.customerCode}</div></div></div></td><td><div>{c.phone || "—"}</div><div className="text-[11.5px] text-fg-subtle">{c.wechatId || c.email || "—"}</div></td><td><div>{c.country || "—"}</div><div className="text-[11.5px] text-fg-subtle">{c.city || "—"}</div></td><td>{getCustomerTotalOrders(c)}</td><td className="font-semibold text-[var(--success)] tabular-nums">{formatAmount(getCustomerTotalReceivable(c))}</td><td className="tabular-nums">{formatAmount(getCustomerTotalReceived(c))}</td><td className="tabular-nums">{formatAmount(getCustomerCurrentReceivable(c))}</td><td className="tabular-nums">{formatAmount(getCustomerStoreCredit(c))}</td><td><StatusBadge status={c.status} /></td><td className="px-4"><div className="flex justify-end gap-2"><Button size="sm" variant="secondary" onClick={() => setPayCustomerId(c.id)}>Receive Payment</Button><Button size="sm" variant="secondary" onClick={() => openStatement(c.id)}>Statement</Button><Button size="sm" variant="secondary" onClick={() => removeCustomer(c.id)} title="Delete customer if balances are zero and no order/ledger history exists.">Delete</Button></div></td></tr>)}{isLoading && <tr><td colSpan={10} className="px-4 py-8 text-center text-fg-subtle">Loading customers…</td></tr>}
-              {!isLoading && filtered.length === 0 && <tr><td colSpan={10} className="px-4 py-8 text-center text-fg-subtle">{base.length > 0 ? "No customers match filter." : (firebaseMode ? "No customers yet. Customer records will appear here when added." : "No customers found.")}</td></tr>}</tbody></table>
+            <table className="w-full min-w-[1140px] text-[13px]">
+              <thead className="bg-bg-subtle">
+                <tr className="text-left text-[13x] uppercase tracking-wide text-fg-subtle">
+                  <th className="px-4 py-2">Customer Name</th>
+                  <th>Last Order Product</th>
+                  <th>Last Order Product Marka</th>
+                  <th>Last Order Amount</th>
+                  <th>Total Orders</th>
+                  <th>Total Purchase Amount</th>
+                  <th className="px-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredAndSorted.map((row) => (
+                  <tr key={row.customer.id} className="border-t border-border">
+                    <td className="px-4 py-3">
+                      <div className="font-semibold">{row.customer.displayName || row.customer.name || "—"}</div>
+                      <div className="text-[11.5px] text-fg-subtle">{row.customer.customerCode}</div>
+                    </td>
+                    <td>
+                      <div className="grid h-14 w-14 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle">
+                        {row.latestProductImage ? (
+                          <button
+                            type="button"
+                            className="h-full w-full cursor-zoom-in"
+                            onClick={() => setPreviewImage(row.latestProductImage)}
+                          >
+                            <img
+                              src={getCloudinaryOptimizedUrl(row.latestProductImage, { width: 140, height: 140, crop: "fit" })}
+                              alt="latest product"
+                              className="h-full w-full object-contain"
+                              loading="lazy"
+                              decoding="async"
+                            />
+                          </button>
+                        ) : (
+                          <span className="text-[10px] text-fg-subtle">—</span>
+                        )}
+                      </div>
+                    </td>
+                    <td>{row.latestProductMarka || "—"}</td>
+                    <td className="tabular-nums">{formatAmount(row.latestOrderAmount)}</td>
+                    <td>{row.totalOrders}</td>
+                    <td className="font-semibold tabular-nums">{formatAmount(row.totalOrdersAmount)}</td>
+                    <td className="px-4">
+                      <div className="flex justify-end">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => {
+                            console.log("[CUSTOMER_ORDERS_PAGE_TRACE] customer_view_open", { customerId: row.customer.id });
+                            console.log("[CUSTOMER_ORDERS_PAGE_TRACE] customer_orders_resolved", {
+                              customerId: row.customer.id,
+                              rows: row.allLineRows.length,
+                              totalOrders: row.totalOrders,
+                            });
+                            setViewCustomerId(row.customer.id);
+                          }}
+                        >
+                          View
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {isLoading ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-8 text-center text-fg-subtle">
+                      Loading customers…
+                    </td>
+                  </tr>
+                ) : null}
+                {!isLoading && filteredAndSorted.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-8 text-center text-fg-subtle">
+                      No customer summaries found.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
           </div>
-          <TablePagination total={filtered.length} />
+          <TablePagination total={filteredAndSorted.length} />
         </div>
 
-        {viewCustomer ? <div className="fixed inset-0 z-50 bg-black/40 grid place-items-center p-4"><div className="card w-full max-w-6xl p-4 space-y-3"><div className="flex justify-between items-center"><div><div className="text-lg font-semibold">Customer Statement</div><div className="text-xs text-fg-subtle">{viewCustomer.displayName} {viewCustomer.phone ? `· ${viewCustomer.phone}` : ""}</div></div><Button size="sm" variant="secondary" onClick={() => {
-          const printableRows = statementRows.map((r) => {
-            const debit = r.debit ?? (r.type === "order_receivable" ? r.amount : 0);
-            const credit = r.credit ?? (r.type === "order_receivable_reversal" || r.type === "customer_payment" || r.type === "customer_payment_reversal" ? r.amount : 0);
-            return `<tr><td>${formatIndianDate(r.paymentDate || r.createdAt)}</td><td>${typeLabel(r.type)}</td><td>${r.sourceOrderNumber || r.sourceOrderId || "—"}</td><td>${r.note || "—"}</td><td class="n">${debit ? formatAmount(debit) : "—"}</td><td class="n">${credit ? formatAmount(credit) : "—"}</td></tr>`;
-          }).join("");
-          openStatementPdfPrint("Customer Statement", `customer-statement-${(viewCustomer.displayName || viewCustomer.id).replace(/[^a-z0-9-]+/gi, "-").toLowerCase()}`, `<div><strong>${viewCustomer.displayName}</strong></div><table><thead><tr><th>Date</th><th>Type</th><th>Ref</th><th>Description</th><th>Debit</th><th>Credit</th></tr></thead><tbody>${printableRows}</tbody></table><p>Historical ledger entries are preserved even if master customer record is deleted.</p></div>`);
-        }}>Download Statement PDF</Button><Button size="sm" variant="secondary" onClick={() => setViewCustomerId(null)}>Close</Button></div>{ledgerError ? <div className="text-sm text-red-400">{ledgerError}</div> : null}<div className="grid grid-cols-2 md:grid-cols-4 gap-2"><div className="rounded border border-border p-2"><div className="text-[11px] text-fg-subtle">Total Receivable</div><div className="text-xl font-semibold">{formatAmount(getCustomerTotalReceivable(viewCustomer))}</div></div><div className="rounded border border-border p-2"><div className="text-[11px] text-fg-subtle">Total Received</div><div className="text-xl font-semibold">{formatAmount(getCustomerTotalReceived(viewCustomer))}</div></div><div className="rounded border border-border p-2"><div className="text-[11px] text-fg-subtle">Current Receivable</div><div className="text-xl font-bold">{formatAmount(getCustomerCurrentReceivable(viewCustomer))}</div></div><div className="rounded border border-border p-2"><div className="text-[11px] text-fg-subtle">Store Credit</div><div className="text-xl font-semibold">{formatAmount(getCustomerStoreCredit(viewCustomer))}</div></div></div><div className="overflow-x-auto rounded border border-border"><table className="w-full min-w-[980px] text-[12px]"><thead className="bg-bg-subtle"><tr className="text-left uppercase text-fg-subtle"><th className="px-2 py-2">Date</th><th className="px-2 py-2">Type</th><th className="px-2 py-2">Reference</th><th className="px-2 py-2">Description</th><th className="px-2 py-2 text-right">Debit</th><th className="px-2 py-2 text-right">Credit</th><th className="px-2 py-2 text-right">Balance</th></tr></thead><tbody>{statementRows.map((r) => { const debit = r.debit ?? (r.type === "order_receivable" ? r.amount : 0); const credit = r.credit ?? (r.type === "order_receivable_reversal" || r.type === "customer_payment" || r.type === "customer_payment_reversal" ? r.amount : 0); running += debit - credit; return <tr key={r.id} className="border-t border-border"><td className="px-2 py-2">{formatIndianDate((r.paymentDate || r.createdAt))}</td><td className="px-2 py-2">{typeLabel(r.type)}</td><td className="px-2 py-2">{r.sourceOrderNumber || r.sourceOrderId || "—"}</td><td className="px-2 py-2">{r.note || "—"}</td><td className="px-2 py-2 text-right">{debit ? formatAmount(debit) : "—"}</td><td className="px-2 py-2 text-right">{credit ? formatAmount(credit) : "—"}</td><td className="px-2 py-2 text-right font-semibold">{formatAmount(running)}</td></tr>; })}{statementRows.length === 0 ? <tr><td colSpan={7} className="px-2 py-6 text-center text-fg-subtle">No statement entries.</td></tr> : null}</tbody></table></div></div></div> : null}
+        {activeSummary ? (
+          <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
+            <div className="card w-full max-w-[1400px] space-y-3 p-4">
+              <div className="flex items-center justify-between">
+                <div className="text-lg font-semibold">
+                  Customer Orders - {activeSummary.customer.displayName || activeSummary.customer.name}
+                </div>
+                <Button size="sm" variant="secondary" onClick={() => setViewCustomerId(null)}>
+                  Close
+                </Button>
+              </div>
+              <div className="overflow-x-auto rounded border border-border">
+                <table className="w-full min-w-[1320px] text-[13px]">
+                  <thead className="bg-bg-subtle">
+                    <tr className="text-left uppercase text-fg-subtle">
+                      <th className="px-2 py-2">Order Number</th>
+                      <th className="px-2 py-2">WeChat ID</th>
+                      <th className="px-2 py-2">Dimension Image</th>
+                      <th className="px-2 py-2">Product Image</th>
+                      <th className="px-2 py-2">Marka Name</th>
+                      <th className="px-2 py-2">Details</th>
+                      <th className="px-2 py-2 text-center">CTN</th>
+                      <th className="px-2 py-2 text-center">PCS/CTN</th>
+                      <th className="px-2 py-2 text-center">Total Pieces</th>
+                      <th className="px-2 py-2 text-right">Total Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activeSummary.allLineRows.map((row, idx) => {
+                      const details = [row.details1, row.details2, row.details3].filter(Boolean);
+                      return (
+                        <tr key={`${row.orderId}-${idx}`} className="border-t border-border">
+                          <td className="px-2 py-2">{row.orderNumber}</td>
+                          <td className="px-2 py-2">{row.wechatId || "—"}</td>
+                          <td className="px-2 py-2">
+                            <div className="grid h-12 w-12 place-items-center overflow-hidden rounded border border-border bg-bg-subtle">
+                              {row.dimImage ? (
+                                <button type="button" className="h-full w-full cursor-zoom-in" onClick={() => setPreviewImage(row.dimImage)}>
+                                  <img
+                                    src={getCloudinaryOptimizedUrl(row.dimImage, { width: 120, height: 120, crop: "fit" })}
+                                    alt="dim"
+                                    className="h-full w-full object-contain"
+                                  />
+                                </button>
+                              ) : (
+                                <span className="text-[10px] text-fg-subtle">—</span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-2 py-2">
+                            <div className="grid h-12 w-12 place-items-center overflow-hidden rounded border border-border bg-bg-subtle">
+                              {row.productImage ? (
+                                <button type="button" className="h-full w-full cursor-zoom-in" onClick={() => setPreviewImage(row.productImage)}>
+                                  <img
+                                    src={getCloudinaryOptimizedUrl(row.productImage, { width: 120, height: 120, crop: "fit" })}
+                                    alt="product"
+                                    className="h-full w-full object-contain"
+                                  />
+                                </button>
+                              ) : (
+                                <span className="text-[10px] text-fg-subtle">—</span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-2 py-2">{row.marka || "—"}</td>
+                          <td className="px-2 py-2">
+                            {details.length ? (
+                              <div className="space-y-1">
+                                <div>{details[0] || "—"}</div>
+                                {details[1] ? <div>{details[1]}</div> : null}
+                                {details[2] ? <div>{details[2]}</div> : null}
+                              </div>
+                            ) : (
+                              joinLineDetails({ details: row.details1 }) || "—"
+                            )}
+                          </td>
+                          <td className="px-2 py-2 text-center tabular-nums">{row.ctn}</td>
+                          <td className="px-2 py-2 text-center tabular-nums">{row.pcsPerCtn}</td>
+                          <td className="px-2 py-2 text-center tabular-nums">{row.totalPieces}</td>
+                          <td className="px-2 py-2 text-right tabular-nums">{formatAmount(row.totalAmount)}</td>
+                        </tr>
+                      );
+                    })}
+                    {activeSummary.allLineRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={10} className="px-2 py-8 text-center text-fg-subtle">
+                          No orders found for this customer.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
-        {payCustomerId ? <div className="fixed inset-0 z-50 bg-black/40 grid place-items-center p-4"><div className="card w-full max-w-lg p-4 space-y-3"><div className="text-lg font-semibold">Receive Payment</div>{payCustomer ? <div className="rounded border border-border p-2 text-sm"><div><span className="text-fg-subtle">Customer:</span> {payCustomer.displayName}</div><div><span className="text-fg-subtle">Current Receivable:</span> {formatAmount(getCustomerCurrentReceivable(payCustomer))}</div><div><span className="text-fg-subtle">Store Credit:</span> {formatAmount(getCustomerStoreCredit(payCustomer))}</div></div> : null}<Input type="number" min={0.01} value={payAmount} onChange={(e) => setPayAmount(e.target.value)} placeholder="Payment Amount" /><Input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} /><Input value={payNote} onChange={(e) => setPayNote(e.target.value)} placeholder="Note (optional)" /><div className="flex justify-end gap-2"><Button variant="secondary" onClick={() => setPayCustomerId(null)}>Cancel</Button><Button variant="primary" onClick={submitPayment}>Save Payment</Button></div></div></div> : null}
-        {deleteModalOpen && deleteCtx ? <div className="fixed inset-0 z-50 bg-black/40 grid place-items-center p-4"><div className="card w-full max-w-2xl p-4 space-y-3"><div className="text-lg font-semibold">{deleteCtx.riskDetected ? "Delete customer with financial/history records?" : "Delete Customer?"}</div>{deleteCtx.riskDetected ? <div className="rounded border border-red-500/30 bg-red-500/10 p-3 text-sm space-y-1"><div><span className="text-fg-subtle">Customer:</span> {deleteCtx.customerName}</div><div><span className="text-fg-subtle">Current Receivable:</span> {formatAmount(deleteCtx.currentReceivable)}</div><div><span className="text-fg-subtle">Store Credit:</span> {formatAmount(deleteCtx.storeCredit)}</div><div><span className="text-fg-subtle">Order history count:</span> {deleteCtx.orderHistoryCount}</div><div><span className="text-fg-subtle">Ledger history count:</span> {deleteCtx.ledgerHistoryCount}</div><div className="pt-2 text-[12px] text-fg-subtle">Deleting this customer will remove the customer record only. Existing orders and ledger entries will remain for audit history.</div></div> : <div className="text-sm text-fg-subtle">This will permanently delete the customer record.</div>}{deleteCtx.riskDetected ? <div><div className="text-xs text-fg-subtle mb-1">Type DELETE CUSTOMER to continue</div><Input value={deleteTyped} onChange={(e) => setDeleteTyped(e.target.value)} placeholder="DELETE CUSTOMER" /></div> : null}<div className="flex justify-end gap-2"><Button variant="secondary" onClick={() => { if (deleteCtx.riskDetected) logUI("customer_delete_force_cancelled", { customerId: deleteCtx.customerId, typedValuePresent: Boolean(deleteTyped) }); logUI("customer_delete_modal_cancelled", { customerId: deleteCtx.customerId, riskDetected: deleteCtx.riskDetected }); setDeleteModalOpen(false); setDeleteCtx(null); setDeleteTyped(""); }}>Cancel</Button><Button variant="primary" disabled={deleteCtx.riskDetected && deleteTyped !== "DELETE CUSTOMER"} onClick={confirmDeleteCustomer}>Delete Customer</Button></div></div></div> : null}
+        <ImageLightbox src={previewImage} alt="Customer order line image" open={Boolean(previewImage)} onClose={() => setPreviewImage(null)} />
       </div>
     </PageShell>
   );

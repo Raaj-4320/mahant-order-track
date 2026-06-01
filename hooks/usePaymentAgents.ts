@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { Order, PaymentAgent } from "@/lib/types";
 import { getPaymentAgentsService } from "@/services/paymentAgentsService";
+import { ordersDataSourceSelection } from "@/lib/runtimeConfig";
 
 const PAYMENT_AGENTS_SOURCE = process.env.NEXT_PUBLIC_PAYMENT_AGENTS_DATA_SOURCE ?? "mock";
 
@@ -10,7 +11,33 @@ export function usePaymentAgents() {
   const [data, setData] = useState<PaymentAgent[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const reload = useCallback(async () => { setIsLoading(true); setError(null); try { setData(await service.listPaymentAgents()); } catch (e) { setError(e instanceof Error ? e.message : "Failed to load payment agents"); } finally { setIsLoading(false); } }, [service]);
+  const reload = useCallback(async () => {
+    const selection = ordersDataSourceSelection();
+    console.log("[PAYMENT_AGENT_FLOW_TRACE] hook_load_start", {
+      businessId: selection.businessId,
+      source: selection.source,
+    });
+    setIsLoading(true);
+    setError(null);
+    try {
+      const next = await service.listPaymentAgents();
+      setData(next);
+      console.log("[PAYMENT_AGENT_FLOW_TRACE] hook_load_success", {
+        businessId: selection.businessId,
+        source: selection.source,
+        count: next.length,
+        sample: next.slice(0, 3).map((agent) => agent.name),
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Failed to load payment agents";
+      setError(message);
+      console.error("[PAYMENT_AGENT_FLOW_TRACE] service_list_failed", {
+        businessId: selection.businessId,
+        source: selection.source,
+        errorMessage: message,
+      });
+    } finally { setIsLoading(false); }
+  }, [service]);
   useEffect(() => { reload(); }, [reload, service]);
   const upsertPaymentAgent = useCallback(async (agent: PaymentAgent) => { await service.upsertPaymentAgent(agent); await reload(); }, [reload, service]);
   const deletePaymentAgent = useCallback(async (agentId: string) => { if (!service.deletePaymentAgent) throw new Error("Payment agent delete flow is not enabled for this data source."); await service.deletePaymentAgent(agentId); await reload(); }, [reload, service]);

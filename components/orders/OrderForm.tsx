@@ -14,6 +14,9 @@ export function newLine(): OrderLine {
     productId: "",
     marka: "",
     details: "",
+    detail1: "",
+    detail2: "",
+    detail3: "",
     totalCtns: 0,
     pcsPerCtn: 0,
     rmbPerPcs: 0,
@@ -52,6 +55,21 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
       .slice(0, 4);
   }, [paymentAgents, paymentQuery]);
 
+  useEffect(() => {
+    console.log("[PAYMENT_AGENT_FLOW_TRACE] order_form_agents_received", {
+      count: paymentAgents.length,
+      sample: paymentAgents.slice(0, 3).map((agent) => agent.name),
+    });
+  }, [paymentAgents]);
+
+  useEffect(() => {
+    console.log("[PAYMENT_AGENT_FLOW_TRACE] typeahead_options_resolved", {
+      query: paymentQuery,
+      count: paymentSuggestions.length,
+      sample: paymentSuggestions.slice(0, 3).map((agent) => agent.name),
+    });
+  }, [paymentQuery, paymentSuggestions]);
+
   const paymentLabel = (p: PaymentAgent) =>
     (p.creditBalance ?? 0) > 0
       ? `${p.name} — Credit: ${(p.creditBalance ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -70,8 +88,8 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
   const selectedLabel = selectedPaymentAgent ? paymentLabel(selectedPaymentAgent) : "";
   useEffect(() => {
     if (paymentOpen) return;
-    setPaymentQuery(selectedLabel || "");
-  }, [selectedLabel, paymentOpen]);
+    setPaymentQuery(selectedLabel || draft.paymentBy || "");
+  }, [selectedLabel, draft.paymentBy, paymentOpen]);
 
   return (
     <div className="flex flex-col gap-3 px-5 py-4">
@@ -85,6 +103,7 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
                 onBlur={() => window.setTimeout(() => setPaymentOpen(false), 120)}
                 onChange={(e) => {
                   const next = e.target.value;
+                  console.log("[PAYMENT_AGENT_AUTOCREATE_TRACE] input_changed", { source: "order_form_payment_by", value: next });
                   setPaymentQuery(next);
                   setPaymentOpen(true);
                   setDraft((d) => ({ ...d, paymentBy: next, paymentAgentId: "" }));
@@ -148,7 +167,7 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
           <div className="flex justify-end px-2 pb-1 text-[11px] text-fg-subtle">{draft.lines.length} line{draft.lines.length === 1 ? "" : "s"}</div>
           <div className="min-w-[960px]">
             <div
-              className={`${LINE_GRID} px-2 py-1.5 text-[11px] font-medium uppercase tracking-wide text-fg-subtle border-b border-border`}
+              className={`${LINE_GRID} px-2 py-1.5 text-[13px] font-medium uppercase tracking-wide text-fg-subtle border-b border-border`}
             >
               <span className="text-center">Pic + Dim</span>
               <span className="text-center">Product</span>

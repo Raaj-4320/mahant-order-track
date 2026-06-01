@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { ImageLightbox } from "@/components/ui/ImageLightbox";
 import { Copy, X } from "lucide-react";
 import { useRef, useState } from "react";
+import { getLineDetailsParts } from "@/lib/orderLineDetails";
 
 type OrderLinesDetailModalProps = {
   order: Order | null;
@@ -17,6 +18,12 @@ const formatPlainAmount = (value: number) =>
   value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const EXPORT_HIDDEN_ATTR = "data-export-hidden";
+const TwoLineHeader = ({ zh, en }: { zh: string; en?: string }) => (
+  <div className="flex flex-col items-center justify-center leading-tight">
+    <span>{zh}</span>
+    {en ? <span className="text-[11px] font-bold">{en}</span> : null}
+  </div>
+);
 
 export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDetailModalProps) {
   const [previewImage, setPreviewImage] = useState<string | null>(null);
@@ -253,7 +260,7 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
   return (
     <div className="fixed inset-0 z-50 bg-black/45 p-4" onClick={onClose}>
       <div
-        className="mx-auto mt-4 w-[96vw] max-w-[1280px] rounded-2xl border border-border bg-bg-card shadow-card"
+        className="mx-auto mt-4 w-[98vw] max-w-[1460px] rounded-2xl border border-border bg-bg-card shadow-card"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
@@ -286,30 +293,30 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
             <table className="w-full table-fixed text-[12px]">
               <colgroup>
                 <col className="w-[34px]" />
-                <col className="w-[115px]" />
-                <col className="w-[115px]" />
-                <col className="w-[140px]" />
-                <col className="w-[130px]" />
-                <col className="w-[95px]" />
-                <col className="w-[85px]" />
-                <col className="w-[100px]" />
-                <col className="w-[105px]" />
-                <col className="w-[130px]" />
-                <col className="w-[100px]" data-export-hidden="true" />
+                <col className="w-[160px]" />
+                <col className="w-[160px]" />
+                <col className="w-[150px]" />
+                <col className="w-[150px]" />
+                <col className="w-[50px]" />
+                <col className="w-[50px]" />
+                <col className="w-[80px]" />
+                <col className="w-[55px]" />
+                <col className="w-[80px]" />
+                <col className="w-[80px]" data-export-hidden="true" />
               </colgroup>
               <thead className="bg-[var(--brand)] text-center uppercase tracking-wide text-[var(--brand-fg)]">
                 <tr>
                   <th className="border border-border px-2 py-3">#</th>
-                  <th className="border border-border px-1 py-2 text-[14px] leading-tight whitespace-nowrap">DIM/WEIGHT</th>
-                  <th className="border border-border px-1 py-2 text-[14px] leading-tight whitespace-nowrap">产品图片</th>
+                  <th className="border border-border px-2 py-2 text-[14px] leading-tight whitespace-nowrap">DIM/WEIGHT</th>
+                  <th className="border border-border px-2 py-2 text-[14px] leading-tight whitespace-nowrap">产品图片</th>
                   <th className="border border-border px-2 py-2.5 text-[14px] whitespace-nowrap">MARKA</th>
                   <th className="border border-border px-2 py-2.5 text-[14px] whitespace-nowrap">DETAILS</th>
-                  <th className="border border-border px-1 py-2 text-[14px] leading-tight whitespace-nowrap">件数 PCS/CTN</th>
-                  <th className="border border-border px-1 py-2 text-[14px] leading-tight whitespace-nowrap">装箱数 CTN</th>
-                  <th className="border border-border px-1 py-2 text-[14px] leading-tight whitespace-nowrap">TOTAL Pieces</th>
-                  <th className="border border-border px-1 py-2 text-[14px] leading-tight whitespace-nowrap">单价 PRICE/PC</th>
-                  <th className="border border-border px-1 py-2 text-[13px] leading-tight whitespace-nowrap">金额 TOTAL AMOUNT</th>
-                  <th className="border border-border px-1 py-2 text-[14px] leading-tight whitespace-nowrap" data-export-hidden="true">COPY</th>
+                  <th className="border border-border px-2 py- text-[14px] leading-tight whitespace-nowrap"><TwoLineHeader zh="装箱数" en="CTN" /></th>
+                  <th className="border border-border px-2 py-2 text-[14px] leading-tight whitespace-nowrap"><TwoLineHeader zh="件数" en="PCS/CTN" /></th>
+                  <th className="border border-border px-2 py-2 text-[14px] leading-tight whitespace-nowrap">TOTAL Pieces</th>
+                  <th className="border border-border px-2 py-2 text-[13px] leading-tight whitespace-nowrap"><TwoLineHeader zh="单价" en="PRICE/PC" /></th>
+                  <th className="border border-border px-2 py-2 text-[13px] leading-tight whitespace-nowrap"><TwoLineHeader zh="金额" en="TOTAL AMOUNT" /></th>
+                  <th className="border border-border px-2 py-2 text-[15px] leading-tight whitespace-nowrap" data-export-hidden="true">COPY</th>
                 </tr>
               </thead>
               <tbody>
@@ -319,12 +326,14 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
                   const productPhoto = getLineProductPhoto(line);
                   const dimPhoto = getLineDimensionPhoto(line);
                   const copyTextBlock = buildLineCopyText(line);
+                  const detailParts = getLineDetailsParts(line);
+                  const hasAnyDetail = Boolean(detailParts.detail1 || detailParts.detail2 || detailParts.detail3);
 
                   return (
                     <tr key={line.id} className="align-middle">
                       <td className="border border-border px-1 py-2 text-center font-bold tabular-nums">{idx + 1}</td>
                       <td className="px-1.5 py-1.5 align-middle">
-                        <div className="mx-auto flex h-[120px] w-[120px] items-center justify-center overflow-hidden rounded bg-bg-subtle text-[10px] font-semibold text-fg-subtle">
+                        <div className="mx-auto flex h-[120px] w-[150px] items-center justify-center overflow-hidden rounded bg-bg-subtle text-[10px] font-semibold text-fg-subtle">
                           {dimPhoto ? (
                             <button
                               type="button"
@@ -348,7 +357,7 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
                         </div>
                       </td>
                       <td className="px-1.5 py-1.5 align-middle">
-                        <div className="mx-auto flex h-[120px] w-[120px] items-center justify-center overflow-hidden rounded bg-bg-subtle text-[10px] font-semibold text-fg-subtle">
+                        <div className="mx-auto flex h-[120px] w-[150px] items-center justify-center overflow-hidden rounded bg-bg-subtle text-[10px] font-semibold text-fg-subtle">
                           {productPhoto ? (
                             <button
                               type="button"
@@ -372,9 +381,19 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
                         </div>
                       </td>
                       <td className="border border-border px-2 py-2 text-[16px] font-semibold leading-tight break-words">{line.marka || "—"}</td>
-                      <td className="border border-border px-2 py-2 text-[16px] font-semibold leading-tight break-words">{line.details || "—"}</td>
-                      <td className="border border-border px-1 py-2 text-center text-[16px] font-bold leading-tight tabular-nums">{line.pcsPerCtn || 0}</td>
+                      <td className="border border-border px-2 py-2 text-[16px] font-semibold leading-tight break-words">
+                        {hasAnyDetail ? (
+                          <div className="space-y-1">
+                            <div>{detailParts.detail1 || "—"}</div>
+                            {detailParts.detail2 ? <div>{detailParts.detail2}</div> : null}
+                            {detailParts.detail3 ? <div>{detailParts.detail3}</div> : null}
+                          </div>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
                       <td className="border border-border px-1 py-2 text-center text-[16px] font-bold leading-tight tabular-nums">{line.totalCtns || 0}</td>
+                      <td className="border border-border px-1 py-2 text-center text-[16px] font-bold leading-tight tabular-nums">{line.pcsPerCtn || 0}</td>
                       <td className="border border-border px-1 py-2 text-center text-[16px] font-bold leading-tight tabular-nums">{totalPcs || 0}</td>
                       <td className="border border-border px-1 py-2 text-center text-[16px] font-bold leading-tight tabular-nums">
                         {line.rmbPerPcs ? formatPlainAmount(line.rmbPerPcs) : "0.00"}
@@ -407,7 +426,7 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
                   <td colSpan={7} className="border-t-2 border-border px-2 py-3" />
                   <td colSpan={2} className="border-t-2 border-border px-1 py-3 text-right align-middle">
                     <div className="inline-flex bg-bg-card px-2 py-1 text-right text-[16px] font-bold uppercase leading-tight tracking-wide text-danger whitespace-nowrap">
-                      TOTAL ORDER AMOUNT
+                      TOTAL AMOUNT
                     </div>
                   </td>
                   <td className="border-t-2 border-border px-1 py-3 text-center align-middle">
@@ -435,6 +454,3 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
     </div>
   );
 }
-
-
-

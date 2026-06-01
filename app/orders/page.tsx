@@ -6,7 +6,7 @@ import { OrderForm, newLine } from "@/components/orders/OrderForm";
 import { OrderFooter } from "@/components/orders/OrderFooter";
 import { formatDate } from "@/lib/data";
 import { formatIndianDateTime } from "@/lib/dateFormat";
-import { Order, orderTotal } from "@/lib/types";
+import { Order, PaymentAgent, orderTotal } from "@/lib/types";
 import { syncOrderLinesToProducts, archiveProductsForOrder, archiveProductsForRemovedOrderLines } from "@/services/productCatalogSync";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -31,6 +31,8 @@ import { ImageLightbox } from "@/components/ui/ImageLightbox";
 import { ordersDataSourceSelection } from "@/lib/runtimeConfig";
 import { LoadingDateControl } from "@/components/orders/LoadingDateControl";
 import { OrderStatusControl } from "@/components/orders/OrderStatusControl";
+import { isOrderEligibleForCreditSettlement } from "@/services/settlement/orderCreditEligibility";
+import { joinLineDetails, seedDetailBoxesFromLegacy, withDerivedLegacyDetails } from "@/lib/orderLineDetails";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const createEmptyDraft = (_orders: Order[], reservedOrderNumber = ""): Order => ({
@@ -48,7 +50,7 @@ const createEmptyDraft = (_orders: Order[], reservedOrderNumber = ""): Order => 
   lines: [{ ...newLine(), details: "", marka: "", totalCtns: 0, pcsPerCtn: 0, rmbPerPcs: 0, productPhotoUrl: "", photoUrl: "" }],
 });
 
-const meaningfulLine = (l: Order["lines"][number]) => !!(l.details?.trim() || l.marka?.trim() || l.productPhotoUrl || l.photoUrl || l.totalCtns || l.pcsPerCtn || l.rmbPerPcs);
+const meaningfulLine = (l: Order["lines"][number]) => !!(joinLineDetails(l) || l.marka?.trim() || l.productPhotoUrl || l.photoUrl || l.totalCtns || l.pcsPerCtn || l.rmbPerPcs);
 
 type OrderSideEffectResult = {
   mode: "create" | "edit" | "archive" | "draft";
@@ -70,6 +72,13 @@ type RowEditState = {
   status: Order["status"];
   saving: boolean;
 };
+const STATUS_OPTIONS_WITH_DATE: Array<{ value: Order["status"]; label: string }> = [
+  { value: "packed", label: "Loaded" },
+  { value: "received", label: "Received" },
+  { value: "delayed", label: "Delayed" },
+  { value: "cancelled", label: "Cancelled" },
+];
+const STATUS_OPTIONS_NO_DATE: Array<{ value: Order["status"]; label: string }> = [{ value: "saved", label: "Saved" }];
 
 const summarizeOrderForLog = (o: Order) => ({
   id: o.id,
@@ -99,7 +108,7 @@ export default function OrdersPage() {
   }, [ordersSourceSelection]);
 
   const { orders, upsertOrder, deleteOrder, pushToast } = useStore();
-  const { data: paymentAgents, recalculateFromOrders, applyOrderSettlement, reverseOrderSettlement } = usePaymentAgents();
+  const { data: paymentAgents, recalculateFromOrders, applyOrderSettlement, reverseOrderSettlement, upsertPaymentAgent, reload: reloadPaymentAgents } = usePaymentAgents();
   const { data: firebaseOrders, isLoading: isOrdersLoading, error: ordersLoadError, draftOrders: firebaseDraftOrders, autosaveDraft, upsertOrder: upsertFirebaseOrder, archiveOrder: archiveFirebaseOrder, reload: reloadFirebaseOrders } = useOrders();
   const { data: customers, isLoading: isCustomersLoading, reload: reloadCustomers } = useCustomers();
   const [query, setQuery] = useState("");
@@ -119,7 +128,8 @@ export default function OrdersPage() {
   const [headerPaymentQuery, setHeaderPaymentQuery] = useState("");
   const [headerPaymentOpen, setHeaderPaymentOpen] = useState(false);
   const [headerWechatOpen, setHeaderWechatOpen] = useState(false);
-  const [hoverPreview, setHoverPreview] = useState<HoverPreview>(null);
+  type MoreProductsPopup = { orderId: string; anchor: HTMLElement | null; lines: Array<{ line: any; idx: number; image: string; marka: string }> } | null;
+  const [hoverPreview, setHoverPreview] = useState<MoreProductsPopup>(null);
   const [previewImage, setPreviewImage] = useState<{ src: string; alt: string; caption?: string } | null>(null);
   const [rowEdits, setRowEdits] = useState<Record<string, RowEditState>>({});
 
@@ -165,6 +175,19 @@ export default function OrdersPage() {
   const selectedPaymentAgentId = draft.paymentAgentId || draft.paymentBy;
   const selectedPaymentAgent = paymentAgents.find((p) => p.id === selectedPaymentAgentId || p.name === selectedPaymentAgentId || p.agentCode === selectedPaymentAgentId) ?? null;
   const settlement = useMemo(() => calculatePaymentAgentSettlement({ orderTotal: total, existingCredit: selectedPaymentAgent?.creditBalance ?? 0, paidNow: draft.paidToPaymentAgentNow ?? 0 }), [total, selectedPaymentAgent, draft.paidToPaymentAgentNow]);
+  useEffect(() => {
+    if (draft.status !== "draft") return;
+    console.log("[PAYMENT_CREDIT_TRACE] draft_preview_recomputed", {
+      orderId: draft.id,
+      paymentAgentId: selectedPaymentAgentId || null,
+      status: draft.status,
+      loadingDate: draft.loadingDate,
+    });
+    console.log("[PAYMENT_CREDIT_TRACE] committed_credit_balance_result", {
+      agentId: selectedPaymentAgentId || null,
+      creditBalance: selectedPaymentAgent?.creditBalance ?? 0,
+    });
+  }, [draft.id, draft.status, draft.loadingDate, selectedPaymentAgentId, selectedPaymentAgent?.creditBalance, settlement.creditUsed, settlement.remainingPayable]);
   const validation = useMemo(() => validateOrderForSave(draft), [draft]);
   const headerPaymentSuggestions = useMemo(() => {
     const q = headerPaymentQuery.trim().toLowerCase();
@@ -180,8 +203,17 @@ export default function OrdersPage() {
   }, [wechatSuggestions, draft.wechatId]);
   useEffect(() => {
     if (headerPaymentOpen) return;
-    setHeaderPaymentQuery(selectedPaymentAgent ? paymentLabel(selectedPaymentAgent) : "");
-  }, [selectedPaymentAgent, headerPaymentOpen]);
+    setHeaderPaymentQuery(selectedPaymentAgent ? paymentLabel(selectedPaymentAgent) : (draft.paymentBy || ""));
+  }, [selectedPaymentAgent, draft.paymentBy, headerPaymentOpen]);
+
+  useEffect(() => {
+    console.log("[PAYMENT_AGENT_FLOW_TRACE] orders_page_agents_loaded", {
+      businessId: ordersSourceSelection.businessId,
+      source: ordersDataSource,
+      count: paymentAgents.length,
+      sample: paymentAgents.slice(0, 3).map((agent) => agent.name),
+    });
+  }, [ordersSourceSelection.businessId, ordersDataSource, paymentAgents]);
 
 
   const onUploadingChange = (isUploading: boolean) => setActiveUploads((p) => Math.max(0, p + (isUploading ? 1 : -1)));
@@ -193,6 +225,50 @@ export default function OrdersPage() {
       return false;
     }
     return true;
+  };
+
+  const resolveOrCreatePaymentAgentByName = async (rawName: string) => {
+    const cleanName = rawName.trim();
+    console.log("[PAYMENT_AGENT_AUTOCREATE_TRACE] resolve_start", { input: rawName, cleanName });
+    console.log("[PAYMENT_AGENT_FLOW_TRACE] resolve_start", { input: rawName, cleanName });
+    if (!cleanName) return null;
+    const existing = paymentAgents.find((agent) => agent.name.trim().toLowerCase() === cleanName.toLowerCase());
+    if (existing) {
+      console.log("[PAYMENT_AGENT_AUTOCREATE_TRACE] existing_agent_found", { agentId: existing.id, agentName: existing.name });
+      console.log("[PAYMENT_AGENT_FLOW_TRACE] existing_agent_found", { agentId: existing.id, agentName: existing.name });
+      return existing;
+    }
+    const now = new Date().toISOString();
+    const created: PaymentAgent = {
+      id: `pa-${Date.now()}`,
+      name: cleanName,
+      initials: cleanName.slice(0, 2).toUpperCase(),
+      agentCode: `AG-${Math.floor(Math.random() * 900 + 100)}`,
+      status: "active",
+      openingCreditBalance: 0,
+      creditBalance: 0,
+      totalOrderAmount: 0,
+      totalPaidAmount: 0,
+      currentDuePayable: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    console.log("[PAYMENT_AGENT_AUTOCREATE_TRACE] missing_agent_create_start", { agentName: cleanName, source: ordersDataSource });
+    console.log("[PAYMENT_AGENT_FLOW_TRACE] missing_agent_create_start", { agentName: cleanName, source: ordersDataSource });
+    try {
+      await upsertPaymentAgent(created);
+      console.log("[PAYMENT_AGENT_AUTOCREATE_TRACE] missing_agent_create_success", { agentId: created.id, agentName: created.name });
+      console.log("[PAYMENT_AGENT_FLOW_TRACE] missing_agent_create_success", { agentId: created.id, agentName: created.name });
+      await reloadPaymentAgents();
+      console.log("[PAYMENT_AGENT_AUTOCREATE_TRACE] reload_success", { scope: "payment_agents_after_create" });
+      console.log("[PAYMENT_AGENT_FLOW_TRACE] reload_after_create_success", { scope: "payment_agents_after_create" });
+      return created;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("[PAYMENT_AGENT_AUTOCREATE_TRACE] missing_agent_create_failed", { agentName: cleanName, errorMessage: message });
+      console.error("[PAYMENT_AGENT_FLOW_TRACE] missing_agent_create_failed", { agentName: cleanName, errorMessage: message });
+      throw error;
+    }
   };
 
   useEffect(() => {
@@ -216,11 +292,36 @@ export default function OrdersPage() {
     const pending = rowEdits[order.id];
     return pending ?? { loadingDate: order.loadingDate, status: order.status, saving: false };
   };
+  const resolveStatusOptions = (order: Order, rowValue: RowEditState) => {
+    const options = rowValue.loadingDate ? STATUS_OPTIONS_WITH_DATE : STATUS_OPTIONS_NO_DATE;
+    console.log("[ORDER_DATE_STATUS_TRACE] status_options_resolved", {
+      orderId: order.id,
+      loadingDate: rowValue.loadingDate,
+      options: options.map((x) => x.value),
+    });
+    return options;
+  };
 
   const setRowEdit = (order: Order, patch: Partial<Pick<RowEditState, "loadingDate" | "status">>, trace: "date_selected" | "status_selected") => {
     setRowEdits((prev) => {
       const current = prev[order.id] ?? { loadingDate: order.loadingDate, status: order.status, saving: false };
-      const next = { ...current, ...patch };
+      const next = { ...current, ...patch } as RowEditState;
+      if (trace === "date_selected") {
+        if (next.loadingDate) {
+          next.status = "packed";
+          console.log("[ORDER_DATE_STATUS_TRACE] date_selected_auto_status_loaded", { orderId: order.id, loadingDate: next.loadingDate, status: next.status });
+        } else {
+          next.status = "saved";
+          console.log("[ORDER_DATE_STATUS_TRACE] date_cleared_auto_status_saved", { orderId: order.id, loadingDate: next.loadingDate, status: next.status });
+        }
+      }
+      if (trace === "status_selected" && !next.loadingDate && next.status !== "saved") {
+        console.log("[ORDER_DATE_STATUS_TRACE] status_change_blocked_no_loading_date", { orderId: order.id, attemptedStatus: next.status, fallbackStatus: "saved" });
+        next.status = "saved";
+      }
+      if (trace === "status_selected" && next.loadingDate && next.status === "saved") {
+        next.status = "packed";
+      }
       const dirty = next.loadingDate !== order.loadingDate || next.status !== order.status;
       if (trace === "date_selected") {
         console.log("[ORDER_DATE_STATUS_TRACE] parent_date_change_received", { orderId: order.id, previousValue: order.loadingDate, nextValue: next.loadingDate });
@@ -252,6 +353,7 @@ export default function OrdersPage() {
     if (!ensureFirebaseOrderWriteReady()) return;
     const updated = { ...order, loadingDate: pending.loadingDate, status: pending.status, updatedAt: new Date().toISOString() };
     setRowEdits((prev) => ({ ...prev, [order.id]: { ...pending, saving: true } }));
+    console.log("[ORDER_DATE_STATUS_TRACE] save_payload", { orderId: order.id, payload: { loadingDate: updated.loadingDate, status: updated.status } });
     console.log("[ORDER_DATE_STATUS_TRACE] save_clicked", { orderId: order.id, payload: { loadingDate: updated.loadingDate, status: updated.status } });
     console.log("[ORDER_DATE_STATUS_TRACE] service_update_start", {
       orderId: order.id,
@@ -262,17 +364,21 @@ export default function OrdersPage() {
     try {
       if (isFirebaseOrdersMode) {
         await upsertFirebaseOrder(updated);
+        if (isOrderEligibleForCreditSettlement(updated)) await applyOrderSettlement(updated);
+        else await reverseOrderSettlement(updated);
         await reloadFirebaseOrders();
         const reloaded = (firebaseOrders.find((item) => item.id === order.id) ?? updated);
         console.log("[ORDER_DATE_STATUS_TRACE] orders_reloaded_after_save", { orderId: order.id, loadedLoadingDate: reloaded.loadingDate, loadedStatus: reloaded.status });
       } else {
         upsertOrder(updated);
+        await recalculateFromOrders(orders.filter((x) => x.id !== updated.id).concat(updated));
       }
       setRowEdits((prev) => {
         const copy = { ...prev };
         delete copy[order.id];
         return copy;
       });
+      console.log("[ORDER_DATE_STATUS_TRACE] firebase_update_success", { orderId: order.id });
       console.log("[ORDER_DATE_STATUS_TRACE] save_success_ui_update", { orderId: order.id, updatedLoadingDate: updated.loadingDate, updatedStatus: updated.status });
       pushToast({ tone: "success", text: "Order row updated." });
     } catch (error) {
@@ -285,6 +391,18 @@ export default function OrdersPage() {
   };
 
   const onSave = async (status: Order["status"], forceDraft = false) => {
+    console.log("[PAYMENT_AGENT_AUTOCREATE_TRACE] save_started", {
+      orderId: draft.id,
+      status,
+      paymentBy: draft.paymentBy,
+      paymentAgentId: draft.paymentAgentId,
+    });
+    console.log("[PAYMENT_AGENT_FLOW_TRACE] save_started", { orderId: draft.id, status });
+    console.log("[PAYMENT_AGENT_FLOW_TRACE] typed_agent_value", {
+      orderId: draft.id,
+      paymentBy: draft.paymentBy,
+      paymentAgentId: draft.paymentAgentId,
+    });
     logDataFlow("Orders", JSON.stringify({ event: status === "draft" ? "draft_save_started" : "order_save_started", status, lineCount: draft.lines.length, displayedOrderNumber: draft.number || draft.orderNumber }, null, 2));
     console.log("[ORDER_SAVE_TRACE] save_source", JSON.stringify({ component: "app/orders/page.tsx", saveSource: ordersDataSource, reason: ordersSourceSelection.reason, status, hasFirebaseConfig: ordersSourceSelection.hasFirebaseConfig, hasBusinessId: ordersSourceSelection.hasBusinessId, businessId: ordersSourceSelection.businessId, orderId: draft.id, ordersWritePath: ordersSourceSelection.businessId ? `businesses/${ordersSourceSelection.businessId}/orders` : null, customersSyncPath: ordersSourceSelection.businessId ? `businesses/${ordersSourceSelection.businessId}/customers` : null }, null, 2));
     if (!ensureFirebaseOrderWriteReady()) return;
@@ -297,16 +415,43 @@ export default function OrdersPage() {
         setShowDraftIncompleteConfirm(true);
         return;
       }
-      const draftOrder = { ...draft, number: "", orderNumber: "", status: "draft" as const, paymentAgentId: selectedPaymentAgentId || "", paymentBy: selectedPaymentAgentId || "" };
+      let resolvedDraftAgent = paymentAgents.find((agent) => agent.id === (draft.paymentAgentId || draft.paymentBy)) ?? null;
+      if (!resolvedDraftAgent && draft.paymentBy.trim()) {
+        try {
+          resolvedDraftAgent = await resolveOrCreatePaymentAgentByName(draft.paymentBy);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          pushToast({ tone: "danger", text: `Payment agent create failed: ${message}` });
+          return;
+        }
+      }
+      const draftOrder = {
+        ...draft,
+        number: "",
+        orderNumber: "",
+        status: "draft" as const,
+        paymentAgentId: resolvedDraftAgent?.id || "",
+        paymentBy: resolvedDraftAgent?.id || draft.paymentBy || "",
+        paymentAgentSnapshot: resolvedDraftAgent ? { id: resolvedDraftAgent.id, name: resolvedDraftAgent.name, code: resolvedDraftAgent.agentCode } : draft.paymentAgentSnapshot,
+      };
+      console.log("[PAYMENT_AGENT_AUTOCREATE_TRACE] order_payload_agent_attached", {
+        orderId: draftOrder.id,
+        paymentAgentId: draftOrder.paymentAgentId,
+        paymentBy: draftOrder.paymentBy,
+        paymentAgentSnapshot: draftOrder.paymentAgentSnapshot,
+      });
       try {
+        console.log("[PAYMENT_AGENT_FLOW_TRACE] order_save_start", { orderId: draftOrder.id, status: draftOrder.status });
         if (isFirebaseOrdersMode) {
           await upsertFirebaseOrder({ ...draftOrder, draftAutosavedAt: new Date().toISOString() } as any);
           await reloadFirebaseOrders();
         } else {
           upsertOrder(draftOrder);
         }
+        console.log("[PAYMENT_AGENT_FLOW_TRACE] order_save_success", { orderId: draftOrder.id, status: draftOrder.status });
       } catch (e) {
         const message = e instanceof Error ? e.message : "Draft save failed.";
+        console.error("[PAYMENT_AGENT_FLOW_TRACE] order_save_failed", { orderId: draftOrder.id, status: draftOrder.status, errorMessage: message });
         console.log("[ORDER_SAVE_TRACE] firebase_write_failed", JSON.stringify({ orderId: draftOrder.id, status: draftOrder.status, source: ordersDataSource, error: message }, null, 2));
         pushToast({ tone: "danger", text: message });
         return;
@@ -339,7 +484,9 @@ export default function OrdersPage() {
     logOrder("save_order_lines_before_resolution", { lines: draft.lines.map((l) => ({ lineId: l.id, customerId: l.customerId, customerName: l.customerName, lineTotal: (l.totalCtns||0)*(l.pcsPerCtn||0)*(l.rmbPerPcs||0) })) });
     let resolvedLines = draft.lines;
     try {
-      resolvedLines = await resolveCustomersForOrderLines(draft.lines, customers, now);
+      resolvedLines = (await resolveCustomersForOrderLines(draft.lines, customers, now)).map((line) =>
+        withDerivedLegacyDetails(seedDetailBoxesFromLegacy(line)),
+      );
       const knownIds = new Set(customers.map((c) => c.id));
       const affectedCustomerIds = Array.from(new Set(resolvedLines.map((l) => l.customerId).filter(Boolean)));
       const createdCustomerIds = affectedCustomerIds.filter((id) => !knownIds.has(id));
@@ -356,18 +503,60 @@ export default function OrdersPage() {
       setValidationWarning({ visible: true, items: [`Order Number ${requestedOrderNumber} already exists.`] });
       return;
     }
+    let resolvedAgent = paymentAgents.find((agent) => agent.id === (draft.paymentAgentId || draft.paymentBy)) ?? null;
+    if (!resolvedAgent && draft.paymentBy.trim()) {
+      try {
+        resolvedAgent = await resolveOrCreatePaymentAgentByName(draft.paymentBy);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        pushToast({ tone: "danger", text: `Payment agent create failed: ${message}` });
+        return;
+      }
+    }
     const finalOrderNumber = requestedOrderNumber || await ensureFinalOrderNumber({ ...draft, number: "", orderNumber: "", status: "saved" as const });
-    const savedOrder = { ...draft, number: finalOrderNumber, orderNumber: finalOrderNumber, lines: resolvedLines, status: "saved" as const, paymentAgentId: selectedPaymentAgentId, paymentBy: selectedPaymentAgentId, paymentAgentSettlementSnapshot: { ...settlement, orderTotal: settlement.orderTotal, existingCredit: settlement.existingCredit, paymentAgentId: selectedPaymentAgentId, paymentAgentName: selectedPaymentAgent?.name, updatedAt: now, createdAt: draft.paymentAgentSettlementSnapshot?.createdAt || now } };
+    const resolvedPaymentAgentId = resolvedAgent?.id || "";
+    const savedOrder = {
+      ...draft,
+      number: finalOrderNumber,
+      orderNumber: finalOrderNumber,
+      lines: resolvedLines,
+      status: "saved" as const,
+      paymentAgentId: resolvedPaymentAgentId,
+      paymentBy: resolvedPaymentAgentId || draft.paymentBy,
+      paymentByName: resolvedAgent?.name || draft.paymentBy || "",
+      paymentAgentName: resolvedAgent?.name || draft.paymentBy || "",
+      paymentAgentSnapshot: resolvedAgent ? { id: resolvedAgent.id, name: resolvedAgent.name, code: resolvedAgent.agentCode } : draft.paymentAgentSnapshot,
+      paymentAgentSettlementSnapshot: {
+        ...settlement,
+        orderTotal: settlement.orderTotal,
+        existingCredit: settlement.existingCredit,
+        paymentAgentId: resolvedPaymentAgentId,
+        paymentAgentName: resolvedAgent?.name || selectedPaymentAgent?.name,
+        updatedAt: now,
+        createdAt: draft.paymentAgentSettlementSnapshot?.createdAt || now,
+      },
+    };
+    console.log("[PAYMENT_AGENT_AUTOCREATE_TRACE] order_payload_agent_attached", {
+      orderId: savedOrder.id,
+      paymentAgentId: savedOrder.paymentAgentId,
+      paymentBy: savedOrder.paymentBy,
+      paymentAgentSnapshot: savedOrder.paymentAgentSnapshot,
+    });
     try {
+      console.log("[PAYMENT_AGENT_FLOW_TRACE] order_save_start", { orderId: savedOrder.id, status: savedOrder.status });
       if (isFirebaseOrdersMode) {
         await upsertFirebaseOrder(savedOrder as any);
         await reloadFirebaseOrders();
+        console.log("[PAYMENT_AGENT_AUTOCREATE_TRACE] reload_success", { scope: "orders_after_save" });
       } else {
         upsertOrder(savedOrder);
       }
+      console.log("[PAYMENT_AGENT_FLOW_TRACE] order_save_success", { orderId: savedOrder.id, status: savedOrder.status });
+      console.log("[PAYMENT_AGENT_AUTOCREATE_TRACE] order_save_success", { orderId: savedOrder.id, paymentAgentId: savedOrder.paymentAgentId });
       logDB("upsert_order_success", { orderId: savedOrder.id, status: savedOrder.status });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
+      console.error("[PAYMENT_AGENT_FLOW_TRACE] order_save_failed", { orderId: savedOrder.id, status: savedOrder.status, errorMessage: message });
       logError("upsert_order_failure", { orderId: savedOrder.id, error: message });
       pushToast({ tone: "danger", text: message });
       return;
@@ -427,7 +616,7 @@ export default function OrdersPage() {
       copy.number = peek;
       copy.orderNumber = peek;
     }
-    setDraft(copy);
+    setDraft({ ...copy, lines: (copy.lines || []).map((line: Order["lines"][number]) => seedDetailBoxesFromLegacy(line)) });
     setHasAttemptedFinalSave(false);
     setShowDraftIncompleteConfirm(false);
     setValidationWarning({ visible: false, items: [] });
@@ -466,18 +655,15 @@ export default function OrdersPage() {
   };
   const getHistoryLineImage = (line: any) => line.productPhotoUrl || line.productImage || line.image || line.photoUrl || "";
 
-type HoverPreview = { key: string; anchor: HTMLElement | null; lines: Array<{ line: any; idx: number }> } | null;
-  const previewPopupRef = useRef<HTMLDivElement | null>(null);
-  const openLinePreview = (next: HoverPreview) => setHoverPreview(next);
+  const morePopupRef = useRef<HTMLDivElement | null>(null);
+  const openMorePopup = (orderId: string, anchor: HTMLElement, lines: Array<{ line: any; idx: number; image: string; marka: string }>) =>
+    setHoverPreview({ orderId, anchor, lines });
   const getHistoryPhotoCells = (order: Order) => {
-    const lines = order.lines.map((line, idx) => ({ line, idx, image: getHistoryLineImage(line) }));
-    const primary = lines.slice(0, 3);
-    const more = lines.slice(3);
-    return { primary, more };
+    const lines = order.lines.map((line, idx) => ({ line, idx, image: getHistoryLineImage(line), marka: (line.marka || "").trim() || "No marka" }));
+    const first = lines[0] ?? null;
+    const more = lines.slice(1);
+    return { first, more, all: lines };
   };
-  const getLineProductPhoto = (line: any) => line.productPhotoUrl || line.productImage || line.image || line.photoUrl || "";
-  const getLineDimensionPhoto = (line: any) => line.photoUrl || line.dimensionPhotoUrl || line.sizePhotoUrl || "";
-  const asMetric = (value: number) => (value > 0 ? formatPlainAmount(value) : "—");
   const fmtDateTime = (order: Order) => {
     const raw = order.date || order.createdAt || order.updatedAt;
     if (!raw) return "—";
@@ -500,7 +686,7 @@ type HoverPreview = { key: string; anchor: HTMLElement | null; lines: Array<{ li
     if (isFirebaseOrdersMode) {
       const result: OrderSideEffectResult = { mode: "archive", orderSaved: false, productsSynced: false, productSyncFailures: [], paymentSettlementApplied: false, paymentSettlementReversed: false, customerReceivablesApplied: false, customerReceivablesReversed: false, generatedProductsArchived: false, blocked: false, warnings: [], errors: [] };
       logDataFlow("Orders", JSON.stringify({ event: "order_side_effects_started", orderId: o.id, orderNumber: o.number || o.orderNumber, mode: "archive" }, null, 2));
-      try { await reverseOrderSettlement(o); result.paymentSettlementReversed = true; logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: o.id, mode: "archive", step: "reverse_payment_settlement", success: true }, null, 2)); }
+      try { await reverseOrderSettlement(o); console.log("[PAYMENT_CREDIT_TRACE] deleted_order_credit_released", { orderId: o.id, status: o.status }); result.paymentSettlementReversed = true; logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: o.id, mode: "archive", step: "reverse_payment_settlement", success: true }, null, 2)); }
       catch (e) { result.blocked = true; result.errors.push("Archive blocked because payment-agent reversal failed."); logError("order_side_effect_step_failed", { orderId: o.id, mode: "archive", step: "reverse_payment_settlement", error: e instanceof Error ? e.message : String(e) }); pushToast({ tone: "danger", text: "Archive blocked because payment-agent reversal failed." }); return; }
       try { await customerLedgerService.reverseOrderCustomerReceivables(o as any); result.customerReceivablesReversed = true; logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: o.id, mode: "archive", step: "reverse_customer_receivables", success: true }, null, 2)); }
       catch (e) { result.blocked = true; result.errors.push("Archive blocked because customer receivable reversal failed."); logError("order_side_effect_step_failed", { orderId: o.id, mode: "archive", step: "reverse_customer_receivables", error: e instanceof Error ? e.message : String(e) }); pushToast({ tone: "danger", text: "Archive blocked because customer receivable reversal failed." }); return; }
@@ -513,6 +699,7 @@ type HoverPreview = { key: string; anchor: HTMLElement | null; lines: Array<{ li
       return;
     }
     deleteOrder(o.id);
+    console.log("[PAYMENT_CREDIT_TRACE] deleted_order_credit_released", { orderId: o.id, status: o.status });
     await recalculateFromOrders(orders.filter((x) => x.id !== o.id && x.status === "saved"));
     await archiveProductsForOrder(o);
     pushToast({ tone: "success", text: `Order ${o.number || o.orderNumber} deleted and related generated products archived.` });
@@ -538,7 +725,7 @@ type HoverPreview = { key: string; anchor: HTMLElement | null; lines: Array<{ li
     const onDown = (e: MouseEvent) => {
       const target = e.target as Node;
       if (hoverPreview.anchor?.contains(target)) return;
-      if (previewPopupRef.current?.contains(target)) return;
+      if (morePopupRef.current?.contains(target)) return;
       setHoverPreview(null);
     };
     const onKey = (e: KeyboardEvent) => {
@@ -603,19 +790,19 @@ type HoverPreview = { key: string; anchor: HTMLElement | null; lines: Array<{ li
         </section>}
 
         <section className="card overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-border"><h3 className="font-semibold">Order History</h3><div className="text-[12px] text-fg-subtle">Showing 1 to {history.length} of {activeOrders.length} orders</div></div>
+          {/* <div className="flex items-center justify-between px-4 py-3 border-b border-border"><h3 className="font-semibold">Order History</h3><div className="text-[12px] text-fg-subtle">Showing 1 to {history.length} of {activeOrders.length} orders</div></div> */}
           <div className="overflow-x-auto">
             <table className="w-full text-[13px]">
               <thead className="bg-bg-subtle/70">
-                <tr className="text-left text-[11px] uppercase tracking-wide text-fg-subtle">
-                  <th className="px-4 py-2 w-[180px]">Order Number</th><th className="w-[220px]">Products</th><th className="w-[105px]">Items</th><th className="w-[190px]">Paid By</th><th className="w-[130px]">Order Total</th><th className="w-[160px]">Loading Date</th><th className="w-[120px]">Status</th><th className="text-right px-4 w-[120px]">Actions</th>
+                <tr className="text-left text-[13px] uppercase  text-fg-subtle">
+                  <th className="px-4 py-2 w-[180 px]">Order Number</th><th className="w-[120px]">Product</th><th className="w-[140px]">Marka</th><th className="w-[105px]">Items</th><th className="w-[190px]">Paid By</th><th className="w-[130px]">Order Total</th><th className="w-[160px]">Loading Date</th><th className="w-[120px]">Status</th><th className="text-right px-4 w-[120px]">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {history.length === 0 ? <tr><td colSpan={7} className="px-4 py-8 text-center text-fg-subtle">No orders yet. Click Add Order to create one.</td></tr> : history.map((o) => {
+                {history.length === 0 ? <tr><td colSpan={9} className="px-4 py-8 text-center text-fg-subtle">No orders yet. Click Add Order to create one.</td></tr> : history.map((o) => {
                   const productCount = o.lines.length;
                   const paymentMeta = getPaymentAgentMeta(o);
-                  const { primary, more } = getHistoryPhotoCells(o);
+                  const { first, more, all } = getHistoryPhotoCells(o);
                   const paymentName = paymentMeta.value;
                   const canEditOperationalFields = o.status !== "draft" && o.status !== "archived";
                   const rowValue = getRowValue(o);
@@ -634,18 +821,19 @@ type HoverPreview = { key: string; anchor: HTMLElement | null; lines: Array<{ li
                     showSaveButton: canEditOperationalFields && rowDirty,
                   });
                   return <tr key={o.id} className="border-t border-border/80 hover:bg-bg-subtle/40 align-middle h-[68px]">
-                    <td className="px-4 py-3"><div className="text-[14px] font-semibold">{o.number || o.orderNumber || "Draft"}</div><div className="text-[12px] text-fg-subtle truncate max-w-[170px]">{fmtDateTime(o)}</div></td>
+                    <td className="px-4 py-3"><div className="text-[20px] font-semibold">{o.number || o.orderNumber || "Draft"}</div><div className="text-[12px] text-fg-subtle truncate max-w-[170px]">{fmtDateTime(o)}</div></td>
                     <td>
-                      <div className="flex items-center gap-1.5">
-                        {primary.map(({ line, idx, image }) => <button key={line.id || idx} type="button" onClick={(e) => openLinePreview({ key: `${o.id}-${idx}`, anchor: e.currentTarget, lines: [{ line, idx }] })} className="grid h-10 w-10 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle">{image ? <img src={getCloudinaryOptimizedUrl(image, { width: 96, height: 96, crop: "fill" })} alt="product" className="h-full w-full object-cover" loading="lazy" decoding="async" /> : <span className="text-[10px] text-fg-subtle">—</span>}</button>)}
-                        {more.length > 0 ? <button type="button" onClick={(e) => openLinePreview({ key: `${o.id}-more`, anchor: e.currentTarget, lines: more.map(({ line, idx }) => ({ line, idx: idx + 3 })) })} className="rounded-full border border-border bg-bg-subtle px-2 py-1 text-[11px] text-fg-muted">See more +{more.length}</button> : null}
+                      <div className="flex items-center gap-2">
+                        {first ? <button type="button" onClick={() => first.image && setPreviewImage({ src: first.image, alt: "Product photo" })} className="grid h-14 w-14 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle">{first.image ? <img src={getCloudinaryOptimizedUrl(first.image, { width: 140, height: 140, crop: "fit" })} alt="product" className="h-full w-full object-contain" loading="lazy" decoding="async" /> : <span className="text-[10px] text-fg-subtle">—</span>}</button> : null}
+                        {more.length > 0 ? <button type="button" onClick={(e) => openMorePopup(o.id, e.currentTarget, all)} className="rounded-full border border-border bg-bg-subtle px-2 py-1 text-[11px] text-fg-muted">+more {more.length}</button> : null}
                       </div>
                     </td>
+                    <td><div className="max-w-[130px] truncate text-[14px] font-medium">{first?.marka || "No marka"}</div></td>
                     <td><span className="inline-flex rounded-full border border-border bg-bg-subtle px-2.5 py-1 text-[12.5px]">{productCount} {productCount === 1 ? "Item" : "Items"}</span></td>
-                    <td><div className={paymentMeta.isMissing ? "text-[var(--danger)] text-[13px]" : "text-[13px]"}>{paymentName}</div>{o.paymentAgentSnapshot?.name && o.paymentAgentSnapshot?.name !== paymentName ? <div className="text-[11px] text-fg-subtle">{o.paymentAgentSnapshot.name}</div> : null}</td>
-                    <td className="font-semibold text-[var(--success)] tabular-nums">{formatPlainAmount(orderTotal(o))}</td>
+                    <td><div className={paymentMeta.isMissing ? "text-[var(--danger)] text-[13px]" : "text-[14px] font-medium" }>{paymentName}</div>{o.paymentAgentSnapshot?.name && o.paymentAgentSnapshot?.name !== paymentName ? <div className="text-[11px] text-fg-subtle">{o.paymentAgentSnapshot.name}</div> : null}</td>
+                    <td className="font-semibold text-[var(--success)] text-[15px] tabular-nums">{formatPlainAmount(orderTotal(o))}</td>
                     <td>{canEditOperationalFields ? <LoadingDateControl debugOrderId={o.id} value={rowValue.loadingDate} onChange={(next) => { setRowEdit(o, { loadingDate: next }, "date_selected"); }} /> : <span className="inline-flex rounded-full border border-border bg-bg-subtle px-2.5 py-1 text-[12px] text-fg-muted">{o.loadingDate ? formatDate(o.loadingDate) : "Set date"}</span>}</td>
-                    <td>{canEditOperationalFields ? <OrderStatusControl debugOrderId={o.id} value={rowValue.status} onChange={(next) => { setRowEdit(o, { status: next }, "status_selected"); }} /> : <span className="inline-flex rounded-full border border-border bg-bg-subtle px-2.5 py-1 text-[12px] text-fg">{o.status === "packed" ? "Loaded" : o.status}</span>}</td>
+                    <td>{canEditOperationalFields ? <OrderStatusControl debugOrderId={o.id} options={resolveStatusOptions(o, rowValue)} value={rowValue.status} onChange={(next) => { setRowEdit(o, { status: next }, "status_selected"); }} /> : <span className="inline-flex rounded-full border border-border bg-bg-subtle px-2.5 py-1 text-[12px] text-fg">{o.status === "packed" ? "Loaded" : o.status}</span>}</td>
                     <td className="px-4"><div className="flex justify-end gap-1.5">{canEditOperationalFields && rowDirty ? <Button size="sm" variant="primary" title="Save row changes" disabled={rowValue.saving} onClick={() => { void saveRowEdit(o); }}>{rowValue.saving ? "Saving..." : "Save"}</Button> : null}<Button size="sm" variant="secondary" title="View" onClick={() => setViewOrder(o)}><Eye size={13} /></Button><Button size="sm" variant="secondary" title="Edit" onClick={() => startEdit(o)}><SquarePen size={13} /></Button><Button size="sm" variant="secondary" title="Delete" onClick={() => removeOrder(o)}><Trash2 size={13} /></Button></div></td>
                   </tr>;
                 })}
@@ -653,40 +841,21 @@ type HoverPreview = { key: string; anchor: HTMLElement | null; lines: Array<{ li
             </table>
           </div>
         </section>
-      <FloatingPortal anchorRef={{ current: hoverPreview?.anchor as any }} open={Boolean(hoverPreview?.anchor)} width={250} placement="bottom" align="center">
-        <div ref={previewPopupRef} className="rounded-xl border border-border bg-bg-card p-2 shadow-card">
-          <div className="mb-1 flex justify-end"><button type="button" onClick={() => setHoverPreview(null)} className="rounded-md border border-border px-1.5 text-[11px] text-fg-muted">✕</button></div>
-          <div className="max-h-[60vh] space-y-2 overflow-y-auto pr-1 text-[11px]">
-            {(hoverPreview?.lines || []).map(({ line, idx }) => {
-              const product = getLineProductPhoto(line);
-              const dim = getLineDimensionPhoto(line);
-              const ctns = Number(line.totalCtns) || 0;
-              const pcsPer = Number(line.pcsPerCtn) || 0;
-              const totalPcs = ctns * pcsPer;
-              const rate = Number(line.rmbPerPcs) || 0;
-              const totalAmount = totalPcs * rate;
-              return <div key={`${line.id}-${idx}`} className="rounded-lg border border-border/90 bg-bg p-2">
-                <div className="grid grid-cols-[84px_1fr] gap-2">
-                  <div className="space-y-1">
-                    <button type="button" className="grid h-14 w-[84px] place-items-center overflow-hidden rounded-md border border-border bg-bg-subtle text-[10px] text-fg-subtle cursor-zoom-in" title="Open image preview" aria-label="Open image preview" onClick={(e) => { e.stopPropagation(); product && setPreviewImage({ src: product, alt: "Product photo" }); }}>{product ? <img src={getCloudinaryOptimizedUrl(product, { width: 240, height: 180, crop: "fill" })} alt="product" className="h-full w-full object-cover" loading="lazy" decoding="async" /> : "Not present"}</button>
-                    <button type="button" className="grid h-10 w-10 place-items-center overflow-hidden rounded-md border border-border bg-bg-subtle text-[10px] text-fg-subtle cursor-zoom-in" title="Open image preview" aria-label="Open image preview" onClick={(e) => { e.stopPropagation(); dim && setPreviewImage({ src: dim, alt: "Dimension photo" }); }}>{dim ? <img src={getCloudinaryOptimizedUrl(dim, { width: 140, height: 140, crop: "fill" })} alt="dimension" className="h-full w-full object-cover" loading="lazy" decoding="async" /> : "Not present"}</button>
-                  </div>
-                  <div className="space-y-1.5">
-                  <div><div className="text-[9px] font-semibold uppercase tracking-[0.12em] text-fg-subtle">Marka details</div><div className="text-[14px] font-bold leading-tight text-fg">{line.marka?.trim() || "Not present"}</div></div>
-                  <div><div className="text-[9px] font-semibold uppercase tracking-[0.12em] text-fg-subtle">Details</div><div className="text-[12px] font-medium leading-tight text-fg-muted">{line.details?.trim() || "Not present"}</div></div>
-                  <div className="grid grid-cols-3 divide-x divide-border rounded-md border border-border bg-bg-subtle/70">
-                    <div className="px-1.5 py-1"><div className="text-[9px] text-fg-subtle">Total Ctns</div><div className="text-[11px] font-semibold">{ctns > 0 ? ctns.toLocaleString() : "—"}</div></div>
-                    <div className="px-1.5 py-1"><div className="text-[9px] text-fg-subtle">Pcs/Ctn</div><div className="text-[11px] font-semibold">{pcsPer > 0 ? pcsPer.toLocaleString() : "—"}</div></div>
-                    <div className="px-1.5 py-1"><div className="text-[9px] text-fg-subtle">Total Pcs</div><div className="text-[11px] font-semibold">{totalPcs > 0 ? totalPcs.toLocaleString() : "—"}</div></div>
-                  </div>
-                  <div className="grid grid-cols-2 divide-x divide-border rounded-md border border-border bg-bg-subtle/70">
-                    <div className="px-1.5 py-1"><div className="text-[9px] text-fg-subtle">Rate/Pcs</div><div className="text-[11px] font-semibold">{asMetric(rate)}</div></div>
-                    <div className="px-1.5 py-1"><div className="text-[9px] text-fg-subtle">Total Amount</div><div className="text-[11px] font-semibold">{asMetric(totalAmount)}</div></div>
-                  </div>
-                  </div>
-                </div>
-              </div>;
-            })}
+      <FloatingPortal anchorRef={{ current: hoverPreview?.anchor as any }} open={Boolean(hoverPreview?.anchor)} width={280} placement="bottom" align="center">
+        <div ref={morePopupRef} className="rounded-xl border border-border bg-bg-card p-2 shadow-card">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="text-[12px] font-semibold">Product / Marka</div>
+            <button type="button" onClick={() => setHoverPreview(null)} className="rounded-md border border-border px-1.5 text-[11px] text-fg-muted">x</button>
+          </div>
+          <div className="max-h-[50vh] space-y-2 overflow-y-auto pr-1">
+            {(hoverPreview?.lines || []).map(({ line, idx, image, marka }) => (
+              <div key={`${line.id}-${idx}`} className="flex items-center gap-2 rounded-lg border border-border/90 bg-bg p-1.5">
+                <button type="button" className="grid h-10 w-10 place-items-center overflow-hidden rounded-md border border-border bg-bg-subtle cursor-zoom-in" onClick={(e) => { e.stopPropagation(); image && setPreviewImage({ src: image, alt: "Product photo" }); }}>
+                  {image ? <img src={getCloudinaryOptimizedUrl(image, { width: 90, height: 90, crop: "fit" })} alt="product" className="h-full w-full object-contain" loading="lazy" decoding="async" /> : <span className="text-[10px] text-fg-subtle">—</span>}
+                </button>
+                <div className="min-w-0 flex-1 truncate text-[12px] font-medium">{marka}</div>
+              </div>
+            ))}
           </div>
         </div>
       </FloatingPortal>
@@ -703,7 +872,7 @@ type HoverPreview = { key: string; anchor: HTMLElement | null; lines: Array<{ li
               <Button size="sm" variant="secondary" onClick={onCancel}>✕</Button>
             </div>
             <div className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-[minmax(220px,0.8fr)_minmax(145px,0.55fr)_minmax(160px,0.55fr)_minmax(220px,0.8fr)]">
-              <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Payment By</span><div className="relative"><Input value={headerPaymentQuery} onFocus={() => setHeaderPaymentOpen(true)} onBlur={() => window.setTimeout(() => setHeaderPaymentOpen(false),120)} onChange={(e)=>{const next=e.target.value; setHeaderPaymentQuery(next); setHeaderPaymentOpen(true); setDraft((d)=>({...d,paymentBy:next,paymentAgentId:""}));}} placeholder="Search payment agent" />{headerPaymentOpen && headerPaymentSuggestions.length>0 ? <div className="absolute z-30 mt-1 max-h-44 w-full overflow-auto rounded-lg border border-border bg-bg-card shadow-card">{headerPaymentSuggestions.map((p)=><button key={p.id} type="button" className="block w-full px-2 py-1.5 text-left text-[12px] hover:bg-bg-subtle" onMouseDown={(e)=>{e.preventDefault(); setHeaderPaymentOpen(false); const label=paymentLabel(p); setHeaderPaymentQuery(label); setDraft((d)=>({...d,paymentBy:p.id,paymentAgentId:p.id}));}}>{paymentLabel(p)}</button>)}</div>:null}</div></label>
+              <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Payment By</span><div className="relative"><Input value={headerPaymentQuery} onFocus={() => setHeaderPaymentOpen(true)} onBlur={() => window.setTimeout(() => setHeaderPaymentOpen(false),120)} onChange={(e)=>{const next=e.target.value; console.log("[PAYMENT_AGENT_AUTOCREATE_TRACE] input_changed", { source: "orders_modal_header", value: next }); setHeaderPaymentQuery(next); setHeaderPaymentOpen(true); setDraft((d)=>({...d,paymentBy:next,paymentAgentId:""}));}} placeholder="Search payment agent" />{headerPaymentOpen && headerPaymentSuggestions.length>0 ? <div className="absolute z-30 mt-1 max-h-44 w-full overflow-auto rounded-lg border border-border bg-bg-card shadow-card">{headerPaymentSuggestions.map((p)=><button key={p.id} type="button" className="block w-full px-2 py-1.5 text-left text-[12px] hover:bg-bg-subtle" onMouseDown={(e)=>{e.preventDefault(); setHeaderPaymentOpen(false); const label=paymentLabel(p); setHeaderPaymentQuery(label); setDraft((d)=>({...d,paymentBy:p.id,paymentAgentId:p.id}));}}>{paymentLabel(p)}</button>)}</div>:null}</div></label>
               <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Date</span><Input type="date" value={draft.date} onChange={(e)=>setDraft((d)=>({...d,date:e.target.value}))} /></label>
               <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Order Number</span><Input value={draft.number} onChange={(e)=>setDraft((d)=>({...d,number:e.target.value,orderNumber:e.target.value}))} /></label>
               <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>WeChat ID</span><div className="relative"><Input value={draft.wechatId} onFocus={() => setHeaderWechatOpen(true)} onBlur={() => window.setTimeout(() => setHeaderWechatOpen(false), 120)} onChange={(e)=>{const next=e.target.value; setHeaderWechatOpen(true); setDraft((d)=>({...d,wechatId:next}));}} />{headerWechatOpen && headerWechatSuggestions.length>0 ? <div className="absolute z-30 mt-1 max-h-44 w-full overflow-auto rounded-lg border border-border bg-bg-card shadow-card">{headerWechatSuggestions.map((w)=><button key={w} type="button" className="block w-full px-2 py-1.5 text-left text-[12px] hover:bg-bg-subtle" onMouseDown={(e)=>{e.preventDefault(); setHeaderWechatOpen(false); setDraft((d)=>({...d,wechatId:w}));}}>{w}</button>)}</div> : null}</div></label>
@@ -729,3 +898,4 @@ type HoverPreview = { key: string; anchor: HTMLElement | null; lines: Array<{ li
     </div>
   );
 }
+

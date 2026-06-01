@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/Input";
 import { applyTypedCustomerToLine } from "@/services/customers/customerResolution";
 import { PhotoUpload } from "./PhotoUpload";
 import { useMemo, useState } from "react";
+import { getLineDetailsParts } from "@/lib/orderLineDetails";
 
 type Props = {
   line: OrderLine;
@@ -19,11 +20,12 @@ type Props = {
 
 // Columns: pic+dim | product | marka | details | ctns | pcs/ctn | total pcs | rmb/pcs | line total | customer | action
 export const LINE_GRID =
-  "grid grid-cols-[72px_72px_minmax(0,0.6fr)_minmax(0,0.6fr)_56px_76px_70px_76px_132px_minmax(0,0.5fr)_28px] items-center gap-1.5";
+  "grid grid-cols-[72px_72px_minmax(0,0.6fr)_minmax(0,0.6fr)_56px_76px_60px_76px_132px_minmax(0,0.5fr)_28px] items-center gap-1.5";
 
 export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, customerSuggestions = [], customers = [], onPreviewImage }: Props) {
   const pcs = lineTotalPcs(line);
   const totalRmb = lineTotalRmb(line);
+  const detailParts = getLineDetailsParts(line);
   const customerQuery = (line.customerName || "").trim().toLowerCase();
   const [customerOpen, setCustomerOpen] = useState(false);
 
@@ -61,11 +63,11 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
         placeholder="MARKA"
       />
 
-      <Input
-        compact
-        value={line.details}
-        onChange={(e) => onChange({ details: e.target.value })}
-      />
+      <div className="grid grid-cols-3 gap-1">
+        <Input compact value={detailParts.detail1} onChange={(e) => onChange({ detail1: e.target.value })} placeholder="Detail 1" />
+        <Input compact value={detailParts.detail2} onChange={(e) => onChange({ detail2: e.target.value })} placeholder="Detail 2" />
+        <Input compact value={detailParts.detail3} onChange={(e) => onChange({ detail3: e.target.value })} placeholder="Detail 3" />
+      </div>
 
       <Input
         compact

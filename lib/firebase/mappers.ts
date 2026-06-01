@@ -1,4 +1,5 @@
 import type { Customer, CustomerLedgerEntry, Order, PaymentAgent, PaymentAgentLedgerEntry, Product, Supplier } from "@/lib/types";
+import { seedDetailBoxesFromLegacy, withDerivedLegacyDetails } from "@/lib/orderLineDetails";
 
 const asNum = (v: unknown): number | undefined => {
   if (typeof v === "number" && Number.isFinite(v)) return v;
@@ -187,7 +188,25 @@ export const customerLedgerEntryToFirestore = (entity: CustomerLedgerEntry): Rec
 export const orderFromFirestore = (doc: unknown): Order => {
   const o = (doc ?? {}) as Record<string, unknown>;
   const now = new Date().toISOString();
-  const lines = Array.isArray(o.lines) ? o.lines.map((l) => ({ ...(l as Record<string, unknown>), id: asStr((l as Record<string, unknown>).id), supplierId: asStr((l as Record<string, unknown>).supplierId), productId: asStr((l as Record<string, unknown>).productId), customerId: asStr((l as Record<string, unknown>).customerId), totalCtns: asNum((l as Record<string, unknown>).totalCtns) ?? 0, pcsPerCtn: asNum((l as Record<string, unknown>).pcsPerCtn) ?? 0, rmbPerPcs: asNum((l as Record<string, unknown>).rmbPerPcs) ?? 0 })) : [];
+  const lines = Array.isArray(o.lines)
+    ? o.lines.map((l) => {
+        const line = l as Record<string, unknown>;
+        return seedDetailBoxesFromLegacy({
+          ...line,
+          id: asStr(line.id),
+          supplierId: asStr(line.supplierId),
+          productId: asStr(line.productId),
+          customerId: asStr(line.customerId),
+          details: asStr(line.details),
+          detail1: asStr(line.detail1) || undefined,
+          detail2: asStr(line.detail2) || undefined,
+          detail3: asStr(line.detail3) || undefined,
+          totalCtns: asNum(line.totalCtns) ?? 0,
+          pcsPerCtn: asNum(line.pcsPerCtn) ?? 0,
+          rmbPerPcs: asNum(line.rmbPerPcs) ?? 0,
+        });
+      })
+    : [];
   return { ...(o as any), id: asStr(o.id), number: asStr(o.number) || asStr(o.orderNumber), orderNumber: asStr(o.orderNumber) || asStr(o.number), date: asStr(o.date), loadingDate: asStr(o.loadingDate) || undefined, wechatId: asStr(o.wechatId), status: (asStr(o.status) as Order["status"]) || "draft", paymentStatus: (asStr(o.paymentStatus) as Order["paymentStatus"]) || "pending", paymentBy: asStr(o.paymentBy), paymentAgentId: asStr(o.paymentAgentId), paidToPaymentAgentNow: asNum(o.paidToPaymentAgentNow) ?? 0, lines: lines as any, createdAt: asStr(o.createdAt, now), updatedAt: asStr(o.updatedAt, now), savedAt: asStr(o.savedAt) || undefined, draftAutosavedAt: asStr(o.draftAutosavedAt) || undefined, lastEditedAt: asStr(o.lastEditedAt) || undefined } as Order;
 };
 export const orderToFirestore = (entity: Order): Record<string, unknown> => ({
@@ -200,7 +219,7 @@ export const orderToFirestore = (entity: Order): Record<string, unknown> => ({
   wechatId: entity.wechatId ?? "",
   paidToPaymentAgentNow: entity.paidToPaymentAgentNow ?? 0,
   lines: entity.lines.map((line) => ({
-    ...line,
+    ...withDerivedLegacyDetails(line),
     supplierId: line.supplierId ?? "",
     supplierName: line.supplierName ?? null,
     productId: line.productId ?? "",

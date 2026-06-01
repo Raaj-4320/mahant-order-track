@@ -5,6 +5,7 @@ import { paymentAgentLedgerPath, paymentAgentsPath, paymentAgentPath } from "@/l
 import type { PaymentAgentsService } from "@/services/contracts";
 import type { PaymentAgent } from "@/lib/types";
 import { buildOrderSettlementEntry, buildOrderSettlementReversalEntry } from "@/services/settlement/paymentAgentLedger";
+import { getOrderCreditExclusionReason, isOrderEligibleForCreditSettlement } from "@/services/settlement/orderCreditEligibility";
 
 const BUSINESS_ID = process.env.NEXT_PUBLIC_FIREBASE_BUSINESS_ID ?? "mahant";
 const makeId = () => (globalThis.crypto?.randomUUID?.() ?? `pa-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
@@ -14,6 +15,11 @@ const clamp = (n: number) => Math.max(0, Number.isFinite(n) ? n : 0);
 export const paymentAgentsFirebaseService: PaymentAgentsService = {
   async listPaymentAgents() {
     const db = requireDb();
+    console.log("[PAYMENT_AGENT_FLOW_TRACE] firebase_path_resolved", {
+      service: "paymentAgents",
+      businessId: BUSINESS_ID,
+      path: paymentAgentsPath(BUSINESS_ID),
+    });
     const snap = await getDocs(collection(db, paymentAgentsPath(BUSINESS_ID)));
     return snap.docs.map((d) => paymentAgentFromFirestore({ id: d.id, ...(d.data() as Record<string, unknown>) })).sort((a, b) => a.name.localeCompare(b.name));
   },
@@ -65,7 +71,16 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
     await deleteDoc(doc(requireDb(), paymentAgentPath(BUSINESS_ID, id)));
   },
   async applyOrderSettlement(order) {
-    if (order.status !== "saved" || !order.paymentAgentSettlementSnapshot) return;
+    if (!order.paymentAgentSettlementSnapshot) return;
+    if (!isOrderEligibleForCreditSettlement(order)) {
+      console.log("[PAYMENT_CREDIT_TRACE] order_excluded_reason", { orderId: order.id, reason: getOrderCreditExclusionReason(order) });
+      await this.reverseOrderSettlement(order);
+      if (order.status === "cancelled") {
+        console.log("[PAYMENT_CREDIT_TRACE] cancelled_order_credit_released", { orderId: order.id });
+      }
+      return;
+    }
+    console.log("[PAYMENT_CREDIT_TRACE] finalized_order_included", { orderId: order.id, status: order.status, loadingDate: order.loadingDate });
     const agentId = order.paymentAgentId || order.paymentBy;
     if (!agentId) return;
     const db = requireDb();
@@ -82,16 +97,38 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
       const nextEntry = buildOrderSettlementEntry(order);
       const existingIsActive = !!existing && existing.active !== false && existing.isReversed !== true;
       if (existingIsActive && existing?.settlementHash && existing.settlementHash === nextEntry.settlementHash) return;
+      if (existingIsActive && existing?.agentId && existing.agentId !== nextEntry.agentId) {
+        console.log("[PAYMENT_CREDIT_TRACE] payment_agent_changed_recalculated", { orderId: order.id, fromAgentId: existing.agentId, toAgentId: nextEntry.agentId });
+      }
+      if (existingIsActive && Number(existing?.amount ?? 0) !== Number(nextEntry.amount ?? 0)) {
+        console.log("[PAYMENT_CREDIT_TRACE] order_total_changed_recomputed", { orderId: order.id, previousAmount: existing?.amount ?? 0, nextAmount: nextEntry.amount ?? 0 });
+      }
       let updated = { ...current };
       if (existingIsActive) {
-        updated = {
-          ...updated,
-          creditBalance: clamp((updated.creditBalance ?? 0) + clamp(existing.creditUsed ?? 0) - clamp(existing.newCreditCreated ?? 0)),
-          totalOrderAmount: clamp((updated.totalOrderAmount ?? 0) - clamp(existing.amount ?? 0)),
-          totalPaidAmount: clamp((updated.totalPaidAmount ?? 0) - clamp(existing.paidNow ?? 0)),
-          currentDuePayable: clamp((updated.currentDuePayable ?? 0) - clamp(existing.remainingPayable ?? 0)),
-          updatedAt: now,
-        };
+        if (existing.agentId && existing.agentId !== nextEntry.agentId) {
+          const oldAgentRef = doc(db, paymentAgentPath(BUSINESS_ID, existing.agentId));
+          const oldAgentSnap = await tx.get(oldAgentRef);
+          if (!oldAgentSnap.exists()) throw new Error("Previous payment agent not found for settlement migration.");
+          const oldAgent = paymentAgentFromFirestore({ id: oldAgentSnap.id, ...(oldAgentSnap.data() as Record<string, unknown>) });
+          const oldUpdated: PaymentAgent = {
+            ...oldAgent,
+            creditBalance: clamp((oldAgent.creditBalance ?? 0) + clamp(existing.creditUsed ?? 0) - clamp(existing.newCreditCreated ?? 0)),
+            totalOrderAmount: clamp((oldAgent.totalOrderAmount ?? 0) - clamp(existing.amount ?? 0)),
+            totalPaidAmount: clamp((oldAgent.totalPaidAmount ?? 0) - clamp(existing.paidNow ?? 0)),
+            currentDuePayable: clamp((oldAgent.currentDuePayable ?? 0) - clamp(existing.remainingPayable ?? 0)),
+            updatedAt: now,
+          };
+          tx.set(oldAgentRef, paymentAgentToFirestore(oldUpdated), { merge: true });
+        } else {
+          updated = {
+            ...updated,
+            creditBalance: clamp((updated.creditBalance ?? 0) + clamp(existing.creditUsed ?? 0) - clamp(existing.newCreditCreated ?? 0)),
+            totalOrderAmount: clamp((updated.totalOrderAmount ?? 0) - clamp(existing.amount ?? 0)),
+            totalPaidAmount: clamp((updated.totalPaidAmount ?? 0) - clamp(existing.paidNow ?? 0)),
+            currentDuePayable: clamp((updated.currentDuePayable ?? 0) - clamp(existing.remainingPayable ?? 0)),
+            updatedAt: now,
+          };
+        }
         const reversal = buildOrderSettlementReversalEntry(order, existing);
         tx.set(reversalRef, paymentAgentLedgerEntryToFirestore({ ...reversal, id: reversalRef.id, createdAt: now, updatedAt: now }));
         tx.set(doc(db, paymentAgentLedgerPath(BUSINESS_ID), existing.id), { active: false, isReversed: true, updatedAt: now }, { merge: true });
@@ -137,6 +174,8 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
       const reversal = buildOrderSettlementReversalEntry(order, existing as any);
       tx.set(reversalRef, paymentAgentLedgerEntryToFirestore({ ...reversal, id: reversalRef.id, createdAt: now, updatedAt: now }));
       tx.set(doc(db, paymentAgentLedgerPath(BUSINESS_ID), existing.id), { active: false, isReversed: true, updatedAt: now }, { merge: true });
+      if (order.status === "archived") console.log("[PAYMENT_CREDIT_TRACE] archived_order_credit_released", { orderId: order.id });
+      if (order.status === "cancelled") console.log("[PAYMENT_CREDIT_TRACE] cancelled_order_credit_released", { orderId: order.id });
     });
   },
 };

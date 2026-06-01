@@ -3,12 +3,13 @@ import { sanitizeFirestorePayload } from "@/lib/firebase/mappers";
 import { logError, logProduct } from "@/lib/logger";
 import { lineTotalPcs, type Order, type OrderLine, type Product } from "@/lib/types";
 import { getProductsService } from "@/services/productsService";
+import { joinLineDetails } from "@/lib/orderLineDetails";
 
 const isHttpUrl = (v?: string) => !!v && /^https?:\/\//.test(v);
 const isDataUrl = (v?: string) => !!v && v.startsWith("data:");
 export const createFallbackProductIdFromOrderLine = (order: Order, line: OrderLine) => `order-line-${order.id}-${line.id}`;
 const uniqueAppend = (arr: string[] | undefined, value: string): string[] => (arr?.includes(value) ? arr : [...(arr ?? []), value]);
-const meaningfulLine = (l: OrderLine) => !!(l.details?.trim() || l.marka?.trim() || l.productPhotoUrl || l.photoUrl || Number(l.totalCtns) > 0 || Number(l.pcsPerCtn) > 0 || Number(l.rmbPerPcs) > 0);
+const meaningfulLine = (l: OrderLine) => !!(joinLineDetails(l) || l.marka?.trim() || l.productPhotoUrl || l.photoUrl || Number(l.totalCtns) > 0 || Number(l.pcsPerCtn) > 0 || Number(l.rmbPerPcs) > 0);
 
 export const productFromOrderLine = async (order: Order, line: OrderLine, index: number): Promise<Product> => {
   const service = getProductsService();
@@ -20,7 +21,7 @@ export const productFromOrderLine = async (order: Order, line: OrderLine, index:
   const isFirebaseProducts = process.env.NEXT_PUBLIC_PRODUCTS_DATA_SOURCE === "firebase";
   const linePhoto = isHttpUrl(line.productPhotoUrl) ? line.productPhotoUrl : (isFirebaseProducts && isDataUrl(line.productPhotoUrl) ? "" : line.productPhotoUrl || "");
   const existingPhoto = existing?.photo && !(isFirebaseProducts && isDataUrl(existing.photo)) ? existing.photo : "";
-  return { id, productCode: existing?.productCode || code, sku: existing?.sku || code, name: line.details?.trim() || line.marka?.trim() || "Order Line Product", marka: line.marka?.trim() || existing?.marka || "", category: existing?.category || "Order Generated", unit: existing?.unit || "pcs", defaultDim: line.picDim?.trim() || existing?.defaultDim, photo: existingPhoto || linePhoto || "", supplierId: line.supplierId || existing?.supplierId, supplierSnapshot: supplier ? { id: supplier.id, code: supplier.supplierCode, name: supplier.name } : existing?.supplierSnapshot, purchasePrice: existing?.purchasePrice, sellingPrice: Number(line.rmbPerPcs) || existing?.sellingPrice, defaultRmbPerPcs: Number(line.rmbPerPcs) || existing?.defaultRmbPerPcs, stockQty: lineTotalPcs(line), status: existing?.status || "active", createdAt: existing?.createdAt || now, updatedAt: now, source: existing?.source || "order-line", sourceOrderId: order.id, sourceOrderNumber: order.number || order.orderNumber, sourceLineId: line.id, sourceOrderIds: uniqueAppend(existing?.sourceOrderIds, order.id), sourceLineIds: uniqueAppend(existing?.sourceLineIds, `${order.id}:${line.id}`), catalogKey: existing?.catalogKey, generatedFromOrderLines: existing?.generatedFromOrderLines ?? true, lastSeenAt: now, lastLineTotalPcs: lineTotalPcs(line) };
+  return { id, productCode: existing?.productCode || code, sku: existing?.sku || code, name: joinLineDetails(line) || line.marka?.trim() || "Order Line Product", marka: line.marka?.trim() || existing?.marka || "", category: existing?.category || "Order Generated", unit: existing?.unit || "pcs", defaultDim: line.picDim?.trim() || existing?.defaultDim, photo: existingPhoto || linePhoto || "", supplierId: line.supplierId || existing?.supplierId, supplierSnapshot: supplier ? { id: supplier.id, code: supplier.supplierCode, name: supplier.name } : existing?.supplierSnapshot, purchasePrice: existing?.purchasePrice, sellingPrice: Number(line.rmbPerPcs) || existing?.sellingPrice, defaultRmbPerPcs: Number(line.rmbPerPcs) || existing?.defaultRmbPerPcs, stockQty: lineTotalPcs(line), status: existing?.status || "active", createdAt: existing?.createdAt || now, updatedAt: now, source: existing?.source || "order-line", sourceOrderId: order.id, sourceOrderNumber: order.number || order.orderNumber, sourceLineId: line.id, sourceOrderIds: uniqueAppend(existing?.sourceOrderIds, order.id), sourceLineIds: uniqueAppend(existing?.sourceLineIds, `${order.id}:${line.id}`), catalogKey: existing?.catalogKey, generatedFromOrderLines: existing?.generatedFromOrderLines ?? true, lastSeenAt: now, lastLineTotalPcs: lineTotalPcs(line) };
 };
 
 export type ProductSyncFailure = { lineId: string; generatedProductId?: string; reason: string; errorCode?: string; errorMessage?: string };

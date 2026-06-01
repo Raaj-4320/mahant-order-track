@@ -1,4 +1,5 @@
 import type { Order } from "@/lib/types";
+import { joinLineDetails } from "@/lib/orderLineDetails";
 
 export type OrderLineValidationIssue = {
   lineId: string;
@@ -13,12 +14,12 @@ export type OrderValidationResult = {
 };
 
 const hasProductIdentity = (line: Order["lines"][number]) =>
-  Boolean(line.marka?.trim() || line.details?.trim() || line.productPhotoUrl || line.photoUrl);
+  Boolean(line.marka?.trim() || joinLineDetails(line) || line.productPhotoUrl || line.photoUrl);
 
 const isMeaningfulLine = (line: Order["lines"][number]) =>
   Boolean(
       line.marka?.trim() ||
-      line.details?.trim() ||
+      joinLineDetails(line) ||
       line.productPhotoUrl ||
       line.photoUrl ||
       Number(line.totalCtns) > 0 ||

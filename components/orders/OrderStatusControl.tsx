@@ -7,6 +7,7 @@ import { FloatingPortal } from "@/components/ui/FloatingPortal";
 import type { Order } from "@/lib/types";
 
 const STATUS_OPTIONS: Array<{ value: Order["status"]; label: string }> = [
+  { value: "saved", label: "Saved" },
   { value: "packed", label: "Loaded" },
   { value: "received", label: "Received" },
   { value: "delayed", label: "Delayed" },
@@ -31,12 +32,14 @@ type Props = {
   onChange: (next: Order["status"]) => void;
   disabled?: boolean;
   debugOrderId?: string;
+  options?: Array<{ value: Order["status"]; label: string }>;
 };
 
-export function OrderStatusControl({ value, onChange, disabled = false, debugOrderId }: Props) {
+export function OrderStatusControl({ value, onChange, disabled = false, debugOrderId, options }: Props) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const selected = STATUS_OPTIONS.find((s) => s.value === value);
+  const resolvedOptions = options && options.length ? options : STATUS_OPTIONS;
+  const selected = resolvedOptions.find((s) => s.value === value) ?? STATUS_OPTIONS.find((s) => s.value === value);
   const handleSelectStatus = (status: Order["status"]) => {
     console.log("[ORDER_DATE_STATUS_TRACE] status_selected_in_control", {
       orderId: debugOrderId,
@@ -87,7 +90,7 @@ export function OrderStatusControl({ value, onChange, disabled = false, debugOrd
       </button>
       <FloatingPortal anchorRef={rootRef as any} open={open && !disabled} width={176}>
         <div className="rounded-xl border border-border bg-bg-card p-1.5 shadow-card">
-          {STATUS_OPTIONS.map((option) => (
+          {resolvedOptions.map((option) => (
             <button
               key={option.value}
               type="button"
