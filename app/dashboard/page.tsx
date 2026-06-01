@@ -13,8 +13,8 @@ import { TablePagination } from "@/components/table/TablePagination";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { CalendarDays, ClipboardList, Download, Eye, Filter, Package, Search, SquarePen, TrendingUp } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { logPageAccess, logDataFlow } from "@/lib/logger";
+import { useEffect, useMemo, useState } from "react";
+import { logPageAccess } from "@/lib/logger";
 import { runDevReset } from "@/services/devResetService";
 import { isAuthRequiredModeEnabled, isDevResetEnabled, ordersDataSource } from "@/lib/runtimeConfig";
 import { useRouter } from "next/navigation";
@@ -22,6 +22,12 @@ import { OrderLinesDetailModal } from "@/components/orders/OrderLinesDetailModal
 import { useBusinessAccess } from "@/hooks/useBusinessAccess";
 import { OrderStatusControl } from "@/components/orders/OrderStatusControl";
 import { LoadingDateControl } from "@/components/orders/LoadingDateControl";
+
+type RowEditState = {
+  loadingDate: string | undefined;
+  status: Order["status"];
+  saving: boolean;
+};
 
 export default function DashboardPage() {
   const { orders, upsertOrder, pushToast } = useStore();
@@ -44,6 +50,7 @@ export default function DashboardPage() {
   const [resetResult, setResetResult] = useState<null | { orders: number; products: number; paymentAgents: number; paymentAgentLedger: number; customerLedger: number; customers: number; settings?: number }>(null);
   const [resetError, setResetError] = useState<string | null>(null);
   const [viewOrderId, setViewOrderId] = useState<string | null>(null);
+  const [rowEdits, setRowEdits] = useState<Record<string, RowEditState>>({});
   const { canManageMaintenance } = useBusinessAccess();
   const router = useRouter();
   const filtered = useMemo(() => rows.filter((r) => {
@@ -71,26 +78,88 @@ export default function DashboardPage() {
   const canSeeDevReset = isDevResetEnabled() && (!isAuthRequiredModeEnabled() || canManageMaintenance);
   const formatPlainAmount = (value: number) => value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   useEffect(() => { logPageAccess("Dashboard", { component: "app/dashboard/page.tsx", source: ordersSource }); }, []);
-  const dashboardFlowLoggedRef = useRef(false);
-  useEffect(() => {
-    if (dashboardFlowLoggedRef.current) return;
-    if (ordersLoading || customersLoading || paymentAgentsLoading) return;
-    dashboardFlowLoggedRef.current = true;
-    const allOrders = isFirebaseOrdersMode ? remoteOrders : orders;
-    const excludedDrafts = allOrders.filter((o) => o.status === "draft").length;
-    const excludedArchived = allOrders.filter((o) => o.status === "archived").length;
-    logDataFlow("Dashboard", { functionsCalled:["useOrders.reload","useCustomers.reload","usePaymentAgents.reload"], dbPaths:["businesses/{businessId}/orders"], result:{reachedComponent:true,recentOrdersCount:filtered.length}, counts:{totalOrdersLoaded:allOrders.length,dashboardEligibleOrders:sourceOrders.length,excludedDrafts,excludedArchived,totalOrders:stats.totalOrders,totalOrderAmount:stats.totalOrderAmount,pendingPayments:stats.pendingPayments,delayedShipments:stats.delayedShipments,statusesIncluded:getDashboardIncludedStatuses()}, visibleActionsSummary:["View Details","Open Order Edit from Orders page"] });
-  }, [ordersLoading, customersLoading, paymentAgentsLoading, filtered.length, stats.totalOrders, stats.totalOrderAmount, stats.pendingPayments, stats.delayedShipments, isFirebaseOrdersMode, remoteOrders, orders, sourceOrders.length]);
   const businessId = process.env.NEXT_PUBLIC_FIREBASE_BUSINESS_ID ?? "mahant";
 
-  const updateOrderField = async (order: Order, patch: Partial<Order>) => {
-    const updated = { ...order, ...patch, updatedAt: new Date().toISOString() };
-    if (isFirebaseOrdersMode) {
-      await upsertRemoteOrder(updated);
-      await reloadRemoteOrders();
-      return;
+  useEffect(() => {
+    setRowEdits((prev) => {
+      const next: Record<string, RowEditState> = {};
+      sourceOrders.forEach((order) => {
+        const pending = prev[order.id];
+        if (!pending) return;
+        if (pending.saving) {
+          next[order.id] = pending;
+          return;
+        }
+        const dirty = pending.loadingDate !== order.loadingDate || pending.status !== order.status;
+        if (dirty) next[order.id] = pending;
+      });
+      return next;
+    });
+  }, [sourceOrders]);
+
+  const getRowValue = (order: Order): RowEditState => {
+    const pending = rowEdits[order.id];
+    return pending ?? { loadingDate: order.loadingDate, status: order.status, saving: false };
+  };
+
+  const setRowEdit = (order: Order, patch: Partial<Pick<RowEditState, "loadingDate" | "status">>, trace: "date_selected" | "status_selected") => {
+    setRowEdits((prev) => {
+      const current = prev[order.id] ?? { loadingDate: order.loadingDate, status: order.status, saving: false };
+      const next = { ...current, ...patch };
+      const dirty = next.loadingDate !== order.loadingDate || next.status !== order.status;
+      if (trace === "date_selected") {
+        console.log("[ORDER_DATE_STATUS_TRACE] parent_date_change_received", { orderId: order.id, previousValue: order.loadingDate, nextValue: next.loadingDate });
+      } else {
+        console.log("[ORDER_DATE_STATUS_TRACE] parent_status_change_received", { orderId: order.id, previousStatus: order.status, nextStatus: next.status });
+      }
+      console.log("[ORDER_DATE_STATUS_TRACE] row_dirty_check", {
+        orderId: order.id,
+        savedLoadingDate: order.loadingDate,
+        draftLoadingDate: next.loadingDate,
+        savedStatus: order.status,
+        draftStatus: next.status,
+        isDirty: dirty,
+      });
+      if (!dirty && !current.saving) {
+        const copy = { ...prev };
+        delete copy[order.id];
+        return copy;
+      }
+      return { ...prev, [order.id]: { ...next, saving: current.saving } };
+    });
+  };
+
+  const saveRowEdit = async (order: Order) => {
+    const pending = rowEdits[order.id];
+    if (!pending || pending.saving) return;
+    const dirty = pending.loadingDate !== order.loadingDate || pending.status !== order.status;
+    if (!dirty) return;
+    const updated = { ...order, loadingDate: pending.loadingDate, status: pending.status, updatedAt: new Date().toISOString() };
+    setRowEdits((prev) => ({ ...prev, [order.id]: { ...pending, saving: true } }));
+    console.log("[ORDER_DATE_STATUS_TRACE] save_clicked", { orderId: order.id, payload: { loadingDate: updated.loadingDate, status: updated.status } });
+    console.log("[ORDER_DATE_STATUS_TRACE] service_update_start", { orderId: order.id, path: businessId ? `businesses/${businessId}/orders/${order.id}` : null, payload: { loadingDate: updated.loadingDate, status: updated.status }, source: ordersSource });
+    try {
+      if (isFirebaseOrdersMode) {
+        await upsertRemoteOrder(updated);
+        await reloadRemoteOrders();
+        const reloaded = (remoteOrders.find((item) => item.id === order.id) ?? updated);
+        console.log("[ORDER_DATE_STATUS_TRACE] orders_reloaded_after_save", { orderId: order.id, loadedLoadingDate: reloaded.loadingDate, loadedStatus: reloaded.status });
+      } else {
+        upsertOrder(updated);
+      }
+      setRowEdits((prev) => {
+        const copy = { ...prev };
+        delete copy[order.id];
+        return copy;
+      });
+      console.log("[ORDER_DATE_STATUS_TRACE] save_success_ui_update", { orderId: order.id, updatedLoadingDate: updated.loadingDate, updatedStatus: updated.status });
+      pushToast({ tone: "success", text: "Order row updated." });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setRowEdits((prev) => ({ ...prev, [order.id]: { ...pending, saving: false } }));
+      console.error("[ORDER_DATE_STATUS_TRACE] firebase_update_failed", { orderId: order.id, errorCode: undefined, errorMessage: message });
+      pushToast({ tone: "danger", text: "Failed to save row changes." });
     }
-    upsertOrder(updated);
   };
 
   return (
@@ -123,31 +192,52 @@ export default function DashboardPage() {
               <tbody>
                 {filtered.map((r) => (
                   <tr key={r.id} className="border-t border-border/80 hover:bg-bg-subtle/40 transition-colors">
+                    {(() => {
+                      const target = sourceOrders.find((o) => o.id === r.id);
+                      if (!target) return null;
+                      const rowValue = getRowValue(target);
+                      const rowDirty = rowValue.loadingDate !== target.loadingDate || rowValue.status !== target.status;
+                      console.log("[ORDER_DATE_STATUS_TRACE] row_dirty_check", {
+                        orderId: target.id,
+                        savedLoadingDate: target.loadingDate,
+                        draftLoadingDate: rowValue.loadingDate,
+                        savedStatus: target.status,
+                        draftStatus: rowValue.status,
+                        isDirty: rowDirty,
+                      });
+                      console.log("[ORDER_DATE_STATUS_TRACE] save_button_decision", {
+                        orderId: target.id,
+                        isDirty: rowDirty,
+                        showSaveButton: rowDirty,
+                      });
+                      return (
+                        <>
                     <td className="px-4 py-3"><div className="font-semibold">{r.orderNumber}</div><div className="text-[11.5px] text-fg-subtle truncate max-w-[240px]">{r.paidBy}</div></td>
                     <td><span className="rounded-full bg-bg-subtle px-2 py-1 text-[11.5px]">{r.totalUniqueItems} {r.totalUniqueItems === 1 ? "Item" : "Items"}</span></td>
                     <td className="font-semibold text-[var(--success)] tabular-nums">{formatPlainAmount(r.orderTotal)}</td>
                     <td><div className="text-[12.5px]">{r.paidBy}</div></td>
                     <td>
                       <LoadingDateControl
-                        value={r.loadingDate}
+                        debugOrderId={target.id}
+                        value={rowValue.loadingDate}
                         onChange={(next) => {
-                          const target = sourceOrders.find((o) => o.id === r.id);
-                          if (!target) return;
-                          void updateOrderField(target, { loadingDate: next });
+                          setRowEdit(target, { loadingDate: next }, "date_selected");
                         }}
                       />
                     </td>
                     <td>
                       <OrderStatusControl
-                        value={r.status}
+                        debugOrderId={target.id}
+                        value={rowValue.status}
                         onChange={(next) => {
-                          const target = sourceOrders.find((o) => o.id === r.id);
-                          if (!target) return;
-                          void updateOrderField(target, { status: next });
+                          setRowEdit(target, { status: next }, "status_selected");
                         }}
                       />
                     </td>
-                    <td className="px-4"><div className="flex justify-end gap-1.5"><Button size="sm" variant="secondary" title="View details" onClick={() => setViewOrderId(r.id)}><Eye size={13} /></Button><Button size="sm" variant="secondary" title="Open in Orders" onClick={() => router.push(`/orders?edit=${r.id}`)}><SquarePen size={13} /></Button></div></td>
+                    <td className="px-4"><div className="flex justify-end gap-1.5">{rowDirty ? <Button size="sm" variant="primary" title="Save row changes" disabled={rowValue.saving} onClick={() => { void saveRowEdit(target); }}>{rowValue.saving ? "Saving..." : "Save"}</Button> : null}<Button size="sm" variant="secondary" title="View details" onClick={() => setViewOrderId(r.id)}><Eye size={13} /></Button><Button size="sm" variant="secondary" title="Open in Orders" onClick={() => router.push(`/orders?edit=${r.id}`)}><SquarePen size={13} /></Button></div></td>
+                        </>
+                      );
+                    })()}
                   </tr>
                 ))}
                 {filtered.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-fg-subtle">No matching orders found.</td></tr>}

@@ -5,8 +5,6 @@ import { ordersMockService } from "@/services/mock/ordersMockService";
 
 export function getOrdersService(): OrdersService {
   const selection = ordersDataSourceSelection();
-  console.log("[DATA_SOURCE_TRACE] selected_source", JSON.stringify({ service: "orders", selectedSource: selection.source, reason: selection.reason, explicitSource: selection.explicitSource, explicitMockEnabled: selection.explicitMockEnabled }, null, 2));
-  console.log("[DATA_SOURCE_TRACE] firebase_config_check", JSON.stringify({ service: "orders", hasFirebaseConfig: selection.hasFirebaseConfig, missingFirebaseKeys: selection.missingFirebaseKeys, hasBusinessId: selection.hasBusinessId, businessId: selection.businessId }, null, 2));
   if (selection.source !== "firebase") {
     if (!selection.hasFirebaseConfig) console.warn("Firebase is not configured; app is running in mock mode and data will not persist.");
     return ordersMockService;
@@ -15,7 +13,17 @@ export function getOrdersService(): OrdersService {
   return {
     async listOrders() { const { ordersFirebaseService } = await import("@/services/firebase/ordersFirebaseService"); return ordersFirebaseService.listOrders(); },
     async getOrderById(id) { const { ordersFirebaseService } = await import("@/services/firebase/ordersFirebaseService"); return ordersFirebaseService.getOrderById(id); },
-    async upsertOrder(order) { const { ordersFirebaseService } = await import("@/services/firebase/ordersFirebaseService"); return ordersFirebaseService.upsertOrder(order); },
+    async upsertOrder(order) {
+      const path = selection.businessId ? `businesses/${selection.businessId}/orders/${order.id}` : null;
+      console.log("[ORDER_DATE_STATUS_TRACE] service_update_start", {
+        orderId: order.id,
+        path,
+        payload: { loadingDate: order.loadingDate, status: order.status },
+        source: selection.source,
+      });
+      const { ordersFirebaseService } = await import("@/services/firebase/ordersFirebaseService");
+      return ordersFirebaseService.upsertOrder(order);
+    },
     async archiveOrder(id) { const { ordersFirebaseService } = await import("@/services/firebase/ordersFirebaseService"); return ordersFirebaseService.archiveOrder(id); },
     async listDraftOrders() { const { ordersFirebaseService } = await import("@/services/firebase/ordersFirebaseService"); return ordersFirebaseService.listDraftOrders?.() ?? []; },
     async autosaveDraft(order) { const { ordersFirebaseService } = await import("@/services/firebase/ordersFirebaseService"); return ordersFirebaseService.autosaveDraft?.(order) ?? order; },

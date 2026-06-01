@@ -90,12 +90,20 @@ export const ordersFirebaseService: OrdersService = {
     const mapped = orderToFirestore(next);
     const sanitized = sanitizeFirestorePayload(mapped);
     logDB("order_payload_sanitized", { orderId: id, removedUndefinedPaths: sanitized.removedUndefinedPaths });
-    console.log("[ORDER_SAVE_TRACE] firebase_write_start", JSON.stringify({ orderId: id, status: next.status, businessId: bizId, path: orderPath(bizId, id), collectionPath: ordersPath(bizId) }, null, 2));
+    console.log("[ORDER_DATE_STATUS_TRACE] firebase_update_start", {
+      orderId: id,
+      path: orderPath(bizId, id),
+      payload: { loadingDate: next.loadingDate, status: next.status },
+    });
     try {
       await setDoc(doc(db, orderPath(bizId, id)), sanitized.value, { merge: true });
-      console.log("[ORDER_SAVE_TRACE] firebase_write_success", JSON.stringify({ orderId: id, status: next.status, businessId: bizId, path: orderPath(bizId, id) }, null, 2));
+      console.log("[ORDER_DATE_STATUS_TRACE] firebase_update_success", { orderId: id });
     } catch (e: any) {
-      console.log("[ORDER_SAVE_TRACE] firebase_write_failed", JSON.stringify({ orderId: id, status: order.status, businessId: bizId, path: orderPath(bizId, id), errorCode: e?.code ?? undefined, errorMessage: e?.message ?? String(e) }, null, 2));
+      console.error("[ORDER_DATE_STATUS_TRACE] firebase_update_failed", {
+        orderId: id,
+        errorCode: e?.code ?? undefined,
+        errorMessage: e?.message ?? String(e),
+      });
       logError("upsert_order_failure", { orderId: id, status: order.status, errorCode: e?.code ?? undefined, errorMessage: e?.message ?? String(e), removedUndefinedPaths: sanitized.removedUndefinedPaths });
       throw e;
     }

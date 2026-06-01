@@ -30,12 +30,21 @@ type Props = {
   value: Order["status"];
   onChange: (next: Order["status"]) => void;
   disabled?: boolean;
+  debugOrderId?: string;
 };
 
-export function OrderStatusControl({ value, onChange, disabled = false }: Props) {
+export function OrderStatusControl({ value, onChange, disabled = false, debugOrderId }: Props) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const selected = STATUS_OPTIONS.find((s) => s.value === value);
+  const handleSelectStatus = (status: Order["status"]) => {
+    console.log("[ORDER_DATE_STATUS_TRACE] status_selected_in_control", {
+      orderId: debugOrderId,
+      selectedStatus: status,
+    });
+    onChange(status);
+    setOpen(false);
+  };
 
   useEffect(() => {
     const onDocClick = (event: MouseEvent) => {
@@ -57,7 +66,16 @@ export function OrderStatusControl({ value, onChange, disabled = false }: Props)
       <button
         type="button"
         disabled={disabled}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => setOpen((v) => {
+          const nextOpen = !v;
+          if (nextOpen) {
+            console.log("[ORDER_DATE_STATUS_TRACE] status_dropdown_open", {
+              orderId: debugOrderId,
+              currentStatus: value,
+            });
+          }
+          return nextOpen;
+        })}
         className={cn(
           "inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[12px] font-medium transition-colors",
           statusClasses[value] || statusClasses.saved,
@@ -73,9 +91,9 @@ export function OrderStatusControl({ value, onChange, disabled = false }: Props)
             <button
               key={option.value}
               type="button"
-              onClick={() => {
-                setOpen(false);
-                if (option.value !== value) onChange(option.value);
+              onMouseDown={(event) => {
+                event.preventDefault();
+                if (option.value !== value) handleSelectStatus(option.value);
               }}
               className={cn(
                 "flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-[12.5px]",

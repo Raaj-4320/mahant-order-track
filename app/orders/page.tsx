@@ -29,6 +29,8 @@ import { useTheme } from "@/components/ThemeProvider";
 import { FloatingPortal } from "@/components/ui/FloatingPortal";
 import { ImageLightbox } from "@/components/ui/ImageLightbox";
 import { ordersDataSourceSelection } from "@/lib/runtimeConfig";
+import { LoadingDateControl } from "@/components/orders/LoadingDateControl";
+import { OrderStatusControl } from "@/components/orders/OrderStatusControl";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const createEmptyDraft = (_orders: Order[], reservedOrderNumber = ""): Order => ({
@@ -63,6 +65,12 @@ type OrderSideEffectResult = {
   errors: string[];
 };
 
+type RowEditState = {
+  loadingDate: string | undefined;
+  status: Order["status"];
+  saving: boolean;
+};
+
 const summarizeOrderForLog = (o: Order) => ({
   id: o.id,
   orderNumber: o.number || o.orderNumber,
@@ -87,8 +95,6 @@ export default function OrdersPage() {
   const isFirebaseOrdersMode = ordersDataSource === "firebase";
   useEffect(() => {
     logPageAccess("Orders", { component: "app/orders/page.tsx", source: ordersSourceSelection.source, sourceReason: ordersSourceSelection.reason });
-    console.log("[DATA_SOURCE_TRACE] selected_source", JSON.stringify({ component: "app/orders/page.tsx", selectedSource: ordersSourceSelection.source, reason: ordersSourceSelection.reason, explicitSource: ordersSourceSelection.explicitSource, explicitMockEnabled: ordersSourceSelection.explicitMockEnabled }, null, 2));
-    console.log("[DATA_SOURCE_TRACE] firebase_config_check", JSON.stringify({ component: "app/orders/page.tsx", hasFirebaseConfig: ordersSourceSelection.hasFirebaseConfig, missingFirebaseKeys: ordersSourceSelection.missingFirebaseKeys, hasBusinessId: ordersSourceSelection.hasBusinessId, businessId: ordersSourceSelection.businessId, authRequired: process.env.NEXT_PUBLIC_REQUIRE_AUTH === "true", hasProfileContext: ordersSourceSelection.hasBusinessId }, null, 2));
     if (ordersSourceSelection.source === "mock" && !ordersSourceSelection.hasFirebaseConfig) console.warn("Firebase is not configured; app is running in mock mode and data will not persist.");
   }, [ordersSourceSelection]);
 
@@ -115,6 +121,7 @@ export default function OrdersPage() {
   const [headerWechatOpen, setHeaderWechatOpen] = useState(false);
   const [hoverPreview, setHoverPreview] = useState<HoverPreview>(null);
   const [previewImage, setPreviewImage] = useState<{ src: string; alt: string; caption?: string } | null>(null);
+  const [rowEdits, setRowEdits] = useState<Record<string, RowEditState>>({});
 
   const pickerRef = useRef<HTMLDivElement | null>(null);
   const { theme, toggle } = useTheme();
@@ -186,6 +193,95 @@ export default function OrdersPage() {
       return false;
     }
     return true;
+  };
+
+  useEffect(() => {
+    setRowEdits((prev) => {
+      const next: Record<string, RowEditState> = {};
+      activeOrders.forEach((order) => {
+        const pending = prev[order.id];
+        if (!pending) return;
+        if (pending.saving) {
+          next[order.id] = pending;
+          return;
+        }
+        const dirty = pending.loadingDate !== order.loadingDate || pending.status !== order.status;
+        if (dirty) next[order.id] = pending;
+      });
+      return next;
+    });
+  }, [activeOrders]);
+
+  const getRowValue = (order: Order): RowEditState => {
+    const pending = rowEdits[order.id];
+    return pending ?? { loadingDate: order.loadingDate, status: order.status, saving: false };
+  };
+
+  const setRowEdit = (order: Order, patch: Partial<Pick<RowEditState, "loadingDate" | "status">>, trace: "date_selected" | "status_selected") => {
+    setRowEdits((prev) => {
+      const current = prev[order.id] ?? { loadingDate: order.loadingDate, status: order.status, saving: false };
+      const next = { ...current, ...patch };
+      const dirty = next.loadingDate !== order.loadingDate || next.status !== order.status;
+      if (trace === "date_selected") {
+        console.log("[ORDER_DATE_STATUS_TRACE] parent_date_change_received", { orderId: order.id, previousValue: order.loadingDate, nextValue: next.loadingDate });
+      } else {
+        console.log("[ORDER_DATE_STATUS_TRACE] parent_status_change_received", { orderId: order.id, previousStatus: order.status, nextStatus: next.status });
+      }
+      console.log("[ORDER_DATE_STATUS_TRACE] row_dirty_check", {
+        orderId: order.id,
+        savedLoadingDate: order.loadingDate,
+        draftLoadingDate: next.loadingDate,
+        savedStatus: order.status,
+        draftStatus: next.status,
+        isDirty: dirty,
+      });
+      if (!dirty && !current.saving) {
+        const copy = { ...prev };
+        delete copy[order.id];
+        return copy;
+      }
+      return { ...prev, [order.id]: { ...next, saving: current.saving } };
+    });
+  };
+
+  const saveRowEdit = async (order: Order) => {
+    const pending = rowEdits[order.id];
+    if (!pending || pending.saving) return;
+    const dirty = pending.loadingDate !== order.loadingDate || pending.status !== order.status;
+    if (!dirty) return;
+    if (!ensureFirebaseOrderWriteReady()) return;
+    const updated = { ...order, loadingDate: pending.loadingDate, status: pending.status, updatedAt: new Date().toISOString() };
+    setRowEdits((prev) => ({ ...prev, [order.id]: { ...pending, saving: true } }));
+    console.log("[ORDER_DATE_STATUS_TRACE] save_clicked", { orderId: order.id, payload: { loadingDate: updated.loadingDate, status: updated.status } });
+    console.log("[ORDER_DATE_STATUS_TRACE] service_update_start", {
+      orderId: order.id,
+      path: ordersSourceSelection.businessId ? `businesses/${ordersSourceSelection.businessId}/orders/${order.id}` : null,
+      payload: { loadingDate: updated.loadingDate, status: updated.status },
+      source: ordersDataSource,
+    });
+    try {
+      if (isFirebaseOrdersMode) {
+        await upsertFirebaseOrder(updated);
+        await reloadFirebaseOrders();
+        const reloaded = (firebaseOrders.find((item) => item.id === order.id) ?? updated);
+        console.log("[ORDER_DATE_STATUS_TRACE] orders_reloaded_after_save", { orderId: order.id, loadedLoadingDate: reloaded.loadingDate, loadedStatus: reloaded.status });
+      } else {
+        upsertOrder(updated);
+      }
+      setRowEdits((prev) => {
+        const copy = { ...prev };
+        delete copy[order.id];
+        return copy;
+      });
+      console.log("[ORDER_DATE_STATUS_TRACE] save_success_ui_update", { orderId: order.id, updatedLoadingDate: updated.loadingDate, updatedStatus: updated.status });
+      pushToast({ tone: "success", text: "Order row updated." });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setRowEdits((prev) => ({ ...prev, [order.id]: { ...pending, saving: false } }));
+      console.error("[ORDER_DATE_STATUS_TRACE] firebase_update_failed", { orderId: order.id, errorCode: undefined, errorMessage: message });
+      logError("order_row_update_failure", { orderId: order.id, error: message, attemptedLoadingDate: updated.loadingDate, attemptedStatus: updated.status });
+      pushToast({ tone: "danger", text: "Failed to save row changes." });
+    }
   };
 
   const onSave = async (status: Order["status"], forceDraft = false) => {
@@ -521,6 +617,22 @@ type HoverPreview = { key: string; anchor: HTMLElement | null; lines: Array<{ li
                   const paymentMeta = getPaymentAgentMeta(o);
                   const { primary, more } = getHistoryPhotoCells(o);
                   const paymentName = paymentMeta.value;
+                  const canEditOperationalFields = o.status !== "draft" && o.status !== "archived";
+                  const rowValue = getRowValue(o);
+                  const rowDirty = rowValue.loadingDate !== o.loadingDate || rowValue.status !== o.status;
+                  console.log("[ORDER_DATE_STATUS_TRACE] row_dirty_check", {
+                    orderId: o.id,
+                    savedLoadingDate: o.loadingDate,
+                    draftLoadingDate: rowValue.loadingDate,
+                    savedStatus: o.status,
+                    draftStatus: rowValue.status,
+                    isDirty: rowDirty,
+                  });
+                  console.log("[ORDER_DATE_STATUS_TRACE] save_button_decision", {
+                    orderId: o.id,
+                    isDirty: rowDirty,
+                    showSaveButton: canEditOperationalFields && rowDirty,
+                  });
                   return <tr key={o.id} className="border-t border-border/80 hover:bg-bg-subtle/40 align-middle h-[68px]">
                     <td className="px-4 py-3"><div className="text-[14px] font-semibold">{o.number || o.orderNumber || "Draft"}</div><div className="text-[12px] text-fg-subtle truncate max-w-[170px]">{fmtDateTime(o)}</div></td>
                     <td>
@@ -532,9 +644,9 @@ type HoverPreview = { key: string; anchor: HTMLElement | null; lines: Array<{ li
                     <td><span className="inline-flex rounded-full border border-border bg-bg-subtle px-2.5 py-1 text-[12.5px]">{productCount} {productCount === 1 ? "Item" : "Items"}</span></td>
                     <td><div className={paymentMeta.isMissing ? "text-[var(--danger)] text-[13px]" : "text-[13px]"}>{paymentName}</div>{o.paymentAgentSnapshot?.name && o.paymentAgentSnapshot?.name !== paymentName ? <div className="text-[11px] text-fg-subtle">{o.paymentAgentSnapshot.name}</div> : null}</td>
                     <td className="font-semibold text-[var(--success)] tabular-nums">{formatPlainAmount(orderTotal(o))}</td>
-                    <td><span className="inline-flex rounded-full border border-border bg-bg-subtle px-2.5 py-1 text-[12px] text-fg-muted">{o.loadingDate ? formatDate(o.loadingDate) : "Set date"}</span></td>
-                    <td><span className="inline-flex rounded-full border border-border bg-bg-subtle px-2.5 py-1 text-[12px] text-fg">{o.status === "packed" ? "Loaded" : o.status}</span></td>
-                    <td className="px-4"><div className="flex justify-end gap-1.5"><Button size="sm" variant="secondary" title="View" onClick={() => setViewOrder(o)}><Eye size={13} /></Button><Button size="sm" variant="secondary" title="Edit" onClick={() => startEdit(o)}><SquarePen size={13} /></Button><Button size="sm" variant="secondary" title="Delete" onClick={() => removeOrder(o)}><Trash2 size={13} /></Button></div></td>
+                    <td>{canEditOperationalFields ? <LoadingDateControl debugOrderId={o.id} value={rowValue.loadingDate} onChange={(next) => { setRowEdit(o, { loadingDate: next }, "date_selected"); }} /> : <span className="inline-flex rounded-full border border-border bg-bg-subtle px-2.5 py-1 text-[12px] text-fg-muted">{o.loadingDate ? formatDate(o.loadingDate) : "Set date"}</span>}</td>
+                    <td>{canEditOperationalFields ? <OrderStatusControl debugOrderId={o.id} value={rowValue.status} onChange={(next) => { setRowEdit(o, { status: next }, "status_selected"); }} /> : <span className="inline-flex rounded-full border border-border bg-bg-subtle px-2.5 py-1 text-[12px] text-fg">{o.status === "packed" ? "Loaded" : o.status}</span>}</td>
+                    <td className="px-4"><div className="flex justify-end gap-1.5">{canEditOperationalFields && rowDirty ? <Button size="sm" variant="primary" title="Save row changes" disabled={rowValue.saving} onClick={() => { void saveRowEdit(o); }}>{rowValue.saving ? "Saving..." : "Save"}</Button> : null}<Button size="sm" variant="secondary" title="View" onClick={() => setViewOrder(o)}><Eye size={13} /></Button><Button size="sm" variant="secondary" title="Edit" onClick={() => startEdit(o)}><SquarePen size={13} /></Button><Button size="sm" variant="secondary" title="Delete" onClick={() => removeOrder(o)}><Trash2 size={13} /></Button></div></td>
                   </tr>;
                 })}
               </tbody>
