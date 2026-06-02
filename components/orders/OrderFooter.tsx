@@ -32,16 +32,7 @@ function Metric({ label, value, tone = "default" }: { label: string; value: stri
 
 export function OrderFooter({ total, onCancel, onSaveDraft, onSaveOrder, saveOrderLabel = "Save Order", disableSaveOrder = false, paymentAgent, settlement, paidNow, onViewDetails }: Props) {
   useEffect(() => {
-    console.debug("[ORDER_FOOTER_SETTLEMENT_PREVIEW]", {
-      existingCredit: settlement.existingCredit,
-      orderTotal: settlement.orderTotal,
-      creditUsed: settlement.creditUsed,
-      payableNow: settlement.payableAfterCredit,
-      remainingPayable: settlement.remainingPayable,
-      resultingCreditBalance: settlement.resultingCreditBalance,
-      paidNow,
-    });
-  }, [settlement, paidNow]);
+}, [settlement, paidNow]);
 
   return (
     <footer className="sticky bottom-0 z-20 border-t border-border bg-bg-card px-5 py-2.5">
@@ -66,3 +57,4 @@ export function OrderFooter({ total, onCancel, onSaveDraft, onSaveOrder, saveOrd
     </footer>
   );
 }
+

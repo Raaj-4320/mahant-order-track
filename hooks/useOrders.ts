@@ -16,12 +16,7 @@ export function useOrders() {
     await reload();
     const reloaded = await service.getOrderById(order.id);
     if (reloaded) {
-      console.log("[ORDER_DATE_STATUS_TRACE] orders_reloaded_after_save", {
-        orderId: order.id,
-        loadedLoadingDate: reloaded.loadingDate,
-        loadedStatus: reloaded.status,
-      });
-    }
+}
     return saved;
   }, [service, reload]);
   const autosaveDraft = useCallback(async (order: Order) => { const saved = await (service.autosaveDraft ? service.autosaveDraft(order) : service.upsertOrder({ ...order, status: "draft" })); setData((p) => p.some((x) => x.id === saved.id) ? p.map((x) => x.id === saved.id ? saved : x) : [saved, ...p]); return saved; }, [service]);
@@ -37,3 +32,4 @@ export function useOrders() {
   const draftOrders = useMemo(() => data.filter((o) => o.status === "draft"), [data]);
   return { data, isLoading, error, isEmpty: !isLoading && data.length === 0, reload, getOrderById, upsertOrder, autosaveDraft, archiveOrder, draftOrders, peekNextOrderNumber, allocateNextOrderNumber };
 }
+

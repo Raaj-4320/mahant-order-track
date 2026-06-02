@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
 import { Order, orderTotal } from "@/lib/types";
@@ -47,7 +47,7 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
 
   const buildLineCopyText = (line: Order["lines"][number]) => {
     const totalPcs = (line.totalCtns || 0) * (line.pcsPerCtn || 0);
-    return `外套编织袋唛头一 正一侧唛头如下:\n\n${line.marka || "—"}\n\nQTY - ${totalPcs} PCS\n\nGW:填毛重\n\nMEAS:填外箱尺寸\n\n(${orderNo || "—"})`;
+    return `???????? ???????:\n\n${line.marka || "—"}\n\nQTY - ${totalPcs} PCS\n\nGW:???\n\nMEAS:?????\n\n(${orderNo || "—"})`;
   };
 
   const copyText = async (text: string, key: string) => {
@@ -63,8 +63,7 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
   const scheduleJpgStateReset = (delayMs = 1500) => {
     window.setTimeout(() => {
       setJpgState("idle");
-      console.log("[ORDER_DETAILS_JPG_TRACE] state_reset", { delayMs });
-    }, delayMs);
+}, delayMs);
   };
 
   const imageUrlToDataUrl = async (url: string): Promise<string | null> => {
@@ -97,10 +96,7 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
   const prepareCloneImages = async (source: HTMLElement, clone: HTMLElement) => {
     const sourceImages = Array.from(source.querySelectorAll("img"));
     const cloneImages = Array.from(clone.querySelectorAll("img"));
-
-    console.log("[ORDER_DETAILS_JPG_TRACE] images_prepared_start", { count: cloneImages.length });
-
-    await Promise.all(
+await Promise.all(
       cloneImages.map(async (cloneImage, index) => {
         const sourceImage = sourceImages[index];
         const rawSrc = sourceImage?.currentSrc || sourceImage?.getAttribute("src") || cloneImage.getAttribute("src") || "";
@@ -109,8 +105,7 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
           cloneImage.removeAttribute("src");
           cloneImage.removeAttribute("srcset");
           cloneImage.removeAttribute("sizes");
-          console.warn("[ORDER_DETAILS_JPG_TRACE] image_prepare_failed", { index, reason: "missing_src" });
-          return;
+return;
         }
 
         const inlinedSrc = await imageUrlToDataUrl(rawSrc);
@@ -119,15 +114,13 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
           cloneImage.removeAttribute("srcset");
           cloneImage.removeAttribute("sizes");
           cloneImage.setAttribute("crossorigin", "anonymous");
-          console.log("[ORDER_DETAILS_JPG_TRACE] images_prepared", { index, status: "inlined" });
-          return;
+return;
         }
 
         cloneImage.removeAttribute("src");
         cloneImage.removeAttribute("srcset");
         cloneImage.removeAttribute("sizes");
-        console.warn("[ORDER_DETAILS_JPG_TRACE] image_prepare_failed", { index, url: rawSrc });
-      }),
+}),
     );
   };
 
@@ -150,22 +143,11 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
     clone.style.boxSizing = "border-box";
 
     await prepareCloneImages(source, clone);
-
-    console.log("[ORDER_DETAILS_JPG_TRACE] export_clone_prepared", {
-      width: clone.style.width,
-      childCount: clone.querySelectorAll("*").length,
-    });
-
-    return clone;
+return clone;
   };
 
   const renderExportNodeToCanvas = async (source: HTMLElement) => {
-    console.log("[ORDER_DETAILS_JPG_TRACE] render_start", {
-      width: Math.ceil(source.getBoundingClientRect().width),
-      height: Math.ceil(source.getBoundingClientRect().height),
-    });
-
-    const clone = await prepareExportClone(source);
+const clone = await prepareExportClone(source);
     const width = Math.ceil(source.scrollWidth || source.getBoundingClientRect().width);
     const height = Math.ceil(source.scrollHeight || source.getBoundingClientRect().height);
     const serializedNode = new XMLSerializer().serializeToString(clone);
@@ -201,27 +183,21 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, width, height);
     ctx.drawImage(image, 0, 0, width, height);
-
-    console.log("[ORDER_DETAILS_JPG_TRACE] render_success", { width, height, scale });
-    return canvas;
+return canvas;
   };
 
   const copyViewAsJpg = async () => {
-    console.log("[ORDER_DETAILS_JPG_TRACE] copy_start", { orderId: order.id, orderNumber: orderNo || null });
-    if (jpgState === "copying") return;
+if (jpgState === "copying") return;
     setJpgState("copying");
 
     try {
       const source = exportRef.current;
-      console.log("[ORDER_DETAILS_JPG_TRACE] export_node_found", { found: Boolean(source) });
-      if (!source) throw new Error("Export node not found.");
+if (!source) throw new Error("Export node not found.");
 
       const canvas = await renderExportNodeToCanvas(source);
       const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
       if (!blob) throw new Error("Failed to create clipboard image blob");
-      console.log("[ORDER_DETAILS_JPG_TRACE] blob_created", { size: blob.size, mimeType: blob.type || "image/png" });
-
-      const canWriteClipboardImage =
+const canWriteClipboardImage =
         typeof navigator !== "undefined" &&
         Boolean(navigator.clipboard?.write) &&
         typeof ClipboardItem !== "undefined" &&
@@ -232,26 +208,14 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
       }
 
       try {
-        console.log("[ORDER_DETAILS_JPG_TRACE] clipboard_write_start", { size: blob.size, mimeType: blob.type || "image/png" });
-        await navigator.clipboard.write([new ClipboardItem({ [blob.type || "image/png"]: blob })]);
-        console.log("[ORDER_DETAILS_JPG_TRACE] clipboard_write_success", { size: blob.size, mimeType: blob.type || "image/png" });
-        setJpgState("copied");
+await navigator.clipboard.write([new ClipboardItem({ [blob.type || "image/png"]: blob })]);
+setJpgState("copied");
       } catch (error) {
         const failure = error instanceof Error ? error : new Error("Clipboard image write failed");
-        console.error("[ORDER_DETAILS_JPG_TRACE] clipboard_write_failed", {
-          name: failure.name,
-          message: failure.message,
-          isSecureContext: window.isSecureContext,
-          hasClipboardWrite: Boolean(navigator.clipboard?.write),
-          hasClipboardItem: typeof ClipboardItem !== "undefined",
-          blobType: blob.type,
-          blobSize: blob.size,
-        });
-        setJpgState("failed");
+setJpgState("failed");
       }
     } catch (error) {
-      console.error("[ORDER_DETAILS_JPG_TRACE] copy_failed", error);
-      setJpgState("failed");
+setJpgState("failed");
     } finally {
       scheduleJpgStateReset(1500);
     }
@@ -308,14 +272,14 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
                 <tr>
                   <th className="border border-border px-2 py-3">#</th>
                   <th className="border border-border px-2 py-2 text-[14px] leading-tight whitespace-nowrap">DIM/WEIGHT</th>
-                  <th className="border border-border px-2 py-2 text-[14px] leading-tight whitespace-nowrap">产品图片</th>
+                  <th className="border border-border px-2 py-2 text-[14px] leading-tight whitespace-nowrap">????</th>
                   <th className="border border-border px-2 py-2.5 text-[14px] whitespace-nowrap">MARKA</th>
                   <th className="border border-border px-2 py-2.5 text-[14px] whitespace-nowrap">DETAILS</th>
-                  <th className="border border-border px-2 py- text-[14px] leading-tight whitespace-nowrap"><TwoLineHeader zh="装箱数" en="CTN" /></th>
-                  <th className="border border-border px-2 py-2 text-[14px] leading-tight whitespace-nowrap"><TwoLineHeader zh="件数" en="PCS/CTN" /></th>
+                  <th className="border border-border px-2 py- text-[14px] leading-tight whitespace-nowrap"><TwoLineHeader zh="???" en="CTN" /></th>
+                  <th className="border border-border px-2 py-2 text-[14px] leading-tight whitespace-nowrap"><TwoLineHeader zh="??" en="PCS/CTN" /></th>
                   <th className="border border-border px-2 py-2 text-[14px] leading-tight whitespace-nowrap">TOTAL Pieces</th>
-                  <th className="border border-border px-2 py-2 text-[13px] leading-tight whitespace-nowrap"><TwoLineHeader zh="单价" en="PRICE/PC" /></th>
-                  <th className="border border-border px-2 py-2 text-[13px] leading-tight whitespace-nowrap"><TwoLineHeader zh="金额" en="TOTAL AMOUNT" /></th>
+                  <th className="border border-border px-2 py-2 text-[13px] leading-tight whitespace-nowrap"><TwoLineHeader zh="??" en="PRICE/PC" /></th>
+                  <th className="border border-border px-2 py-2 text-[13px] leading-tight whitespace-nowrap"><TwoLineHeader zh="??" en="TOTAL AMOUNT" /></th>
                   <th className="border border-border px-2 py-2 text-[15px] leading-tight whitespace-nowrap" data-export-hidden="true">COPY</th>
                 </tr>
               </thead>
@@ -454,3 +418,4 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
     </div>
   );
 }
+

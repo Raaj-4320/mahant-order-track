@@ -77,13 +77,7 @@ export default function CustomersPage() {
   void exportTick;
 
   const summaries = useMemo(() => {
-    console.log("[CUSTOMER_ORDERS_PAGE_TRACE] summary_build_start", {
-      customersCount: customers.length,
-      ordersCount: orders.length,
-      source,
-    });
-
-    const rows: CustomerSummaryRow[] = customers.map((customer) => {
+const rows: CustomerSummaryRow[] = customers.map((customer) => {
       const matchedOrders = orders.filter((order) => order.lines.some((line) => sameCustomer(line, customer)));
       const orderRows: CustomerOrderLineRow[] = matchedOrders.flatMap((order) =>
         order.lines
@@ -131,9 +125,7 @@ export default function CustomersPage() {
         allLineRows: orderRows.sort((a, b) => b.orderDate.localeCompare(a.orderDate)),
       };
     });
-
-    console.log("[CUSTOMER_ORDERS_PAGE_TRACE] summary_build_success", { rows: rows.length });
-    return rows;
+return rows;
   }, [customers, orders, source]);
 
   const filteredAndSorted = useMemo(() => {
@@ -159,8 +151,7 @@ export default function CustomersPage() {
   const activeSummary = filteredAndSorted.find((row) => row.customer.id === viewCustomerId) || null;
 
   const exportVisible = () => {
-    console.log("[CUSTOMER_ORDERS_PAGE_TRACE] export_start", { rows: filteredAndSorted.length });
-    const header = [
+const header = [
       "Customer Name",
       "Last Order Product Marka Name",
       "Last Order Total Amount",
@@ -185,8 +176,7 @@ export default function CustomersPage() {
     a.click();
     URL.revokeObjectURL(url);
     setExportTick((x) => x + 1);
-    console.log("[CUSTOMER_ORDERS_PAGE_TRACE] export_success", { rows: filteredAndSorted.length });
-  };
+};
 
   return (
     <PageShell title="Customers">
@@ -281,13 +271,8 @@ export default function CustomersPage() {
                           size="sm"
                           variant="secondary"
                           onClick={() => {
-                            console.log("[CUSTOMER_ORDERS_PAGE_TRACE] customer_view_open", { customerId: row.customer.id });
-                            console.log("[CUSTOMER_ORDERS_PAGE_TRACE] customer_orders_resolved", {
-                              customerId: row.customer.id,
-                              rows: row.allLineRows.length,
-                              totalOrders: row.totalOrders,
-                            });
-                            setViewCustomerId(row.customer.id);
+
+setViewCustomerId(row.customer.id);
                           }}
                         >
                           View
@@ -418,3 +403,4 @@ export default function CustomersPage() {
     </PageShell>
   );
 }
+

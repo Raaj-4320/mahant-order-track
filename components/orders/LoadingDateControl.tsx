@@ -68,17 +68,8 @@ export function LoadingDateControl({ value, onChange, disabled = false, debugOrd
 
   const handleSelectDate = (day: Date) => {
     const emitted = toIsoDate(day);
-    console.log("[ORDER_DATE_STATUS_TRACE] date_selected_in_control", {
-      orderId: debugOrderId,
-      selectedDate: emitted,
-      formattedValue: day.toLocaleDateString("en-US"),
-    });
-    onChange(emitted);
-    console.log("[ORDER_DATE_STATUS_TRACE] date_onchange_emit", {
-      orderId: debugOrderId,
-      emittedValue: emitted,
-    });
-    setOpen(false);
+onChange(emitted);
+setOpen(false);
   };
 
   useEffect(() => {
@@ -103,11 +94,7 @@ export function LoadingDateControl({ value, onChange, disabled = false, debugOrd
           setOpen((v) => {
             const nextOpen = !v;
             if (nextOpen) {
-              console.log("[ORDER_DATE_STATUS_TRACE] date_picker_open", {
-                orderId: debugOrderId,
-                currentValue: value,
-              });
-            }
+}
             return nextOpen;
           });
         }}
@@ -182,11 +169,7 @@ export function LoadingDateControl({ value, onChange, disabled = false, debugOrd
               className="rounded-md border border-border px-2 py-1 text-[11.5px] hover:bg-bg-subtle"
               onMouseDown={(event) => {
                 event.preventDefault();
-                console.log("[ORDER_DATE_STATUS_TRACE] date_onchange_emit", {
-                  orderId: debugOrderId,
-                  emittedValue: undefined,
-                });
-                onChange(undefined);
+onChange(undefined);
                 setOpen(false);
               }}
             >
@@ -210,3 +193,4 @@ export function LoadingDateControl({ value, onChange, disabled = false, debugOrd
     </div>
   );
 }
+

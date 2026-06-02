@@ -5,12 +5,7 @@ const clamp = (n: number) => Math.max(0, Number.isFinite(n) ? n : 0);
 
 export function recalculateAgentFromOpeningAndOrders(agent: PaymentAgent, orders: Order[]): PaymentAgent {
   const own = orders.filter((o) => (o.paymentAgentId || o.paymentBy) === agent.id && o.paymentAgentSettlementSnapshot);
-  const eligible = own.filter((order) => {
-    const included = isOrderEligibleForCreditSettlement(order);
-    if (included) console.log("[PAYMENT_CREDIT_TRACE] finalized_order_included", { orderId: order.id, status: order.status, loadingDate: order.loadingDate });
-    else console.log("[PAYMENT_CREDIT_TRACE] order_excluded_reason", { orderId: order.id, reason: getOrderCreditExclusionReason(order) });
-    return included;
-  });
+  const eligible = own.filter((order) => isOrderEligibleForCreditSettlement(order));
   let creditBalance = clamp(agent.openingCreditBalance ?? agent.creditBalance ?? 0);
   let totalOrderAmount = 0; let totalPaidAmount = 0; let currentDuePayable = 0;
   for (const o of eligible) {
@@ -20,8 +15,7 @@ export function recalculateAgentFromOpeningAndOrders(agent: PaymentAgent, orders
     currentDuePayable += clamp(s.remainingPayable);
     creditBalance = clamp(creditBalance - clamp(s.creditUsed) + clamp(s.newCreditCreated));
   }
-  console.log("[PAYMENT_CREDIT_TRACE] committed_credit_balance_result", { agentId: agent.id, creditBalance, totalOrderAmount, totalPaidAmount, currentDuePayable });
-  return { ...agent, creditBalance, totalOrderAmount, totalPaidAmount, currentDuePayable, updatedAt: new Date().toISOString() };
+return { ...agent, creditBalance, totalOrderAmount, totalPaidAmount, currentDuePayable, updatedAt: new Date().toISOString() };
 }
 
 export function applyOrderSettlementToAgent(agent: PaymentAgent, order: Order, settlement: NonNullable<Order["paymentAgentSettlementSnapshot"]>) {
@@ -45,3 +39,4 @@ export function buildOrderSettlementReversalEntry(order: Order, prev: PaymentAge
   const now = new Date().toISOString();
   return { id: `order-settlement-reversal-${order.id}-${Date.now()}`, agentId: prev.agentId, type: "order_settlement_reversal", sourceOrderId: order.id, sourceOrderNumber: order.number || order.orderNumber, amount: prev.amount, creditUsed: prev.creditUsed, payableAfterCredit: prev.payableAfterCredit, paidNow: prev.paidNow, remainingPayable: prev.remainingPayable, newCreditCreated: prev.newCreditCreated, resultingCreditBalance: prev.resultingCreditBalance, reversalOfId: prev.id, note: "Reversal of previous order settlement", active: true, isReversed: false, createdAt: now, updatedAt: now };
 }
+

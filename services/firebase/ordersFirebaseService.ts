@@ -90,21 +90,10 @@ export const ordersFirebaseService: OrdersService = {
     const mapped = orderToFirestore(next);
     const sanitized = sanitizeFirestorePayload(mapped);
     logDB("order_payload_sanitized", { orderId: id, removedUndefinedPaths: sanitized.removedUndefinedPaths });
-    console.log("[ORDER_DATE_STATUS_TRACE] firebase_update_start", {
-      orderId: id,
-      path: orderPath(bizId, id),
-      payload: { loadingDate: next.loadingDate, status: next.status },
-    });
-    try {
+try {
       await setDoc(doc(db, orderPath(bizId, id)), sanitized.value, { merge: true });
-      console.log("[ORDER_DATE_STATUS_TRACE] firebase_update_success", { orderId: id });
-    } catch (e: any) {
-      console.error("[ORDER_DATE_STATUS_TRACE] firebase_update_failed", {
-        orderId: id,
-        errorCode: e?.code ?? undefined,
-        errorMessage: e?.message ?? String(e),
-      });
-      logError("upsert_order_failure", { orderId: id, status: order.status, errorCode: e?.code ?? undefined, errorMessage: e?.message ?? String(e), removedUndefinedPaths: sanitized.removedUndefinedPaths });
+} catch (e: any) {
+logError("upsert_order_failure", { orderId: id, status: order.status, errorCode: e?.code ?? undefined, errorMessage: e?.message ?? String(e), removedUndefinedPaths: sanitized.removedUndefinedPaths });
       throw e;
     }
     return next;
@@ -125,3 +114,4 @@ export const ordersFirebaseService: OrdersService = {
     return this.upsertOrder({ ...order, status: "draft", draftAutosavedAt: now, lastEditedAt: now } as any);
   },
 };
+

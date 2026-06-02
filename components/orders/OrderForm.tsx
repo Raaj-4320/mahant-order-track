@@ -40,6 +40,7 @@ type Props = {
 export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, wechatSuggestions = [], customerSuggestions = [], customers = [], paymentAgents = [], showOrderInfo = true, onPreviewImage }: Props) {
   const [paymentQuery, setPaymentQuery] = useState("");
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const normalizeAgentValue = (value?: string) => (value || "").trim().toLowerCase();
 
   const paymentSuggestions = useMemo(() => {
     const q = paymentQuery.trim().toLowerCase();
@@ -55,21 +56,6 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
       .slice(0, 4);
   }, [paymentAgents, paymentQuery]);
 
-  useEffect(() => {
-    console.log("[PAYMENT_AGENT_FLOW_TRACE] order_form_agents_received", {
-      count: paymentAgents.length,
-      sample: paymentAgents.slice(0, 3).map((agent) => agent.name),
-    });
-  }, [paymentAgents]);
-
-  useEffect(() => {
-    console.log("[PAYMENT_AGENT_FLOW_TRACE] typeahead_options_resolved", {
-      query: paymentQuery,
-      count: paymentSuggestions.length,
-      sample: paymentSuggestions.slice(0, 3).map((agent) => agent.name),
-    });
-  }, [paymentQuery, paymentSuggestions]);
-
   const paymentLabel = (p: PaymentAgent) =>
     (p.creditBalance ?? 0) > 0
       ? `${p.name} — Credit: ${(p.creditBalance ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -84,7 +70,10 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
   const addLine = () =>
     setDraft((d) => ({ ...d, lines: [...d.lines, newLine()] }));
 
-  const selectedPaymentAgent = paymentAgents.find((p) => p.id === (draft.paymentAgentId || draft.paymentBy));
+  const selectedPaymentAgent = paymentAgents.find((p) => {
+    const reference = draft.paymentAgentId || draft.paymentBy;
+    return p.id === reference || normalizeAgentValue(p.name) === normalizeAgentValue(reference);
+  });
   const selectedLabel = selectedPaymentAgent ? paymentLabel(selectedPaymentAgent) : "";
   useEffect(() => {
     if (paymentOpen) return;
@@ -103,8 +92,7 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
                 onBlur={() => window.setTimeout(() => setPaymentOpen(false), 120)}
                 onChange={(e) => {
                   const next = e.target.value;
-                  console.log("[PAYMENT_AGENT_AUTOCREATE_TRACE] input_changed", { source: "order_form_payment_by", value: next });
-                  setPaymentQuery(next);
+setPaymentQuery(next);
                   setPaymentOpen(true);
                   setDraft((d) => ({ ...d, paymentBy: next, paymentAgentId: "" }));
                 }}
@@ -217,3 +205,4 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
     </div>
   );
 }
+

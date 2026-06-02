@@ -19,7 +19,7 @@ import { OrderLinesDetailModal } from "@/components/orders/OrderLinesDetailModal
 import { useCustomers } from "@/hooks/useCustomers";
 import { customerLedgerService } from "@/services/customerLedgerService";
 import { resolveCustomersForOrderLines } from "@/services/customers/customerResolution";
-import { logCustomer, logDB, logError, logLedger, logOrder, logPageAccess, logDataFlow, logPaymentAgent, logProduct } from "@/lib/logger";
+import { logCustomer, logDB, logError, logOrder, logPageAccess, logDataFlow } from "@/lib/logger";
 import { ensureFinalOrderNumber, peekNextOrderNumber } from "@/services/orderNumberService";
 import { ArrowUpDown, Bell, CalendarDays, ChevronDown, Eye, Filter, LayoutGrid, List, Moon, Search, SquarePen, Sun, Trash2 } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -97,6 +97,8 @@ const summarizeOrderForLog = (o: Order) => ({
   linePhotoFlags: o.lines.map((l) => ({ lineId: l.id, hasProductPhoto: Boolean(l.productPhotoUrl), hasDimensionPhoto: Boolean(l.photoUrl) })),
 });
 
+const normalizePaymentAgentValue = (value?: string) => (value || "").trim().toLowerCase();
+
 export default function OrdersPage() {
   type OrdersMode = "history" | "add" | "drafts" | "edit";
   const ordersSourceSelection = useMemo(() => ordersDataSourceSelection(), []);
@@ -104,8 +106,7 @@ export default function OrdersPage() {
   const isFirebaseOrdersMode = ordersDataSource === "firebase";
   useEffect(() => {
     logPageAccess("Orders", { component: "app/orders/page.tsx", source: ordersSourceSelection.source, sourceReason: ordersSourceSelection.reason });
-    if (ordersSourceSelection.source === "mock" && !ordersSourceSelection.hasFirebaseConfig) console.warn("Firebase is not configured; app is running in mock mode and data will not persist.");
-  }, [ordersSourceSelection]);
+}, [ordersSourceSelection]);
 
   const { orders, upsertOrder, deleteOrder, pushToast } = useStore();
   const { data: paymentAgents, recalculateFromOrders, applyOrderSettlement, reverseOrderSettlement, upsertPaymentAgent, reload: reloadPaymentAgents } = usePaymentAgents();
@@ -173,21 +174,8 @@ export default function OrdersPage() {
     return Array.from(new Set([...fromCustomerRows, ...fromOrders])).slice(0, 20);
   }, [customers, activeOrders]);
   const selectedPaymentAgentId = draft.paymentAgentId || draft.paymentBy;
-  const selectedPaymentAgent = paymentAgents.find((p) => p.id === selectedPaymentAgentId || p.name === selectedPaymentAgentId || p.agentCode === selectedPaymentAgentId) ?? null;
+  const selectedPaymentAgent = paymentAgents.find((p) => p.id === selectedPaymentAgentId || normalizePaymentAgentValue(p.name) === normalizePaymentAgentValue(selectedPaymentAgentId) || p.agentCode === selectedPaymentAgentId) ?? null;
   const settlement = useMemo(() => calculatePaymentAgentSettlement({ orderTotal: total, existingCredit: selectedPaymentAgent?.creditBalance ?? 0, paidNow: draft.paidToPaymentAgentNow ?? 0 }), [total, selectedPaymentAgent, draft.paidToPaymentAgentNow]);
-  useEffect(() => {
-    if (draft.status !== "draft") return;
-    console.log("[PAYMENT_CREDIT_TRACE] draft_preview_recomputed", {
-      orderId: draft.id,
-      paymentAgentId: selectedPaymentAgentId || null,
-      status: draft.status,
-      loadingDate: draft.loadingDate,
-    });
-    console.log("[PAYMENT_CREDIT_TRACE] committed_credit_balance_result", {
-      agentId: selectedPaymentAgentId || null,
-      creditBalance: selectedPaymentAgent?.creditBalance ?? 0,
-    });
-  }, [draft.id, draft.status, draft.loadingDate, selectedPaymentAgentId, selectedPaymentAgent?.creditBalance, settlement.creditUsed, settlement.remainingPayable]);
   const validation = useMemo(() => validateOrderForSave(draft), [draft]);
   const headerPaymentSuggestions = useMemo(() => {
     const q = headerPaymentQuery.trim().toLowerCase();
@@ -206,15 +194,6 @@ export default function OrdersPage() {
     setHeaderPaymentQuery(selectedPaymentAgent ? paymentLabel(selectedPaymentAgent) : (draft.paymentBy || ""));
   }, [selectedPaymentAgent, draft.paymentBy, headerPaymentOpen]);
 
-  useEffect(() => {
-    console.log("[PAYMENT_AGENT_FLOW_TRACE] orders_page_agents_loaded", {
-      businessId: ordersSourceSelection.businessId,
-      source: ordersDataSource,
-      count: paymentAgents.length,
-      sample: paymentAgents.slice(0, 3).map((agent) => agent.name),
-    });
-  }, [ordersSourceSelection.businessId, ordersDataSource, paymentAgents]);
-
 
   const onUploadingChange = (isUploading: boolean) => setActiveUploads((p) => Math.max(0, p + (isUploading ? 1 : -1)));
 
@@ -229,13 +208,9 @@ export default function OrdersPage() {
 
   const resolveOrCreatePaymentAgentByName = async (rawName: string) => {
     const cleanName = rawName.trim();
-    console.log("[PAYMENT_AGENT_AUTOCREATE_TRACE] resolve_start", { input: rawName, cleanName });
-    console.log("[PAYMENT_AGENT_FLOW_TRACE] resolve_start", { input: rawName, cleanName });
     if (!cleanName) return null;
-    const existing = paymentAgents.find((agent) => agent.name.trim().toLowerCase() === cleanName.toLowerCase());
+    const existing = paymentAgents.find((agent) => normalizePaymentAgentValue(agent.name) === normalizePaymentAgentValue(cleanName));
     if (existing) {
-      console.log("[PAYMENT_AGENT_AUTOCREATE_TRACE] existing_agent_found", { agentId: existing.id, agentName: existing.name });
-      console.log("[PAYMENT_AGENT_FLOW_TRACE] existing_agent_found", { agentId: existing.id, agentName: existing.name });
       return existing;
     }
     const now = new Date().toISOString();
@@ -253,20 +228,11 @@ export default function OrdersPage() {
       createdAt: now,
       updatedAt: now,
     };
-    console.log("[PAYMENT_AGENT_AUTOCREATE_TRACE] missing_agent_create_start", { agentName: cleanName, source: ordersDataSource });
-    console.log("[PAYMENT_AGENT_FLOW_TRACE] missing_agent_create_start", { agentName: cleanName, source: ordersDataSource });
     try {
       await upsertPaymentAgent(created);
-      console.log("[PAYMENT_AGENT_AUTOCREATE_TRACE] missing_agent_create_success", { agentId: created.id, agentName: created.name });
-      console.log("[PAYMENT_AGENT_FLOW_TRACE] missing_agent_create_success", { agentId: created.id, agentName: created.name });
       await reloadPaymentAgents();
-      console.log("[PAYMENT_AGENT_AUTOCREATE_TRACE] reload_success", { scope: "payment_agents_after_create" });
-      console.log("[PAYMENT_AGENT_FLOW_TRACE] reload_after_create_success", { scope: "payment_agents_after_create" });
       return created;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error("[PAYMENT_AGENT_AUTOCREATE_TRACE] missing_agent_create_failed", { agentName: cleanName, errorMessage: message });
-      console.error("[PAYMENT_AGENT_FLOW_TRACE] missing_agent_create_failed", { agentName: cleanName, errorMessage: message });
       throw error;
     }
   };
@@ -294,11 +260,6 @@ export default function OrdersPage() {
   };
   const resolveStatusOptions = (order: Order, rowValue: RowEditState) => {
     const options = rowValue.loadingDate ? STATUS_OPTIONS_WITH_DATE : STATUS_OPTIONS_NO_DATE;
-    console.log("[ORDER_DATE_STATUS_TRACE] status_options_resolved", {
-      orderId: order.id,
-      loadingDate: rowValue.loadingDate,
-      options: options.map((x) => x.value),
-    });
     return options;
   };
 
@@ -309,33 +270,17 @@ export default function OrdersPage() {
       if (trace === "date_selected") {
         if (next.loadingDate) {
           next.status = "packed";
-          console.log("[ORDER_DATE_STATUS_TRACE] date_selected_auto_status_loaded", { orderId: order.id, loadingDate: next.loadingDate, status: next.status });
         } else {
           next.status = "saved";
-          console.log("[ORDER_DATE_STATUS_TRACE] date_cleared_auto_status_saved", { orderId: order.id, loadingDate: next.loadingDate, status: next.status });
         }
       }
       if (trace === "status_selected" && !next.loadingDate && next.status !== "saved") {
-        console.log("[ORDER_DATE_STATUS_TRACE] status_change_blocked_no_loading_date", { orderId: order.id, attemptedStatus: next.status, fallbackStatus: "saved" });
         next.status = "saved";
       }
       if (trace === "status_selected" && next.loadingDate && next.status === "saved") {
         next.status = "packed";
       }
       const dirty = next.loadingDate !== order.loadingDate || next.status !== order.status;
-      if (trace === "date_selected") {
-        console.log("[ORDER_DATE_STATUS_TRACE] parent_date_change_received", { orderId: order.id, previousValue: order.loadingDate, nextValue: next.loadingDate });
-      } else {
-        console.log("[ORDER_DATE_STATUS_TRACE] parent_status_change_received", { orderId: order.id, previousStatus: order.status, nextStatus: next.status });
-      }
-      console.log("[ORDER_DATE_STATUS_TRACE] row_dirty_check", {
-        orderId: order.id,
-        savedLoadingDate: order.loadingDate,
-        draftLoadingDate: next.loadingDate,
-        savedStatus: order.status,
-        draftStatus: next.status,
-        isDirty: dirty,
-      });
       if (!dirty && !current.saving) {
         const copy = { ...prev };
         delete copy[order.id];
@@ -353,22 +298,12 @@ export default function OrdersPage() {
     if (!ensureFirebaseOrderWriteReady()) return;
     const updated = { ...order, loadingDate: pending.loadingDate, status: pending.status, updatedAt: new Date().toISOString() };
     setRowEdits((prev) => ({ ...prev, [order.id]: { ...pending, saving: true } }));
-    console.log("[ORDER_DATE_STATUS_TRACE] save_payload", { orderId: order.id, payload: { loadingDate: updated.loadingDate, status: updated.status } });
-    console.log("[ORDER_DATE_STATUS_TRACE] save_clicked", { orderId: order.id, payload: { loadingDate: updated.loadingDate, status: updated.status } });
-    console.log("[ORDER_DATE_STATUS_TRACE] service_update_start", {
-      orderId: order.id,
-      path: ordersSourceSelection.businessId ? `businesses/${ordersSourceSelection.businessId}/orders/${order.id}` : null,
-      payload: { loadingDate: updated.loadingDate, status: updated.status },
-      source: ordersDataSource,
-    });
-    try {
+try {
       if (isFirebaseOrdersMode) {
         await upsertFirebaseOrder(updated);
         if (isOrderEligibleForCreditSettlement(updated)) await applyOrderSettlement(updated);
         else await reverseOrderSettlement(updated);
         await reloadFirebaseOrders();
-        const reloaded = (firebaseOrders.find((item) => item.id === order.id) ?? updated);
-        console.log("[ORDER_DATE_STATUS_TRACE] orders_reloaded_after_save", { orderId: order.id, loadedLoadingDate: reloaded.loadingDate, loadedStatus: reloaded.status });
       } else {
         upsertOrder(updated);
         await recalculateFromOrders(orders.filter((x) => x.id !== updated.id).concat(updated));
@@ -378,33 +313,17 @@ export default function OrdersPage() {
         delete copy[order.id];
         return copy;
       });
-      console.log("[ORDER_DATE_STATUS_TRACE] firebase_update_success", { orderId: order.id });
-      console.log("[ORDER_DATE_STATUS_TRACE] save_success_ui_update", { orderId: order.id, updatedLoadingDate: updated.loadingDate, updatedStatus: updated.status });
       pushToast({ tone: "success", text: "Order row updated." });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setRowEdits((prev) => ({ ...prev, [order.id]: { ...pending, saving: false } }));
-      console.error("[ORDER_DATE_STATUS_TRACE] firebase_update_failed", { orderId: order.id, errorCode: undefined, errorMessage: message });
       logError("order_row_update_failure", { orderId: order.id, error: message, attemptedLoadingDate: updated.loadingDate, attemptedStatus: updated.status });
       pushToast({ tone: "danger", text: "Failed to save row changes." });
     }
   };
 
   const onSave = async (status: Order["status"], forceDraft = false) => {
-    console.log("[PAYMENT_AGENT_AUTOCREATE_TRACE] save_started", {
-      orderId: draft.id,
-      status,
-      paymentBy: draft.paymentBy,
-      paymentAgentId: draft.paymentAgentId,
-    });
-    console.log("[PAYMENT_AGENT_FLOW_TRACE] save_started", { orderId: draft.id, status });
-    console.log("[PAYMENT_AGENT_FLOW_TRACE] typed_agent_value", {
-      orderId: draft.id,
-      paymentBy: draft.paymentBy,
-      paymentAgentId: draft.paymentAgentId,
-    });
     logDataFlow("Orders", JSON.stringify({ event: status === "draft" ? "draft_save_started" : "order_save_started", status, lineCount: draft.lines.length, displayedOrderNumber: draft.number || draft.orderNumber }, null, 2));
-    console.log("[ORDER_SAVE_TRACE] save_source", JSON.stringify({ component: "app/orders/page.tsx", saveSource: ordersDataSource, reason: ordersSourceSelection.reason, status, hasFirebaseConfig: ordersSourceSelection.hasFirebaseConfig, hasBusinessId: ordersSourceSelection.hasBusinessId, businessId: ordersSourceSelection.businessId, orderId: draft.id, ordersWritePath: ordersSourceSelection.businessId ? `businesses/${ordersSourceSelection.businessId}/orders` : null, customersSyncPath: ordersSourceSelection.businessId ? `businesses/${ordersSourceSelection.businessId}/customers` : null }, null, 2));
     if (!ensureFirebaseOrderWriteReady()) return;
     if (activeUploads > 0) return pushToast({ tone: "info", text: "Please wait for image uploads to finish before saving." });
     if ((draft.paidToPaymentAgentNow ?? 0) < 0) return pushToast({ tone: "danger", text: "Paid Now cannot be negative." });
@@ -415,7 +334,7 @@ export default function OrdersPage() {
         setShowDraftIncompleteConfirm(true);
         return;
       }
-      let resolvedDraftAgent = paymentAgents.find((agent) => agent.id === (draft.paymentAgentId || draft.paymentBy)) ?? null;
+      let resolvedDraftAgent = paymentAgents.find((agent) => agent.id === (draft.paymentAgentId || draft.paymentBy) || normalizePaymentAgentValue(agent.name) === normalizePaymentAgentValue(draft.paymentBy)) ?? null;
       if (!resolvedDraftAgent && draft.paymentBy.trim()) {
         try {
           resolvedDraftAgent = await resolveOrCreatePaymentAgentByName(draft.paymentBy);
@@ -434,25 +353,15 @@ export default function OrdersPage() {
         paymentBy: resolvedDraftAgent?.id || draft.paymentBy || "",
         paymentAgentSnapshot: resolvedDraftAgent ? { id: resolvedDraftAgent.id, name: resolvedDraftAgent.name, code: resolvedDraftAgent.agentCode } : draft.paymentAgentSnapshot,
       };
-      console.log("[PAYMENT_AGENT_AUTOCREATE_TRACE] order_payload_agent_attached", {
-        orderId: draftOrder.id,
-        paymentAgentId: draftOrder.paymentAgentId,
-        paymentBy: draftOrder.paymentBy,
-        paymentAgentSnapshot: draftOrder.paymentAgentSnapshot,
-      });
       try {
-        console.log("[PAYMENT_AGENT_FLOW_TRACE] order_save_start", { orderId: draftOrder.id, status: draftOrder.status });
         if (isFirebaseOrdersMode) {
           await upsertFirebaseOrder({ ...draftOrder, draftAutosavedAt: new Date().toISOString() } as any);
           await reloadFirebaseOrders();
         } else {
           upsertOrder(draftOrder);
         }
-        console.log("[PAYMENT_AGENT_FLOW_TRACE] order_save_success", { orderId: draftOrder.id, status: draftOrder.status });
       } catch (e) {
         const message = e instanceof Error ? e.message : "Draft save failed.";
-        console.error("[PAYMENT_AGENT_FLOW_TRACE] order_save_failed", { orderId: draftOrder.id, status: draftOrder.status, errorMessage: message });
-        console.log("[ORDER_SAVE_TRACE] firebase_write_failed", JSON.stringify({ orderId: draftOrder.id, status: draftOrder.status, source: ordersDataSource, error: message }, null, 2));
         pushToast({ tone: "danger", text: message });
         return;
       }
@@ -479,7 +388,6 @@ export default function OrdersPage() {
       return;
     }
 
-
     const now = new Date().toISOString();
     logOrder("save_order_lines_before_resolution", { lines: draft.lines.map((l) => ({ lineId: l.id, customerId: l.customerId, customerName: l.customerName, lineTotal: (l.totalCtns||0)*(l.pcsPerCtn||0)*(l.rmbPerPcs||0) })) });
     let resolvedLines = draft.lines;
@@ -503,7 +411,7 @@ export default function OrdersPage() {
       setValidationWarning({ visible: true, items: [`Order Number ${requestedOrderNumber} already exists.`] });
       return;
     }
-    let resolvedAgent = paymentAgents.find((agent) => agent.id === (draft.paymentAgentId || draft.paymentBy)) ?? null;
+    let resolvedAgent = paymentAgents.find((agent) => agent.id === (draft.paymentAgentId || draft.paymentBy) || normalizePaymentAgentValue(agent.name) === normalizePaymentAgentValue(draft.paymentBy)) ?? null;
     if (!resolvedAgent && draft.paymentBy.trim()) {
       try {
         resolvedAgent = await resolveOrCreatePaymentAgentByName(draft.paymentBy);
@@ -536,27 +444,16 @@ export default function OrdersPage() {
         createdAt: draft.paymentAgentSettlementSnapshot?.createdAt || now,
       },
     };
-    console.log("[PAYMENT_AGENT_AUTOCREATE_TRACE] order_payload_agent_attached", {
-      orderId: savedOrder.id,
-      paymentAgentId: savedOrder.paymentAgentId,
-      paymentBy: savedOrder.paymentBy,
-      paymentAgentSnapshot: savedOrder.paymentAgentSnapshot,
-    });
     try {
-      console.log("[PAYMENT_AGENT_FLOW_TRACE] order_save_start", { orderId: savedOrder.id, status: savedOrder.status });
       if (isFirebaseOrdersMode) {
         await upsertFirebaseOrder(savedOrder as any);
         await reloadFirebaseOrders();
-        console.log("[PAYMENT_AGENT_AUTOCREATE_TRACE] reload_success", { scope: "orders_after_save" });
       } else {
         upsertOrder(savedOrder);
       }
-      console.log("[PAYMENT_AGENT_FLOW_TRACE] order_save_success", { orderId: savedOrder.id, status: savedOrder.status });
-      console.log("[PAYMENT_AGENT_AUTOCREATE_TRACE] order_save_success", { orderId: savedOrder.id, paymentAgentId: savedOrder.paymentAgentId });
       logDB("upsert_order_success", { orderId: savedOrder.id, status: savedOrder.status });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      console.error("[PAYMENT_AGENT_FLOW_TRACE] order_save_failed", { orderId: savedOrder.id, status: savedOrder.status, errorMessage: message });
       logError("upsert_order_failure", { orderId: savedOrder.id, error: message });
       pushToast({ tone: "danger", text: message });
       return;
@@ -686,7 +583,8 @@ export default function OrdersPage() {
     if (isFirebaseOrdersMode) {
       const result: OrderSideEffectResult = { mode: "archive", orderSaved: false, productsSynced: false, productSyncFailures: [], paymentSettlementApplied: false, paymentSettlementReversed: false, customerReceivablesApplied: false, customerReceivablesReversed: false, generatedProductsArchived: false, blocked: false, warnings: [], errors: [] };
       logDataFlow("Orders", JSON.stringify({ event: "order_side_effects_started", orderId: o.id, orderNumber: o.number || o.orderNumber, mode: "archive" }, null, 2));
-      try { await reverseOrderSettlement(o); console.log("[PAYMENT_CREDIT_TRACE] deleted_order_credit_released", { orderId: o.id, status: o.status }); result.paymentSettlementReversed = true; logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: o.id, mode: "archive", step: "reverse_payment_settlement", success: true }, null, 2)); }
+      try { await reverseOrderSettlement(o);
+result.paymentSettlementReversed = true; logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: o.id, mode: "archive", step: "reverse_payment_settlement", success: true }, null, 2)); }
       catch (e) { result.blocked = true; result.errors.push("Archive blocked because payment-agent reversal failed."); logError("order_side_effect_step_failed", { orderId: o.id, mode: "archive", step: "reverse_payment_settlement", error: e instanceof Error ? e.message : String(e) }); pushToast({ tone: "danger", text: "Archive blocked because payment-agent reversal failed." }); return; }
       try { await customerLedgerService.reverseOrderCustomerReceivables(o as any); result.customerReceivablesReversed = true; logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: o.id, mode: "archive", step: "reverse_customer_receivables", success: true }, null, 2)); }
       catch (e) { result.blocked = true; result.errors.push("Archive blocked because customer receivable reversal failed."); logError("order_side_effect_step_failed", { orderId: o.id, mode: "archive", step: "reverse_customer_receivables", error: e instanceof Error ? e.message : String(e) }); pushToast({ tone: "danger", text: "Archive blocked because customer receivable reversal failed." }); return; }
@@ -699,7 +597,7 @@ export default function OrdersPage() {
       return;
     }
     deleteOrder(o.id);
-    console.log("[PAYMENT_CREDIT_TRACE] deleted_order_credit_released", { orderId: o.id, status: o.status });
+await recalculateFromOrders(orders.filter((x) => x.id !== o.id && x.status === "saved"));
     await recalculateFromOrders(orders.filter((x) => x.id !== o.id && x.status === "saved"));
     await archiveProductsForOrder(o);
     pushToast({ tone: "success", text: `Order ${o.number || o.orderNumber} deleted and related generated products archived.` });
@@ -807,19 +705,7 @@ export default function OrdersPage() {
                   const canEditOperationalFields = o.status !== "draft" && o.status !== "archived";
                   const rowValue = getRowValue(o);
                   const rowDirty = rowValue.loadingDate !== o.loadingDate || rowValue.status !== o.status;
-                  console.log("[ORDER_DATE_STATUS_TRACE] row_dirty_check", {
-                    orderId: o.id,
-                    savedLoadingDate: o.loadingDate,
-                    draftLoadingDate: rowValue.loadingDate,
-                    savedStatus: o.status,
-                    draftStatus: rowValue.status,
-                    isDirty: rowDirty,
-                  });
-                  console.log("[ORDER_DATE_STATUS_TRACE] save_button_decision", {
-                    orderId: o.id,
-                    isDirty: rowDirty,
-                    showSaveButton: canEditOperationalFields && rowDirty,
-                  });
+
                   return <tr key={o.id} className="border-t border-border/80 hover:bg-bg-subtle/40 align-middle h-[68px]">
                     <td className="px-4 py-3"><div className="text-[20px] font-semibold">{o.number || o.orderNumber || "Draft"}</div><div className="text-[12px] text-fg-subtle truncate max-w-[170px]">{fmtDateTime(o)}</div></td>
                     <td>
@@ -872,7 +758,8 @@ export default function OrdersPage() {
               <Button size="sm" variant="secondary" onClick={onCancel}>✕</Button>
             </div>
             <div className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-[minmax(220px,0.8fr)_minmax(145px,0.55fr)_minmax(160px,0.55fr)_minmax(220px,0.8fr)]">
-              <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Payment By</span><div className="relative"><Input value={headerPaymentQuery} onFocus={() => setHeaderPaymentOpen(true)} onBlur={() => window.setTimeout(() => setHeaderPaymentOpen(false),120)} onChange={(e)=>{const next=e.target.value; console.log("[PAYMENT_AGENT_AUTOCREATE_TRACE] input_changed", { source: "orders_modal_header", value: next }); setHeaderPaymentQuery(next); setHeaderPaymentOpen(true); setDraft((d)=>({...d,paymentBy:next,paymentAgentId:""}));}} placeholder="Search payment agent" />{headerPaymentOpen && headerPaymentSuggestions.length>0 ? <div className="absolute z-30 mt-1 max-h-44 w-full overflow-auto rounded-lg border border-border bg-bg-card shadow-card">{headerPaymentSuggestions.map((p)=><button key={p.id} type="button" className="block w-full px-2 py-1.5 text-left text-[12px] hover:bg-bg-subtle" onMouseDown={(e)=>{e.preventDefault(); setHeaderPaymentOpen(false); const label=paymentLabel(p); setHeaderPaymentQuery(label); setDraft((d)=>({...d,paymentBy:p.id,paymentAgentId:p.id}));}}>{paymentLabel(p)}</button>)}</div>:null}</div></label>
+              <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Payment By</span><div className="relative"><Input value={headerPaymentQuery} onFocus={() => setHeaderPaymentOpen(true)} onBlur={() => window.setTimeout(() => setHeaderPaymentOpen(false),120)} onChange={(e)=>{const next=e.target.value;
+setHeaderPaymentQuery(next); setHeaderPaymentOpen(true); setDraft((d)=>({...d,paymentBy:next,paymentAgentId:""}));}} placeholder="Search payment agent" />{headerPaymentOpen && headerPaymentSuggestions.length>0 ? <div className="absolute z-30 mt-1 max-h-44 w-full overflow-auto rounded-lg border border-border bg-bg-card shadow-card">{headerPaymentSuggestions.map((p)=><button key={p.id} type="button" className="block w-full px-2 py-1.5 text-left text-[12px] hover:bg-bg-subtle" onMouseDown={(e)=>{e.preventDefault(); setHeaderPaymentOpen(false); const label=paymentLabel(p); setHeaderPaymentQuery(label); setDraft((d)=>({...d,paymentBy:p.id,paymentAgentId:p.id}));}}>{paymentLabel(p)}</button>)}</div>:null}</div></label>
               <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Date</span><Input type="date" value={draft.date} onChange={(e)=>setDraft((d)=>({...d,date:e.target.value}))} /></label>
               <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Order Number</span><Input value={draft.number} onChange={(e)=>setDraft((d)=>({...d,number:e.target.value,orderNumber:e.target.value}))} /></label>
               <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>WeChat ID</span><div className="relative"><Input value={draft.wechatId} onFocus={() => setHeaderWechatOpen(true)} onBlur={() => window.setTimeout(() => setHeaderWechatOpen(false), 120)} onChange={(e)=>{const next=e.target.value; setHeaderWechatOpen(true); setDraft((d)=>({...d,wechatId:next}));}} />{headerWechatOpen && headerWechatSuggestions.length>0 ? <div className="absolute z-30 mt-1 max-h-44 w-full overflow-auto rounded-lg border border-border bg-bg-card shadow-card">{headerWechatSuggestions.map((w)=><button key={w} type="button" className="block w-full px-2 py-1.5 text-left text-[12px] hover:bg-bg-subtle" onMouseDown={(e)=>{e.preventDefault(); setHeaderWechatOpen(false); setDraft((d)=>({...d,wechatId:w}));}}>{w}</button>)}</div> : null}</div></label>
@@ -898,4 +785,5 @@ export default function OrdersPage() {
     </div>
   );
 }
+
 

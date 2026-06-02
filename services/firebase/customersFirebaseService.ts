@@ -30,18 +30,15 @@ export const customersFirebaseService: CustomersService = {
   },
   async upsertCustomer(customer) {
     const bizId = businessId();
-    console.log("[CUSTOMER_SYNC_TRACE] sync_start", JSON.stringify({ action: "upsert_customer", incomingId: customer.id, name: customer.name || customer.displayName, businessId: bizId, path: customersPath(bizId) }, null, 2));
-    logCustomer("upsert_customer_start", { incomingId: customer.id, name: customer.name || customer.displayName, path: customersPath(bizId) });
+logCustomer("upsert_customer_start", { incomingId: customer.id, name: customer.name || customer.displayName, path: customersPath(bizId) });
     const db = requireDb();
     const now = new Date().toISOString();
     const id = customer.id || makeId();
     const next: Customer = { ...customer, id, normalizedName: normalizeCustomerName(customer.name || customer.displayName || ""), createdAt: customer.createdAt || now, updatedAt: now };
     try {
       await setDoc(doc(db, customerPath(bizId, id)), next, { merge: true });
-      console.log("[CUSTOMER_SYNC_TRACE] sync_success", JSON.stringify({ action: "upsert_customer", customerId: id, businessId: bizId, path: customerPath(bizId, id) }, null, 2));
-    } catch (e) {
-      console.log("[CUSTOMER_SYNC_TRACE] sync_failed", JSON.stringify({ action: "upsert_customer", customerId: id, businessId: bizId, path: customerPath(bizId, id), error: e instanceof Error ? e.message : String(e) }, null, 2));
-      throw e;
+} catch (e) {
+throw e;
     }
     logDB("upsert_customer_success", { customerId: id, path: customerPath(bizId, id), normalizedName: next.normalizedName });
     return next;
@@ -79,27 +76,14 @@ export const customersFirebaseService: CustomersService = {
     return updated;
   },
   async deleteCustomer(id) {
-    console.log("[CUSTOMER_DELETE_TRACE] firebase_delete_start", JSON.stringify({
-      customerId: id,
-      path: customerPath(businessId(), id),
-    }, null, 2));
-    const existing = await this.getCustomerById(id);
+const existing = await this.getCustomerById(id);
     if (!existing) throw new Error("Customer not found.");
     const bizId = businessId();
     try {
       await deleteDoc(doc(requireDb(), customerPath(bizId, id)));
-      console.log("[CUSTOMER_DELETE_TRACE] firebase_delete_success", JSON.stringify({
-        customerId: id,
-        path: customerPath(bizId, id),
-      }, null, 2));
-    } catch (e: unknown) {
-      console.log("[CUSTOMER_DELETE_TRACE] firebase_delete_failed", JSON.stringify({
-        customerId: id,
-        path: customerPath(bizId, id),
-        error: e instanceof Error ? e.message : String(e),
-        errorCode: typeof e === "object" && e !== null && "code" in e ? (e as { code?: unknown }).code : undefined,
-      }, null, 2));
-      throw e;
+} catch (e: unknown) {
+throw e;
     }
   },
 };
+

@@ -38,9 +38,10 @@ export const selectDataSource = (explicitSource: string | undefined): DataSource
 
 export const ordersDataSourceSelection = () => selectDataSource(process.env.NEXT_PUBLIC_ORDERS_DATA_SOURCE);
 export const customersDataSourceSelection = () => selectDataSource(process.env.NEXT_PUBLIC_CUSTOMERS_DATA_SOURCE ?? process.env.NEXT_PUBLIC_ORDERS_DATA_SOURCE);
+export const paymentAgentsDataSourceSelection = () => selectDataSource(process.env.NEXT_PUBLIC_PAYMENT_AGENTS_DATA_SOURCE ?? process.env.NEXT_PUBLIC_ORDERS_DATA_SOURCE);
 
 export const productsDataSource = (): "mock" | "firebase" => (process.env.NEXT_PUBLIC_PRODUCTS_DATA_SOURCE === "firebase" ? "firebase" : "mock");
-export const paymentAgentsDataSource = (): "mock" | "firebase" => (process.env.NEXT_PUBLIC_PAYMENT_AGENTS_DATA_SOURCE === "firebase" ? "firebase" : "mock");
+export const paymentAgentsDataSource = (): "mock" | "firebase" => paymentAgentsDataSourceSelection().source;
 export const ordersDataSource = (): "mock" | "firebase" => ordersDataSourceSelection().source;
 export const isDemoDataEnabled = (): boolean => process.env.NEXT_PUBLIC_USE_DEMO_DATA === "true";
 export const devSeedEnabled = (): boolean => process.env.NEXT_PUBLIC_ENABLE_DEV_SEED === "true";

@@ -10,12 +10,9 @@ export function getCustomersService(): CustomersService {
   const selection = customersDataSourceSelection();
   if (cachedCustomersService && cachedCustomersSource === selection.source) return cachedCustomersService;
 
-  console.log("[DATA_SOURCE_TRACE] selected_source", JSON.stringify({ service: "customers", selectedSource: selection.source, reason: selection.reason, explicitSource: selection.explicitSource, explicitMockEnabled: selection.explicitMockEnabled }, null, 2));
-  console.log("[DATA_SOURCE_TRACE] firebase_config_check", JSON.stringify({ service: "customers", hasFirebaseConfig: selection.hasFirebaseConfig, missingFirebaseKeys: selection.missingFirebaseKeys, hasBusinessId: selection.hasBusinessId, businessId: selection.businessId }, null, 2));
-
-  if (selection.source !== "firebase") {
-    if (!selection.hasFirebaseConfig) console.warn("Firebase is not configured; app is running in mock mode and data will not persist.");
-    cachedCustomersService = customersMockService;
+if (selection.source !== "firebase") {
+    if (!selection.hasFirebaseConfig)
+cachedCustomersService = customersMockService;
     cachedCustomersSource = selection.source;
     return cachedCustomersService;
   }
@@ -31,3 +28,4 @@ export function getCustomersService(): CustomersService {
 
   return cachedCustomersService;
 }
+

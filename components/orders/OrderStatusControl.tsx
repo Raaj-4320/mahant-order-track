@@ -41,11 +41,7 @@ export function OrderStatusControl({ value, onChange, disabled = false, debugOrd
   const resolvedOptions = options && options.length ? options : STATUS_OPTIONS;
   const selected = resolvedOptions.find((s) => s.value === value) ?? STATUS_OPTIONS.find((s) => s.value === value);
   const handleSelectStatus = (status: Order["status"]) => {
-    console.log("[ORDER_DATE_STATUS_TRACE] status_selected_in_control", {
-      orderId: debugOrderId,
-      selectedStatus: status,
-    });
-    onChange(status);
+onChange(status);
     setOpen(false);
   };
 
@@ -72,11 +68,7 @@ export function OrderStatusControl({ value, onChange, disabled = false, debugOrd
         onClick={() => setOpen((v) => {
           const nextOpen = !v;
           if (nextOpen) {
-            console.log("[ORDER_DATE_STATUS_TRACE] status_dropdown_open", {
-              orderId: debugOrderId,
-              currentStatus: value,
-            });
-          }
+}
           return nextOpen;
         })}
         className={cn(
@@ -112,3 +104,4 @@ export function OrderStatusControl({ value, onChange, disabled = false, debugOrd
     </div>
   );
 }
+

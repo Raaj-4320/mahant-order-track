@@ -20,8 +20,7 @@ export function applyTypedCustomerToLine(line: OrderLine, typedName: string, cus
 
 export async function resolveCustomersForOrderLines(lines: OrderLine[], customers: Customer[], nowIso: string): Promise<OrderLine[]> {
   const selection = customersDataSourceSelection();
-  console.log("[CUSTOMER_SYNC_TRACE] sync_start", JSON.stringify({ action: "resolve_order_line_customers", source: selection.source, reason: selection.reason, lineCount: lines.length, knownCustomers: customers.length, path: selection.businessId ? `businesses/${selection.businessId}/customers` : null, hasFirebaseConfig: selection.hasFirebaseConfig, hasBusinessId: selection.hasBusinessId }, null, 2));
-  logCustomer("resolve_order_customers_start", { lineCount: lines.length, knownCustomers: customers.length });
+logCustomer("resolve_order_customers_start", { lineCount: lines.length, knownCustomers: customers.length });
   const customersService = getCustomersService();
   const existing = new Map<string, Customer>();
   [...customers]
@@ -68,8 +67,7 @@ export async function resolveCustomersForOrderLines(lines: OrderLine[], customer
         updatedAt: nowIso,
       } as Customer);
     } catch (e) {
-      console.log("[CUSTOMER_SYNC_TRACE] sync_failed", JSON.stringify({ action: "resolve_order_line_customers", source: selection.source, lineId: line.id, typed, normalized, path: selection.businessId ? `businesses/${selection.businessId}/customers` : null, error: e instanceof Error ? e.message : String(e) }, null, 2));
-      throw e;
+throw e;
     }
     if (created) {
       logDB("upsert_customer_success", { lineId: line.id, customerId: created.id, normalized });
@@ -80,7 +78,7 @@ export async function resolveCustomersForOrderLines(lines: OrderLine[], customer
     logError("ensure_customer_create_failure", { lineId: line.id, typed, normalized });
     resolved.push(line);
   }
-  console.log("[CUSTOMER_SYNC_TRACE] sync_success", JSON.stringify({ action: "resolve_order_line_customers", source: selection.source, resolvedCount: resolved.length, path: selection.businessId ? `businesses/${selection.businessId}/customers` : null }, null, 2));
-  logCustomer("resolve_order_customers_success", { resolvedCount: resolved.length });
+logCustomer("resolve_order_customers_success", { resolvedCount: resolved.length });
   return resolved;
 }
+

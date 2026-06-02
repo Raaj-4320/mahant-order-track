@@ -111,12 +111,7 @@ export default function DashboardPage() {
   };
   const resolveStatusOptions = (order: Order, rowValue: RowEditState) => {
     const options = rowValue.loadingDate ? STATUS_OPTIONS_WITH_DATE : STATUS_OPTIONS_NO_DATE;
-    console.log("[ORDER_DATE_STATUS_TRACE] status_options_resolved", {
-      orderId: order.id,
-      loadingDate: rowValue.loadingDate,
-      options: options.map((x) => x.value),
-    });
-    return options;
+return options;
   };
 
   const setRowEdit = (order: Order, patch: Partial<Pick<RowEditState, "loadingDate" | "status">>, trace: "date_selected" | "status_selected") => {
@@ -126,34 +121,21 @@ export default function DashboardPage() {
       if (trace === "date_selected") {
         if (next.loadingDate) {
           next.status = "packed";
-          console.log("[ORDER_DATE_STATUS_TRACE] date_selected_auto_status_loaded", { orderId: order.id, loadingDate: next.loadingDate, status: next.status });
-        } else {
+} else {
           next.status = "saved";
-          console.log("[ORDER_DATE_STATUS_TRACE] date_cleared_auto_status_saved", { orderId: order.id, loadingDate: next.loadingDate, status: next.status });
-        }
+}
       }
       if (trace === "status_selected" && !next.loadingDate && next.status !== "saved") {
-        console.log("[ORDER_DATE_STATUS_TRACE] status_change_blocked_no_loading_date", { orderId: order.id, attemptedStatus: next.status, fallbackStatus: "saved" });
-        next.status = "saved";
+next.status = "saved";
       }
       if (trace === "status_selected" && next.loadingDate && next.status === "saved") {
         next.status = "packed";
       }
       const dirty = next.loadingDate !== order.loadingDate || next.status !== order.status;
       if (trace === "date_selected") {
-        console.log("[ORDER_DATE_STATUS_TRACE] parent_date_change_received", { orderId: order.id, previousValue: order.loadingDate, nextValue: next.loadingDate });
-      } else {
-        console.log("[ORDER_DATE_STATUS_TRACE] parent_status_change_received", { orderId: order.id, previousStatus: order.status, nextStatus: next.status });
-      }
-      console.log("[ORDER_DATE_STATUS_TRACE] row_dirty_check", {
-        orderId: order.id,
-        savedLoadingDate: order.loadingDate,
-        draftLoadingDate: next.loadingDate,
-        savedStatus: order.status,
-        draftStatus: next.status,
-        isDirty: dirty,
-      });
-      if (!dirty && !current.saving) {
+} else {
+}
+if (!dirty && !current.saving) {
         const copy = { ...prev };
         delete copy[order.id];
         return copy;
@@ -169,18 +151,16 @@ export default function DashboardPage() {
     if (!dirty) return;
     const updated = { ...order, loadingDate: pending.loadingDate, status: pending.status, updatedAt: new Date().toISOString() };
     setRowEdits((prev) => ({ ...prev, [order.id]: { ...pending, saving: true } }));
-    console.log("[ORDER_DATE_STATUS_TRACE] save_payload", { orderId: order.id, payload: { loadingDate: updated.loadingDate, status: updated.status } });
-    console.log("[ORDER_DATE_STATUS_TRACE] save_clicked", { orderId: order.id, payload: { loadingDate: updated.loadingDate, status: updated.status } });
-    console.log("[ORDER_DATE_STATUS_TRACE] service_update_start", { orderId: order.id, path: businessId ? `businesses/${businessId}/orders/${order.id}` : null, payload: { loadingDate: updated.loadingDate, status: updated.status }, source: ordersSource });
-    try {
+
+
+try {
       if (isFirebaseOrdersMode) {
         await upsertRemoteOrder(updated);
         if (isOrderEligibleForCreditSettlement(updated)) await applyOrderSettlement(updated);
         else await reverseOrderSettlement(updated);
         await reloadRemoteOrders();
         const reloaded = (remoteOrders.find((item) => item.id === order.id) ?? updated);
-        console.log("[ORDER_DATE_STATUS_TRACE] orders_reloaded_after_save", { orderId: order.id, loadedLoadingDate: reloaded.loadingDate, loadedStatus: reloaded.status });
-      } else {
+} else {
         upsertOrder(updated);
         await recalculateFromOrders(orders.filter((x) => x.id !== updated.id).concat(updated));
       }
@@ -189,14 +169,12 @@ export default function DashboardPage() {
         delete copy[order.id];
         return copy;
       });
-      console.log("[ORDER_DATE_STATUS_TRACE] firebase_update_success", { orderId: order.id });
-      console.log("[ORDER_DATE_STATUS_TRACE] save_success_ui_update", { orderId: order.id, updatedLoadingDate: updated.loadingDate, updatedStatus: updated.status });
-      pushToast({ tone: "success", text: "Order row updated." });
+
+pushToast({ tone: "success", text: "Order row updated." });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setRowEdits((prev) => ({ ...prev, [order.id]: { ...pending, saving: false } }));
-      console.error("[ORDER_DATE_STATUS_TRACE] firebase_update_failed", { orderId: order.id, errorCode: undefined, errorMessage: message });
-      pushToast({ tone: "danger", text: "Failed to save row changes." });
+pushToast({ tone: "danger", text: "Failed to save row changes." });
     }
   };
 
@@ -235,20 +213,8 @@ export default function DashboardPage() {
                       if (!target) return null;
                       const rowValue = getRowValue(target);
                       const rowDirty = rowValue.loadingDate !== target.loadingDate || rowValue.status !== target.status;
-                      console.log("[ORDER_DATE_STATUS_TRACE] row_dirty_check", {
-                        orderId: target.id,
-                        savedLoadingDate: target.loadingDate,
-                        draftLoadingDate: rowValue.loadingDate,
-                        savedStatus: target.status,
-                        draftStatus: rowValue.status,
-                        isDirty: rowDirty,
-                      });
-                      console.log("[ORDER_DATE_STATUS_TRACE] save_button_decision", {
-                        orderId: target.id,
-                        isDirty: rowDirty,
-                        showSaveButton: rowDirty,
-                      });
-                      return (
+
+return (
                         <>
                     <td className="px-4 py-3"><div className="font-semibold">{r.orderNumber}</div><div className="text-[11.5px] text-fg-subtle truncate max-w-[240px]">{r.paidBy}</div></td>
                     <td><span className="rounded-full bg-bg-subtle px-2 py-1 text-[11.5px]">{r.totalUniqueItems} {r.totalUniqueItems === 1 ? "Item" : "Items"}</span></td>
@@ -324,3 +290,4 @@ export default function DashboardPage() {
     </PageShell>
   );
 }
+

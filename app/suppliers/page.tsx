@@ -26,33 +26,15 @@ export default function SuppliersPage() {
   const sourceOrders = useMemo(() => {
     const base = isFirebaseOrdersMode ? remoteOrders : orders;
     const eligible = base.filter(isSupplierSourceOrder);
-    console.log("[SUPPLIERS_TRACE] orders_loaded", {
-      totalOrders: base.length,
-      savedOrders: base.filter((o) => o.status === "saved").length,
-      archivedOrders: base.filter((o) => o.status === "archived").length,
-      draftOrders: base.filter((o) => o.status === "draft").length,
-      sample: base.slice(0, 5).map((o) => ({ id: o.id, orderNumber: o.number || o.orderNumber, status: o.status, wechatId: o.wechatId, lineCount: o.lines.length })),
-    });
-    console.log("[SUPPLIERS_TRACE] saved_orders_for_suppliers", {
-      count: eligible.length,
-      sampleOrders: eligible.slice(0, 5).map((o) => ({
-        id: o.id,
-        orderNumber: o.number || o.orderNumber,
-        wechatId: o.wechatId,
-        status: o.status,
-        lines: o.lines.slice(0, 3).map((l) => ({ supplierName: l.supplierName, supplierId: l.supplierId, details: l.details, ctns: l.totalCtns, amount: (Number(l.totalCtns) || 0) * (Number(l.pcsPerCtn) || 0) * (Number(l.rmbPerPcs) || 0) })),
-      })),
-    });
-    return eligible;
+
+return eligible;
   }, [isFirebaseOrdersMode, remoteOrders, orders]);
   const wechatGroups = useMemo(() => getWechatSupplierGroups(sourceOrders), [sourceOrders]);
   const uniqueGroups = useMemo(() => getUniqueSupplierGroups(sourceOrders), [sourceOrders]);
   useEffect(() => {
-    console.log("[SUPPLIERS_TRACE] wechat_groups_built", { groupCount: wechatGroups.length, sampleGroups: wechatGroups.slice(0, 3).map((g) => ({ wechatId: g.wechatId, totalOrders: g.totalOrders, totalLineCount: g.totalLineCount })) });
-  }, [wechatGroups]);
+}, [wechatGroups]);
   useEffect(() => {
-    console.log("[SUPPLIERS_TRACE] unique_supplier_groups_built", { groupCount: uniqueGroups.length, sampleGroups: uniqueGroups.slice(0, 3).map((g) => ({ supplierName: g.supplierName, totalOrders: g.totalOrders, totalLineCount: g.totalLineCount })) });
-  }, [uniqueGroups]);
+}, [uniqueGroups]);
   const filteredWechat = wechatGroups.filter((g) => [g.wechatId, ...g.orders.map((o: any) => o.orderNumber), ...g.orders.flatMap((o: any) => o.lines.map((l: any) => l.supplierName))].join(" ").toLowerCase().includes(query.toLowerCase().trim()));
   const filteredUnique = uniqueGroups.filter((g) => [g.supplierName, ...g.entries.map((e: any) => `${e.wechatId} ${e.orderNumber}`)].join(" ").toLowerCase().includes(query.toLowerCase().trim()));
   const explainDerivedDelete = (relatedCount: number, sampleOrderNumbers: string[]) => {
@@ -80,3 +62,4 @@ export default function SuppliersPage() {
     <div className="text-xs text-fg-subtle">Suppliers are derived from saved orders (WeChat header + line supplier names). To remove supplier activity, archive or edit the related saved orders.</div>
   </div></PageShell>;
 }
+
