@@ -83,7 +83,7 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
   return (
     <div className="flex flex-col gap-3 px-5 py-4">
       {showOrderInfo ? <section className="card p-3.5">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-[minmax(180px,0.7fr)_minmax(145px,0.55fr)_minmax(150px,0.55fr)_minmax(180px,0.7fr)]">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-[minmax(180px,0.7fr)_minmax(145px,0.55fr)_minmax(145px,0.55fr)_minmax(150px,0.55fr)_minmax(180px,0.7fr)]">
           <Field label="Payment By">
             <div className="relative">
               <Input
@@ -127,6 +127,16 @@ setPaymentQuery(next);
               value={draft.date}
               onChange={(e) =>
                 setDraft((d) => ({ ...d, date: e.target.value }))
+              }
+            />
+          </Field>
+
+          <Field label="Loading Date">
+            <Input
+              type="date"
+              value={draft.loadingDate || ""}
+              onChange={(e) =>
+                setDraft((d) => ({ ...d, loadingDate: e.target.value || undefined }))
               }
             />
           </Field>
