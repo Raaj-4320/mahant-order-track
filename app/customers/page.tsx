@@ -14,8 +14,9 @@ import { lineTotalPcs, lineTotalRmb, orderTotal, type Customer, type Order } fro
 import { useStore } from "@/lib/store";
 import { ordersDataSource } from "@/lib/runtimeConfig";
 import { joinLineDetails } from "@/lib/orderLineDetails";
-import { Download, Filter, Search } from "lucide-react";
+import { Download, Filter, Search, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
+import { orderLifecycleService } from "@/services/orderLifecycleService";
 
 type CustomerOrderLineRow = {
   orderId: string;
@@ -62,9 +63,9 @@ const sameCustomer = (line: Order["lines"][number], customer: Customer) => {
 };
 
 export default function CustomersPage() {
-  const { data: customers, isLoading, error } = useCustomers();
+  const { data: customers, isLoading, error, reload: reloadCustomers } = useCustomers();
   const { data: firebaseOrders } = useOrders();
-  const { orders: localOrders } = useStore();
+  const { orders: localOrders, pushToast } = useStore();
   const source = ordersDataSource();
   const orders = source === "firebase" ? firebaseOrders : localOrders;
 
@@ -176,7 +177,18 @@ const header = [
     a.click();
     URL.revokeObjectURL(url);
     setExportTick((x) => x + 1);
-};
+  };
+
+  const removeCustomer = async (customer: Customer) => {
+    if (!window.confirm(`Move ${customer.displayName || customer.name || customer.id} to Recycle Bin?`)) return;
+    try {
+      await orderLifecycleService.safeDeleteCustomer(customer.id, "customers-page");
+      await reloadCustomers();
+      pushToast({ tone: "success", text: "Customer moved to Recycle Bin." });
+    } catch (error) {
+      pushToast({ tone: "danger", text: error instanceof Error ? error.message : "Could not delete customer." });
+    }
+  };
 
   return (
     <PageShell title="Customers">
@@ -267,15 +279,11 @@ const header = [
                     <td className="font-semibold tabular-nums">{formatAmount(row.totalOrdersAmount)}</td>
                     <td className="px-4">
                       <div className="flex justify-end">
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => {
-
-setViewCustomerId(row.customer.id);
-                          }}
-                        >
+                        <Button size="sm" variant="secondary" onClick={() => { setViewCustomerId(row.customer.id); }}>
                           View
+                        </Button>
+                        <Button size="sm" variant="secondary" onClick={() => void removeCustomer(row.customer)}>
+                          <Trash2 size={13} />
                         </Button>
                       </div>
                     </td>

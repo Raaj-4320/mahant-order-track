@@ -16,13 +16,14 @@ import { TablePagination } from "@/components/table/TablePagination";
 import { formatAmount } from "@/lib/data";
 import { uploadImageUnsigned } from "@/lib/cloudinary/client";
 import type { Product } from "@/lib/types";
-import { Boxes, Download, Filter, Plus, Search } from "lucide-react";
+import { Boxes, Download, Filter, Plus, Search, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { logPageAccess, logDataFlow } from "@/lib/logger";
 import { ImageLightbox } from "@/components/ui/ImageLightbox";
 import { getOrderPaymentAgentDisplay } from "@/lib/orderDisplay";
 import { joinLineDetails } from "@/lib/orderLineDetails";
 import { ordersDataSource } from "@/lib/runtimeConfig";
+import { orderLifecycleService } from "@/services/orderLifecycleService";
 
 type ProductForm = Omit<Product, "createdAt" | "updatedAt"> & { createdAt?: string; updatedAt?: string };
 
@@ -50,7 +51,7 @@ export default function ProductsPage() {
     logPageAccess("Products", { component: "app/products/page.tsx", source: process.env.NEXT_PUBLIC_PRODUCTS_DATA_SOURCE ?? "mock" });
   }, []);
 
-  const { data: products, isLoading: isProductsLoading, error, upsertProduct } = useProducts();
+  const { data: products, isLoading: isProductsLoading, error, upsertProduct, reload: reloadProducts } = useProducts();
   const { data: paymentAgents } = usePaymentAgents();
   const { data: suppliers } = useSuppliers();
   const { data: customers } = useCustomers();
@@ -242,6 +243,17 @@ export default function ProductsPage() {
     }
   };
 
+  const removeProduct = async (product: Product) => {
+    if (!window.confirm(`Move ${product.name || product.productCode || product.id} to Recycle Bin?`)) return;
+    try {
+      await orderLifecycleService.safeDeleteProduct(product.id, "products-page");
+      await reloadProducts();
+      pushToast({ tone: "success", text: "Product moved to Recycle Bin." });
+    } catch (error) {
+      pushToast({ tone: "danger", text: error instanceof Error ? error.message : "Could not delete product." });
+    }
+  };
+
   return (
     <PageShell title="Products">
       <div className="space-y-4 p-6">
@@ -296,7 +308,7 @@ export default function ProductsPage() {
 
         <div className="card overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1600px] text-[13px]">
+            <table className="w-full min-w-[1680px] text-[13px]">
               <thead className="bg-bg-subtle">
                 <tr className="text-left text-[11.5px] uppercase tracking-wide text-fg-subtle">
                   <th className="px-4 py-2">Product Photo</th>
@@ -310,6 +322,7 @@ export default function ProductsPage() {
                   <th>Total Qty</th>
                   <th>Rate/Pcs</th>
                   <th className="px-4">Amount</th>
+                  <th className="px-4 text-right">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -339,11 +352,16 @@ export default function ProductsPage() {
                     <td className="tabular-nums">{row.totalQty.toLocaleString()}</td>
                     <td className="font-semibold tabular-nums text-[var(--success)]">{formatAmount(row.ratePerPcs)}</td>
                     <td className="px-4 font-semibold tabular-nums">{formatAmount(row.amount)}</td>
+                    <td className="px-4 py-3 text-right">
+                      <Button size="sm" variant="secondary" onClick={() => void removeProduct(row.product)}>
+                        <Trash2 size={13} />
+                      </Button>
+                    </td>
                   </tr>
                 ))}
                 {productTableRows.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="px-4 py-8 text-center text-fg-subtle">
+                    <td colSpan={12} className="px-4 py-8 text-center text-fg-subtle">
                       {status === "active" && active === 0 && inactive > 0 ? `No active products found. ${inactive} inactive products are hidden by the Active filter.` : "No products found."}
                     </td>
                   </tr>

@@ -19,5 +19,9 @@ export const paymentAgentLedgerPath = (businessId: string) => `${businessPath(bu
 export const paymentAgentLedgerEntryPath = (businessId: string, entryId: string) => `${paymentAgentLedgerPath(businessId)}/${entryId}`;
 export const customerLedgerPath = (businessId: string) => `${businessPath(businessId)}/customerLedger`;
 export const customerLedgerEntryPath = (businessId: string, entryId: string) => `${customerLedgerPath(businessId)}/${entryId}`;
+export const referenceRecordsPath = (businessId: string) => `${businessPath(businessId)}/referenceRecords`;
+export const referenceRecordPath = (businessId: string, recordId: string) => `${referenceRecordsPath(businessId)}/${recordId}`;
+export const recycleBinPath = (businessId: string) => `${businessPath(businessId)}/recycleBin`;
+export const recycleBinEntryPath = (businessId: string, entryId: string) => `${recycleBinPath(businessId)}/${entryId}`;
 
 export const orderNumberCounterPath = (businessId: string) => `${businessPath(businessId)}/counters/orderNumbers`;

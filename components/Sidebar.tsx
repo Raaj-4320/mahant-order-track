@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   LucideIcon,
   Package,
+  RotateCcw,
   Users,
   Wallet,
 } from "lucide-react";
@@ -24,6 +25,7 @@ const items: Item[] = [
   { label: "Customers", href: "/customers", icon: Users },
   { label: "Payment Agents", href: "/payment-agents", icon: Wallet },
   { label: "Products", href: "/products", icon: Package },
+  { label: "Recycle Bin", href: "/recycle-bin", icon: RotateCcw },
 ];
 
 export function Sidebar() {

@@ -19,6 +19,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { logPageAccess, logDataFlow, logUI } from "@/lib/logger";
 import type { PaymentAgent, PaymentAgentLedgerEntry } from "@/lib/types";
 import { ordersDataSource } from "@/lib/runtimeConfig";
+import { orderLifecycleService } from "@/services/orderLifecycleService";
 
 type LedgerViewRow = {
   id: string;
@@ -32,7 +33,7 @@ type LedgerViewRow = {
 };
 
 export default function PaymentAgentsPage() {
-  const { data: agents, isLoading: isPaymentAgentsLoading, upsertPaymentAgent, deletePaymentAgent, recordPaymentToAgent, listPaymentAgentLedger } = usePaymentAgents();
+  const { data: agents, isLoading: isPaymentAgentsLoading, upsertPaymentAgent, deletePaymentAgent, recordPaymentToAgent, listPaymentAgentLedger, reload: reloadPaymentAgents } = usePaymentAgents();
   const { orders, pushToast } = useStore();
   const { data: firebaseOrders } = useOrders();
   const ordersSource = ordersDataSource();
@@ -229,9 +230,16 @@ export default function PaymentAgentsPage() {
     if (deleteCtx.riskDetected) logUI("payment_agent_delete_force_confirmed", { agentId: deleteCtx.agentId });
     logUI("payment_agent_delete_started", { agentId: deleteCtx.agentId, status: deleteCtx.status });
     try {
-      await deletePaymentAgent(deleteCtx.agentId);
+      const agent = agents.find((row) => row.id === deleteCtx.agentId) || null;
+      if (agent?.lifecycle?.createdByOrder) {
+        await orderLifecycleService.safeDeletePaymentAgent(deleteCtx.agentId, "payment-agents-page");
+        pushToast({ tone: "success", text: "Payment agent moved to Recycle Bin." });
+      } else {
+        await deletePaymentAgent(deleteCtx.agentId);
+        pushToast({ tone: "success", text: deleteCtx.riskDetected ? "Payment agent deleted. Historical orders and ledger entries were kept." : `Payment agent ${deleteCtx.agentName} deleted.` });
+      }
+      await reloadPaymentAgents();
       logUI("payment_agent_delete_success", { agentId: deleteCtx.agentId });
-      pushToast({ tone: "success", text: deleteCtx.riskDetected ? "Payment agent deleted. Historical orders and ledger entries were kept." : `Payment agent ${deleteCtx.agentName} deleted.` });
     } catch (e) {
       logUI("payment_agent_delete_failed", { agentId: deleteCtx.agentId, error: e instanceof Error ? e.message : String(e) });
       pushToast({ tone: "danger", text: e instanceof Error ? e.message : "Could not delete payment agent." });

@@ -33,6 +33,7 @@ import { LoadingDateControl } from "@/components/orders/LoadingDateControl";
 import { OrderStatusControl } from "@/components/orders/OrderStatusControl";
 import { isOrderEligibleForCreditSettlement } from "@/services/settlement/orderCreditEligibility";
 import { joinLineDetails, seedDetailBoxesFromLegacy, withDerivedLegacyDetails } from "@/lib/orderLineDetails";
+import { orderLifecycleService } from "@/services/orderLifecycleService";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const createEmptyDraft = (_orders: Order[], reservedOrderNumber = ""): Order => ({
@@ -110,7 +111,7 @@ export default function OrdersPage() {
 
   const { orders, upsertOrder, deleteOrder, pushToast } = useStore();
   const { data: paymentAgents, recalculateFromOrders, applyOrderSettlement, reverseOrderSettlement, upsertPaymentAgent, reload: reloadPaymentAgents } = usePaymentAgents();
-  const { data: firebaseOrders, isLoading: isOrdersLoading, error: ordersLoadError, draftOrders: firebaseDraftOrders, autosaveDraft, upsertOrder: upsertFirebaseOrder, archiveOrder: archiveFirebaseOrder, reload: reloadFirebaseOrders } = useOrders();
+  const { data: firebaseOrders, isLoading: isOrdersLoading, error: ordersLoadError, draftOrders: firebaseDraftOrders, autosaveDraft, upsertOrder: upsertFirebaseOrder, reload: reloadFirebaseOrders } = useOrders();
   const { data: customers, isLoading: isCustomersLoading, reload: reloadCustomers } = useCustomers();
   const [query, setQuery] = useState("");
   const [activeUploads, setActiveUploads] = useState(0);
@@ -390,6 +391,8 @@ try {
 
     const now = new Date().toISOString();
     logOrder("save_order_lines_before_resolution", { lines: draft.lines.map((l) => ({ lineId: l.id, customerId: l.customerId, customerName: l.customerName, lineTotal: (l.totalCtns||0)*(l.pcsPerCtn||0)*(l.rmbPerPcs||0) })) });
+    const knownCustomerIdsBeforeSave = new Set(customers.map((customer) => customer.id));
+    const knownPaymentAgentIdsBeforeSave = new Set(paymentAgents.map((agent) => agent.id));
     let resolvedLines = draft.lines;
     try {
       resolvedLines = (await resolveCustomersForOrderLines(draft.lines, customers, now)).map((line) =>
@@ -423,7 +426,7 @@ try {
     }
     const finalOrderNumber = requestedOrderNumber || await ensureFinalOrderNumber({ ...draft, number: "", orderNumber: "", status: "saved" as const });
     const resolvedPaymentAgentId = resolvedAgent?.id || "";
-    const savedOrder = {
+    let savedOrder = {
       ...draft,
       number: finalOrderNumber,
       orderNumber: finalOrderNumber,
@@ -482,7 +485,7 @@ try {
       logError("order_side_effect_step_failed", { orderId: savedOrder.id, mode: result.mode, step: "sync_products", error: e instanceof Error ? e.message : String(e) });
     }
 
-    if (isFirebaseOrdersMode && selectedPaymentAgentId) {
+    if (isFirebaseOrdersMode && (savedOrder.paymentAgentId || savedOrder.paymentBy)) {
       try { await applyOrderSettlement(savedOrder); result.paymentSettlementApplied = true; logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: savedOrder.id, mode: result.mode, step: "apply_payment_settlement", success: true }, null, 2)); }
       catch (e) { result.paymentSettlementApplied = false; result.warnings.push(`Payment-agent settlement failed: ${e instanceof Error ? e.message : String(e)}`); logError("order_side_effect_step_failed", { orderId: savedOrder.id, mode: result.mode, step: "apply_payment_settlement", error: e instanceof Error ? e.message : String(e) }); }
     }
@@ -490,8 +493,23 @@ try {
     try { await customerLedgerService.applyOrderCustomerReceivables(savedOrder as any); result.customerReceivablesApplied = true; logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: savedOrder.id, mode: result.mode, step: "apply_customer_receivables", success: true }, null, 2)); }
     catch (e) { result.customerReceivablesApplied = false; result.warnings.push(`Customer receivable update failed: ${e instanceof Error ? e.message : String(e)}`); logError("order_side_effect_step_failed", { orderId: savedOrder.id, mode: result.mode, step: "apply_customer_receivables", error: e instanceof Error ? e.message : String(e) }); }
 
+    if (isFirebaseOrdersMode) {
+      try {
+        savedOrder = (await orderLifecycleService.syncOrderLifecycleMetadata(savedOrder, {
+          knownCustomerIds: knownCustomerIdsBeforeSave,
+          knownPaymentAgentIds: knownPaymentAgentIdsBeforeSave,
+        })) || savedOrder;
+        await reloadFirebaseOrders();
+        logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: savedOrder.id, mode: result.mode, step: "sync_lifecycle_metadata", success: true }, null, 2));
+      } catch (e) {
+        result.warnings.push(`Lifecycle sync failed: ${e instanceof Error ? e.message : String(e)}`);
+        logError("order_side_effect_step_failed", { orderId: savedOrder.id, mode: result.mode, step: "sync_lifecycle_metadata", error: e instanceof Error ? e.message : String(e) });
+      }
+    }
+
     await recalculateFromOrders(mergedOrders);
     await reloadCustomers();
+    await reloadPaymentAgents();
     logDataFlow("Orders", JSON.stringify({ event: "order_side_effects_completed", orderId: savedOrder.id, orderNumber: savedOrder.number, ...result }, null, 2));
 
     if (result.warnings.length === 0) pushToast({ tone: "success", text: "Order saved successfully." });
@@ -581,19 +599,19 @@ try {
 
   const removeOrder = async (o: Order) => {
     if (isFirebaseOrdersMode) {
-      const result: OrderSideEffectResult = { mode: "archive", orderSaved: false, productsSynced: false, productSyncFailures: [], paymentSettlementApplied: false, paymentSettlementReversed: false, customerReceivablesApplied: false, customerReceivablesReversed: false, generatedProductsArchived: false, blocked: false, warnings: [], errors: [] };
-      logDataFlow("Orders", JSON.stringify({ event: "order_side_effects_started", orderId: o.id, orderNumber: o.number || o.orderNumber, mode: "archive" }, null, 2));
-      try { await reverseOrderSettlement(o);
-result.paymentSettlementReversed = true; logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: o.id, mode: "archive", step: "reverse_payment_settlement", success: true }, null, 2)); }
-      catch (e) { result.blocked = true; result.errors.push("Archive blocked because payment-agent reversal failed."); logError("order_side_effect_step_failed", { orderId: o.id, mode: "archive", step: "reverse_payment_settlement", error: e instanceof Error ? e.message : String(e) }); pushToast({ tone: "danger", text: "Archive blocked because payment-agent reversal failed." }); return; }
-      try { await customerLedgerService.reverseOrderCustomerReceivables(o as any); result.customerReceivablesReversed = true; logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: o.id, mode: "archive", step: "reverse_customer_receivables", success: true }, null, 2)); }
-      catch (e) { result.blocked = true; result.errors.push("Archive blocked because customer receivable reversal failed."); logError("order_side_effect_step_failed", { orderId: o.id, mode: "archive", step: "reverse_customer_receivables", error: e instanceof Error ? e.message : String(e) }); pushToast({ tone: "danger", text: "Archive blocked because customer receivable reversal failed." }); return; }
-      try { await archiveProductsForOrder(o); result.generatedProductsArchived = true; logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: o.id, mode: "archive", step: "archive_generated_products", success: true }, null, 2)); }
-      catch (e) { result.generatedProductsArchived = false; result.warnings.push("Generated product archive failed."); logError("order_side_effect_step_failed", { orderId: o.id, mode: "archive", step: "archive_generated_products", error: e instanceof Error ? e.message : String(e) }); }
-      await archiveFirebaseOrder(o.id);
+      logDataFlow("Orders", JSON.stringify({ event: "order_side_effects_started", orderId: o.id, orderNumber: o.number || o.orderNumber, mode: "soft_delete" }, null, 2));
+      try {
+        await orderLifecycleService.softDeleteOrder(o, "orders-page");
+      } catch (e) {
+        logError("order_side_effect_step_failed", { orderId: o.id, mode: "soft_delete", step: "soft_delete_order", error: e instanceof Error ? e.message : String(e) });
+        pushToast({ tone: "danger", text: e instanceof Error ? e.message : "Order delete failed." });
+        return;
+      }
       await reloadFirebaseOrders();
-      logDataFlow("Orders", JSON.stringify({ event: "order_side_effects_completed", orderId: o.id, orderNumber: o.number || o.orderNumber, ...result }, null, 2));
-      pushToast({ tone: result.warnings.length ? "info" : "success", text: result.warnings.length ? `Order ${o.number || o.orderNumber} archived, but generated product archive failed.` : `Order ${o.number || o.orderNumber} archived successfully.` });
+      await reloadCustomers();
+      await reloadPaymentAgents();
+      logDataFlow("Orders", JSON.stringify({ event: "order_side_effects_completed", orderId: o.id, orderNumber: o.number || o.orderNumber, mode: "soft_delete" }, null, 2));
+      pushToast({ tone: "success", text: `Order ${o.number || o.orderNumber} moved to Recycle Bin.` });
       return;
     }
     deleteOrder(o.id);

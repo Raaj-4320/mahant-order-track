@@ -56,6 +56,18 @@ service cloud.firestore {
         allow delete: if isOwnerOrAdmin(businessId);
       }
 
+      match /referenceRecords/{recordId} {
+        allow read: if canReadBusinessData(businessId);
+        allow create, update: if canWriteBusinessData(businessId);
+        allow delete: if isOwnerOrAdmin(businessId);
+      }
+
+      match /recycleBin/{entryId} {
+        allow read: if canReadBusinessData(businessId);
+        allow create, update: if canWriteBusinessData(businessId);
+        allow delete: if isOwnerOrAdmin(businessId);
+      }
+
       match /settings/{docId} {
         allow read: if canReadBusinessData(businessId);
         allow create, update, delete: if isOwnerOrAdmin(businessId);

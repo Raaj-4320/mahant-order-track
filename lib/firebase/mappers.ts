@@ -1,4 +1,4 @@
-import type { Customer, CustomerLedgerEntry, Order, PaymentAgent, PaymentAgentLedgerEntry, Product, Supplier } from "@/lib/types";
+import type { Customer, CustomerLedgerEntry, LifecycleMetadata, Order, OrderDependencyMap, PaymentAgent, PaymentAgentLedgerEntry, Product, RecycleBinEntry, ReferenceRecord, Supplier } from "@/lib/types";
 import { seedDetailBoxesFromLegacy, withDerivedLegacyDetails } from "@/lib/orderLineDetails";
 
 const asNum = (v: unknown): number | undefined => {
@@ -11,6 +11,66 @@ const asNum = (v: unknown): number | undefined => {
 };
 const asStr = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
 const asStatus = (v: unknown): "active" | "inactive" => (v === "inactive" ? "inactive" : "active");
+const asLifecycleStatus = (v: unknown): "active" | "deleted" => (v === "deleted" ? "deleted" : "active");
+const asSourceType = (v: unknown): "order" | "manual" | "import" | "system" => {
+  if (v === "order" || v === "manual" || v === "import" || v === "system") return v;
+  return "manual";
+};
+const asReferenceRecordType = (v: unknown): "wechatId" | "marka" | "detail" | "orderNumber" => {
+  if (v === "wechatId" || v === "marka" || v === "detail" || v === "orderNumber") return v;
+  return "detail";
+};
+const asRecycleItemType = (v: unknown): "order" | "product" | "customer" | "paymentAgent" | "reference" => {
+  if (v === "order" || v === "product" || v === "customer" || v === "paymentAgent" || v === "reference") return v;
+  return "reference";
+};
+const asStringArray = (v: unknown): string[] | undefined => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : undefined);
+const asRecord = (v: unknown): Record<string, unknown> | undefined => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined);
+
+const lifecycleFromUnknown = (value: unknown, defaults?: Partial<LifecycleMetadata>): LifecycleMetadata | undefined => {
+  const raw = asRecord(value);
+  if (!raw && !defaults) return undefined;
+  return {
+    id: asStr(raw?.id) || defaults?.id,
+    type: asStr(raw?.type) || defaults?.type,
+    status: asLifecycleStatus(raw?.status ?? defaults?.status),
+    sourceType: asSourceType(raw?.sourceType ?? defaults?.sourceType),
+    sourceOrderId: asStr(raw?.sourceOrderId) || defaults?.sourceOrderId,
+    createdByOrder: typeof raw?.createdByOrder === "boolean" ? raw.createdByOrder : defaults?.createdByOrder,
+    reusable: typeof raw?.reusable === "boolean" ? raw.reusable : defaults?.reusable,
+    deletedAt: asStr(raw?.deletedAt) || defaults?.deletedAt,
+    restoredAt: asStr(raw?.restoredAt) || defaults?.restoredAt,
+    deletedBy: asStr(raw?.deletedBy) || defaults?.deletedBy,
+    restoredBy: asStr(raw?.restoredBy) || defaults?.restoredBy,
+    recycleBinEntryId: asStr(raw?.recycleBinEntryId) || defaults?.recycleBinEntryId,
+    linkedLedgerEntryIds: asStringArray(raw?.linkedLedgerEntryIds) ?? defaults?.linkedLedgerEntryIds,
+    linkedTransactionIds: asStringArray(raw?.linkedTransactionIds) ?? defaults?.linkedTransactionIds,
+    linkedProductIds: asStringArray(raw?.linkedProductIds) ?? defaults?.linkedProductIds,
+    linkedCustomerIds: asStringArray(raw?.linkedCustomerIds) ?? defaults?.linkedCustomerIds,
+    linkedPaymentAgentIds: asStringArray(raw?.linkedPaymentAgentIds) ?? defaults?.linkedPaymentAgentIds,
+    linkedWechatIds: asStringArray(raw?.linkedWechatIds) ?? defaults?.linkedWechatIds,
+    linkedReferenceIds: asStringArray(raw?.linkedReferenceIds) ?? defaults?.linkedReferenceIds,
+  };
+};
+
+const orderDependencyMapFromUnknown = (value: unknown): OrderDependencyMap | undefined => {
+  const raw = asRecord(value);
+  if (!raw) return undefined;
+  return {
+    previousStatus: asStr(raw.previousStatus) as OrderDependencyMap["previousStatus"],
+    createdProductIds: asStringArray(raw.createdProductIds) ?? [],
+    createdCustomerIds: asStringArray(raw.createdCustomerIds) ?? [],
+    createdPaymentAgentIds: asStringArray(raw.createdPaymentAgentIds) ?? [],
+    linkedWechatReferenceIds: asStringArray(raw.linkedWechatReferenceIds) ?? [],
+    linkedMarkaReferenceIds: asStringArray(raw.linkedMarkaReferenceIds) ?? [],
+    linkedDetailReferenceIds: asStringArray(raw.linkedDetailReferenceIds) ?? [],
+    linkedOrderNumberReferenceIds: asStringArray(raw.linkedOrderNumberReferenceIds) ?? [],
+    customerLedgerEntryIds: asStringArray(raw.customerLedgerEntryIds) ?? [],
+    paymentAgentLedgerEntryIds: asStringArray(raw.paymentAgentLedgerEntryIds) ?? [],
+    affectedCustomerIds: asStringArray(raw.affectedCustomerIds) ?? [],
+    affectedPaymentAgentIds: asStringArray(raw.affectedPaymentAgentIds) ?? [],
+  };
+};
 
 
 type SanitizeOptions = { keepNullPaths?: string[] };
@@ -85,6 +145,7 @@ export const productFromFirestore = (doc: unknown): Product => {
     generatedFromOrderLines: typeof p.generatedFromOrderLines === "boolean" ? p.generatedFromOrderLines : undefined,
     lastSeenAt: asStr(p.lastSeenAt) || undefined,
     lastLineTotalPcs: asNum(p.lastLineTotalPcs),
+    lifecycle: lifecycleFromUnknown(p.lifecycle, { type: "product", sourceType: p.source === "order-line" ? "order" : "manual" }),
   };
 };
 
@@ -108,6 +169,7 @@ export const productToFirestore = (entity: Product): Record<string, unknown> => 
   generatedFromOrderLines: entity.generatedFromOrderLines ?? null,
   lastSeenAt: entity.lastSeenAt ?? null,
   lastLineTotalPcs: entity.lastLineTotalPcs ?? null,
+  lifecycle: entity.lifecycle ?? null,
 });
 
 export const customerFromFirestore = (doc: unknown): Customer => {
@@ -137,6 +199,7 @@ export const customerFromFirestore = (doc: unknown): Customer => {
     sourceOrderIds: Array.isArray(c.sourceOrderIds) ? c.sourceOrderIds.filter((x): x is string => typeof x === "string") : undefined,
     createdAt: asStr(c.createdAt, now),
     updatedAt: asStr(c.updatedAt, now),
+    lifecycle: lifecycleFromUnknown(c.lifecycle, { type: "customer", sourceType: c.source === "order-line" ? "order" : "manual" }),
   };
 };
 export const customerToFirestore = (entity: Customer): Record<string, unknown> => ({ ...entity });
@@ -164,9 +227,10 @@ export const paymentAgentFromFirestore = (doc: unknown): PaymentAgent => {
     notes: asStr(p.notes) || undefined,
     createdAt: asStr(p.createdAt, now),
     updatedAt: asStr(p.updatedAt, now),
+    lifecycle: lifecycleFromUnknown(p.lifecycle, { type: "paymentAgent", sourceType: "manual" }),
   };
 };
-export const paymentAgentToFirestore = (entity: PaymentAgent): Record<string, unknown> => ({ ...entity, phone: entity.phone ?? null, wechatId: entity.wechatId ?? null, country: entity.country ?? null, city: entity.city ?? null, notes: entity.notes ?? null, openingCreditBalance: entity.openingCreditBalance ?? 0, creditBalance: entity.creditBalance ?? 0, totalOrderAmount: entity.totalOrderAmount ?? 0, totalPaidAmount: entity.totalPaidAmount ?? 0, currentDuePayable: entity.currentDuePayable ?? 0 });
+export const paymentAgentToFirestore = (entity: PaymentAgent): Record<string, unknown> => ({ ...entity, phone: entity.phone ?? null, wechatId: entity.wechatId ?? null, country: entity.country ?? null, city: entity.city ?? null, notes: entity.notes ?? null, openingCreditBalance: entity.openingCreditBalance ?? 0, creditBalance: entity.creditBalance ?? 0, totalOrderAmount: entity.totalOrderAmount ?? 0, totalPaidAmount: entity.totalPaidAmount ?? 0, currentDuePayable: entity.currentDuePayable ?? 0, lifecycle: entity.lifecycle ?? null });
 
 export const paymentAgentLedgerEntryFromFirestore = (doc: unknown): PaymentAgentLedgerEntry => {
   const e = (doc ?? {}) as Record<string, unknown>;
@@ -174,16 +238,16 @@ export const paymentAgentLedgerEntryFromFirestore = (doc: unknown): PaymentAgent
   return {
     id: asStr(e.id), agentId: asStr(e.agentId), type: (asStr(e.type) as PaymentAgentLedgerEntry["type"]) || "agent_payment",
     sourceOrderId: asStr(e.sourceOrderId) || undefined, sourceOrderNumber: asStr(e.sourceOrderNumber) || undefined,
-    amount: asNum(e.amount) ?? 0, creditUsed: asNum(e.creditUsed), payableAfterCredit: asNum(e.payableAfterCredit), paidNow: asNum(e.paidNow), remainingPayable: asNum(e.remainingPayable), newCreditCreated: asNum(e.newCreditCreated), dueReduced: asNum(e.dueReduced), creditCreated: asNum(e.creditCreated), resultingCreditBalance: asNum(e.resultingCreditBalance), settlementHash: asStr(e.settlementHash) || undefined, isReversed: typeof e.isReversed === "boolean" ? e.isReversed : undefined, active: typeof e.active === "boolean" ? e.active : undefined, note: asStr(e.note) || undefined, createdAt: asStr(e.createdAt, now), updatedAt: asStr(e.updatedAt) || undefined, paymentDate: asStr(e.paymentDate) || undefined, reversalOfId: asStr(e.reversalOfId) || undefined
+    amount: asNum(e.amount) ?? 0, creditUsed: asNum(e.creditUsed), payableAfterCredit: asNum(e.payableAfterCredit), paidNow: asNum(e.paidNow), remainingPayable: asNum(e.remainingPayable), newCreditCreated: asNum(e.newCreditCreated), dueReduced: asNum(e.dueReduced), creditCreated: asNum(e.creditCreated), resultingCreditBalance: asNum(e.resultingCreditBalance), settlementHash: asStr(e.settlementHash) || undefined, isReversed: typeof e.isReversed === "boolean" ? e.isReversed : undefined, active: typeof e.active === "boolean" ? e.active : undefined, note: asStr(e.note) || undefined, createdAt: asStr(e.createdAt, now), updatedAt: asStr(e.updatedAt) || undefined, paymentDate: asStr(e.paymentDate) || undefined, reversalOfId: asStr(e.reversalOfId) || undefined, lifecycle: lifecycleFromUnknown(e.lifecycle, { type: "paymentAgentLedger", sourceType: "system" })
   };
 };
-export const paymentAgentLedgerEntryToFirestore = (entity: PaymentAgentLedgerEntry): Record<string, unknown> => ({ ...entity, sourceOrderId: entity.sourceOrderId ?? null, sourceOrderNumber: entity.sourceOrderNumber ?? null, creditUsed: entity.creditUsed ?? null, payableAfterCredit: entity.payableAfterCredit ?? null, paidNow: entity.paidNow ?? null, remainingPayable: entity.remainingPayable ?? null, newCreditCreated: entity.newCreditCreated ?? null, dueReduced: entity.dueReduced ?? null, creditCreated: entity.creditCreated ?? null, resultingCreditBalance: entity.resultingCreditBalance ?? null, settlementHash: entity.settlementHash ?? null, isReversed: entity.isReversed ?? null, active: entity.active ?? null, note: entity.note ?? null, updatedAt: entity.updatedAt ?? null, paymentDate: entity.paymentDate ?? null, reversalOfId: entity.reversalOfId ?? null });
+export const paymentAgentLedgerEntryToFirestore = (entity: PaymentAgentLedgerEntry): Record<string, unknown> => ({ ...entity, sourceOrderId: entity.sourceOrderId ?? null, sourceOrderNumber: entity.sourceOrderNumber ?? null, creditUsed: entity.creditUsed ?? null, payableAfterCredit: entity.payableAfterCredit ?? null, paidNow: entity.paidNow ?? null, remainingPayable: entity.remainingPayable ?? null, newCreditCreated: entity.newCreditCreated ?? null, dueReduced: entity.dueReduced ?? null, creditCreated: entity.creditCreated ?? null, resultingCreditBalance: entity.resultingCreditBalance ?? null, settlementHash: entity.settlementHash ?? null, isReversed: entity.isReversed ?? null, active: entity.active ?? null, note: entity.note ?? null, updatedAt: entity.updatedAt ?? null, paymentDate: entity.paymentDate ?? null, reversalOfId: entity.reversalOfId ?? null, lifecycle: entity.lifecycle ?? null });
 export const customerLedgerEntryFromFirestore = (doc: unknown): CustomerLedgerEntry => {
   const e = (doc ?? {}) as Record<string, unknown>;
   const now = new Date().toISOString();
-  return { id: asStr(e.id), customerId: asStr(e.customerId), type: (asStr(e.type) as CustomerLedgerEntry["type"]) || "order_receivable", sourceOrderId: asStr(e.sourceOrderId) || undefined, sourceOrderNumber: asStr(e.sourceOrderNumber) || undefined, sourceLineId: asStr(e.sourceLineId) || undefined, amount: asNum(e.amount) ?? 0, debit: asNum(e.debit), credit: asNum(e.credit), balance: asNum(e.balance), receivableReduced: asNum(e.receivableReduced), creditCreated: asNum(e.creditCreated), resultingReceivable: asNum(e.resultingReceivable), resultingStoreCredit: asNum(e.resultingStoreCredit), note: asStr(e.note) || undefined, settlementHash: asStr(e.settlementHash) || undefined, active: typeof e.active === "boolean" ? e.active : undefined, isReversed: typeof e.isReversed === "boolean" ? e.isReversed : undefined, reversalOfId: asStr(e.reversalOfId) || undefined, paymentDate: asStr(e.paymentDate) || undefined, createdAt: asStr(e.createdAt, now), updatedAt: asStr(e.updatedAt) || undefined };
+  return { id: asStr(e.id), customerId: asStr(e.customerId), type: (asStr(e.type) as CustomerLedgerEntry["type"]) || "order_receivable", sourceOrderId: asStr(e.sourceOrderId) || undefined, sourceOrderNumber: asStr(e.sourceOrderNumber) || undefined, sourceLineId: asStr(e.sourceLineId) || undefined, amount: asNum(e.amount) ?? 0, debit: asNum(e.debit), credit: asNum(e.credit), balance: asNum(e.balance), receivableReduced: asNum(e.receivableReduced), creditCreated: asNum(e.creditCreated), resultingReceivable: asNum(e.resultingReceivable), resultingStoreCredit: asNum(e.resultingStoreCredit), note: asStr(e.note) || undefined, settlementHash: asStr(e.settlementHash) || undefined, active: typeof e.active === "boolean" ? e.active : undefined, isReversed: typeof e.isReversed === "boolean" ? e.isReversed : undefined, reversalOfId: asStr(e.reversalOfId) || undefined, paymentDate: asStr(e.paymentDate) || undefined, createdAt: asStr(e.createdAt, now), updatedAt: asStr(e.updatedAt) || undefined, lifecycle: lifecycleFromUnknown(e.lifecycle, { type: "customerLedger", sourceType: "system" }) };
 };
-export const customerLedgerEntryToFirestore = (entity: CustomerLedgerEntry): Record<string, unknown> => ({ ...entity, sourceOrderId: entity.sourceOrderId ?? null, sourceOrderNumber: entity.sourceOrderNumber ?? null, sourceLineId: entity.sourceLineId ?? null, debit: entity.debit ?? null, credit: entity.credit ?? null, balance: entity.balance ?? null, receivableReduced: entity.receivableReduced ?? null, creditCreated: entity.creditCreated ?? null, resultingReceivable: entity.resultingReceivable ?? null, resultingStoreCredit: entity.resultingStoreCredit ?? null, note: entity.note ?? null, settlementHash: entity.settlementHash ?? null, active: entity.active ?? null, isReversed: entity.isReversed ?? null, reversalOfId: entity.reversalOfId ?? null, paymentDate: entity.paymentDate ?? null, updatedAt: entity.updatedAt ?? null });
+export const customerLedgerEntryToFirestore = (entity: CustomerLedgerEntry): Record<string, unknown> => ({ ...entity, sourceOrderId: entity.sourceOrderId ?? null, sourceOrderNumber: entity.sourceOrderNumber ?? null, sourceLineId: entity.sourceLineId ?? null, debit: entity.debit ?? null, credit: entity.credit ?? null, balance: entity.balance ?? null, receivableReduced: entity.receivableReduced ?? null, creditCreated: entity.creditCreated ?? null, resultingReceivable: entity.resultingReceivable ?? null, resultingStoreCredit: entity.resultingStoreCredit ?? null, note: entity.note ?? null, settlementHash: entity.settlementHash ?? null, active: entity.active ?? null, isReversed: entity.isReversed ?? null, reversalOfId: entity.reversalOfId ?? null, paymentDate: entity.paymentDate ?? null, updatedAt: entity.updatedAt ?? null, lifecycle: entity.lifecycle ?? null });
 
 export const orderFromFirestore = (doc: unknown): Order => {
   const o = (doc ?? {}) as Record<string, unknown>;
@@ -207,7 +271,7 @@ export const orderFromFirestore = (doc: unknown): Order => {
         });
       })
     : [];
-  return { ...(o as any), id: asStr(o.id), number: asStr(o.number) || asStr(o.orderNumber), orderNumber: asStr(o.orderNumber) || asStr(o.number), date: asStr(o.date), loadingDate: asStr(o.loadingDate) || undefined, wechatId: asStr(o.wechatId), status: (asStr(o.status) as Order["status"]) || "draft", paymentStatus: (asStr(o.paymentStatus) as Order["paymentStatus"]) || "pending", paymentBy: asStr(o.paymentBy), paymentAgentId: asStr(o.paymentAgentId), paidToPaymentAgentNow: asNum(o.paidToPaymentAgentNow) ?? 0, lines: lines as any, createdAt: asStr(o.createdAt, now), updatedAt: asStr(o.updatedAt, now), savedAt: asStr(o.savedAt) || undefined, draftAutosavedAt: asStr(o.draftAutosavedAt) || undefined, lastEditedAt: asStr(o.lastEditedAt) || undefined } as Order;
+  return { ...(o as any), id: asStr(o.id), number: asStr(o.number) || asStr(o.orderNumber), orderNumber: asStr(o.orderNumber) || asStr(o.number), date: asStr(o.date), loadingDate: asStr(o.loadingDate) || undefined, wechatId: asStr(o.wechatId), status: (asStr(o.status) as Order["status"]) || "draft", paymentStatus: (asStr(o.paymentStatus) as Order["paymentStatus"]) || "pending", paymentBy: asStr(o.paymentBy), paymentAgentId: asStr(o.paymentAgentId), paidToPaymentAgentNow: asNum(o.paidToPaymentAgentNow) ?? 0, lines: lines as any, createdAt: asStr(o.createdAt, now), updatedAt: asStr(o.updatedAt, now), savedAt: asStr(o.savedAt) || undefined, draftAutosavedAt: asStr(o.draftAutosavedAt) || undefined, lastEditedAt: asStr(o.lastEditedAt) || undefined, lifecycle: lifecycleFromUnknown(o.lifecycle, { type: "order", sourceType: "manual" }), dependencyMap: orderDependencyMapFromUnknown(o.dependencyMap) } as Order;
 };
 export const orderToFirestore = (entity: Order): Record<string, unknown> => ({
   ...entity,
@@ -235,4 +299,58 @@ export const orderToFirestore = (entity: Order): Record<string, unknown> => ({
   savedAt: entity.savedAt ?? null,
   draftAutosavedAt: (entity as any).draftAutosavedAt ?? null,
   lastEditedAt: (entity as any).lastEditedAt ?? null,
+  lifecycle: entity.lifecycle ?? null,
+  dependencyMap: entity.dependencyMap ?? null,
+});
+
+export const referenceRecordFromFirestore = (doc: unknown): ReferenceRecord => {
+  const value = (doc ?? {}) as Record<string, unknown>;
+  const now = new Date().toISOString();
+  return {
+    id: asStr(value.id),
+    type: asReferenceRecordType(value.type),
+    value: asStr(value.value),
+    normalizedValue: asStr(value.normalizedValue),
+    sourceOrderIds: asStringArray(value.sourceOrderIds),
+    status: asStatus(value.status),
+    lifecycle: lifecycleFromUnknown(value.lifecycle, { type: "reference", sourceType: "manual" }),
+    createdAt: asStr(value.createdAt, now),
+    updatedAt: asStr(value.updatedAt, now),
+  };
+};
+
+export const referenceRecordToFirestore = (entity: ReferenceRecord): Record<string, unknown> => ({
+  ...entity,
+  sourceOrderIds: entity.sourceOrderIds ?? null,
+  lifecycle: entity.lifecycle ?? null,
+});
+
+export const recycleBinEntryFromFirestore = (doc: unknown): RecycleBinEntry => {
+  const value = (doc ?? {}) as Record<string, unknown>;
+  const now = new Date().toISOString();
+  return {
+    id: asStr(value.id),
+    itemId: asStr(value.itemId),
+    itemType: asRecycleItemType(value.itemType),
+    referenceType: value.referenceType ? asReferenceRecordType(value.referenceType) : undefined,
+    label: asStr(value.label),
+    originalReference: asStr(value.originalReference),
+    sourceOrderId: asStr(value.sourceOrderId) || undefined,
+    snapshot: asRecord(value.snapshot),
+    deletedAt: asStr(value.deletedAt, now),
+    deletedBy: asStr(value.deletedBy) || undefined,
+    restoredAt: asStr(value.restoredAt) || undefined,
+    restoredBy: asStr(value.restoredBy) || undefined,
+    status: asLifecycleStatus(value.status),
+  };
+};
+
+export const recycleBinEntryToFirestore = (entity: RecycleBinEntry): Record<string, unknown> => ({
+  ...entity,
+  referenceType: entity.referenceType ?? null,
+  sourceOrderId: entity.sourceOrderId ?? null,
+  snapshot: entity.snapshot ?? null,
+  deletedBy: entity.deletedBy ?? null,
+  restoredAt: entity.restoredAt ?? null,
+  restoredBy: entity.restoredBy ?? null,
 });
