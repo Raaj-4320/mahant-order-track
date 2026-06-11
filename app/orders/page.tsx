@@ -426,7 +426,7 @@ try {
     }
     const finalOrderNumber = requestedOrderNumber || await ensureFinalOrderNumber({ ...draft, number: "", orderNumber: "", status: "saved" as const });
     const resolvedPaymentAgentId = resolvedAgent?.id || "";
-    let savedOrder = {
+    let savedOrder: Order & { paymentByName?: string; paymentAgentName?: string } = {
       ...draft,
       number: finalOrderNumber,
       orderNumber: finalOrderNumber,
@@ -495,10 +495,10 @@ try {
 
     if (isFirebaseOrdersMode) {
       try {
-        savedOrder = (await orderLifecycleService.syncOrderLifecycleMetadata(savedOrder, {
+        savedOrder = { ...savedOrder, ...((await orderLifecycleService.syncOrderLifecycleMetadata(savedOrder, {
           knownCustomerIds: knownCustomerIdsBeforeSave,
           knownPaymentAgentIds: knownPaymentAgentIdsBeforeSave,
-        })) || savedOrder;
+        })) || {}) };
         await reloadFirebaseOrders();
         logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: savedOrder.id, mode: result.mode, step: "sync_lifecycle_metadata", success: true }, null, 2));
       } catch (e) {

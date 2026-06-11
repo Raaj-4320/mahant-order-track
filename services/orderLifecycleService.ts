@@ -1,5 +1,5 @@
 import { isFirebaseConfigured } from "@/lib/firebase/client";
-import type { Customer, LifecycleMetadata, Order, PaymentAgent, Product, RecycleBinEntry, ReferenceRecord, ReferenceRecordType } from "@/lib/types";
+import type { Customer, LifecycleMetadata, Order, OrderDependencyMap, PaymentAgent, Product, RecycleBinEntry, ReferenceRecord, ReferenceRecordType } from "@/lib/types";
 import { joinLineDetails } from "@/lib/orderLineDetails";
 import { getProductsService } from "@/services/productsService";
 import { getCustomersService } from "@/services/customersService";
@@ -188,7 +188,7 @@ export const orderLifecycleService = {
       paymentAgentLedgerEntryIds: order.paymentAgentId ? [`order-settlement-${order.id}`] : [],
       affectedCustomerIds: unique(order.lines.map((line) => line.customerId)),
       affectedPaymentAgentIds: unique([order.paymentAgentId || order.paymentBy]),
-    } as Order["dependencyMap"];
+    } as OrderDependencyMap;
 
     const nextOrder: Order = {
       ...order,
@@ -399,8 +399,18 @@ export const orderLifecycleService = {
         recycleBinEntryId: recycleEntry.id,
       }),
       dependencyMap: {
-        ...order.dependencyMap,
         previousStatus: order.status,
+        createdProductIds: order.dependencyMap?.createdProductIds ?? [],
+        createdCustomerIds: order.dependencyMap?.createdCustomerIds ?? [],
+        createdPaymentAgentIds: order.dependencyMap?.createdPaymentAgentIds ?? [],
+        linkedWechatReferenceIds: order.dependencyMap?.linkedWechatReferenceIds ?? [],
+        linkedMarkaReferenceIds: order.dependencyMap?.linkedMarkaReferenceIds ?? [],
+        linkedDetailReferenceIds: order.dependencyMap?.linkedDetailReferenceIds ?? [],
+        linkedOrderNumberReferenceIds: order.dependencyMap?.linkedOrderNumberReferenceIds ?? [],
+        customerLedgerEntryIds: order.dependencyMap?.customerLedgerEntryIds ?? [],
+        paymentAgentLedgerEntryIds: order.dependencyMap?.paymentAgentLedgerEntryIds ?? [],
+        affectedCustomerIds: order.dependencyMap?.affectedCustomerIds ?? [],
+        affectedPaymentAgentIds: order.dependencyMap?.affectedPaymentAgentIds ?? [],
       },
     };
 

@@ -44,6 +44,13 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
   };
 
   const orderNo = order.number || order.orderNumber || "—";
+  const hasDimWeightColumn = order.lines.some((line) => Boolean(getLineDimensionPhoto(line) || line.picDim?.trim()));
+  const leadingFooterColSpan = hasDimWeightColumn ? 7 : 6;
+  const emptyStateColSpan = hasDimWeightColumn ? 11 : 10;
+  const getVisibleDetails = (line: Order["lines"][number]) => {
+    const parts = getLineDetailsParts(line);
+    return [parts.detail1, parts.detail2, parts.detail3].map((part) => part?.trim() || "").filter(Boolean);
+  };
 
   const buildLineCopyText = (line: Order["lines"][number]) => {
     const qtyPerCtn = line.pcsPerCtn || 0;
@@ -223,9 +230,9 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/45 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 overflow-auto bg-black/45 p-4" onClick={onClose}>
       <div
-        className="mx-auto mt-4 w-[98vw] max-w-[1460px] rounded-2xl border border-border bg-bg-card shadow-card"
+        className="mx-auto mt-4 w-fit max-w-[calc(100vw-32px)] rounded-2xl border border-border bg-bg-card shadow-card"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
@@ -246,42 +253,44 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
           </div>
         </div>
 
-        <div ref={exportRef} className="space-y-2.5 p-3">
-          <div className="overflow-hidden rounded-xl border-2 border-border bg-bg">
-            <div className="grid grid-cols-[180px_1fr] items-center p-2.5">
-              <div className="text-[22px] font-bold tabular-nums leading-tight">{order.number || order.orderNumber || "—"}</div>
-              <div className="text-left text-[22px] font-bold leading-tight">WECHAT : {order.wechatId || "—"}</div>
+        <div className="max-w-[calc(100vw-32px)] overflow-x-auto p-3">
+          <div ref={exportRef} className="inline-block w-fit min-w-0 max-w-full space-y-2.5 align-top">
+            <div className="overflow-hidden rounded-xl border-2 border-border bg-bg">
+              <div className="grid w-fit min-w-full grid-cols-[max-content_max-content] items-center gap-6 p-2.5">
+                <div className="text-[22px] font-bold tabular-nums leading-tight">{order.number || order.orderNumber || "—"}</div>
+                <div className="text-left text-[22px] font-bold leading-tight whitespace-nowrap">WECHAT : {order.wechatId || "—"}</div>
+              </div>
             </div>
-          </div>
 
-          <div className="rounded-xl border-2 border-border bg-bg-card">
-            <table className="w-full table-fixed text-[12px]">
-              <colgroup>
-                <col className="w-[34px]" />
-                <col className="w-[160px]" />
-                <col className="w-[160px]" />
-                <col className="w-[150px]" />
-                <col className="w-[150px]" />
-                <col className="w-[50px]" />
-                <col className="w-[50px]" />
-                <col className="w-[80px]" />
-                <col className="w-[55px]" />
-                <col className="w-[80px]" />
-                <col className="w-[80px]" data-export-hidden="true" />
-              </colgroup>
+            <div className="overflow-x-auto rounded-xl border-2 border-border bg-bg-card">
+              <div className="inline-block w-fit align-top">
+              <table className="inline-table w-max min-w-0 table-auto text-[12px]">
+                <colgroup>
+                  <col style={{ width: "42px" }} />
+                  {hasDimWeightColumn ? <col className="w-[1%]" /> : null}
+                  <col className="w-[1%]" />
+                  <col className="w-[1%]" />
+                  <col className="w-[1%]" />
+                  <col className="w-[1%]" />
+                  <col className="w-[1%]" />
+                  <col className="w-[1%]" />
+                  <col className="w-[1%]" />
+                  <col className="w-[1%]" />
+                  <col className="w-[1%]" data-export-hidden="true" />
+                </colgroup>
               <thead className="bg-[var(--brand)] text-center uppercase tracking-wide text-[var(--brand-fg)]">
                 <tr>
-                  <th className="border border-border px-2 py-3">#</th>
-                  <th className="border border-border px-2 py-2 text-[14px] leading-tight whitespace-nowrap">DIM/WEIGHT</th>
+                  <th className="border border-border px-1 py-2.5 text-center align-middle">#</th>
+                  {hasDimWeightColumn ? <th className="border border-border px-2 py-2 text-[14px] leading-tight whitespace-nowrap">DIM/WEIGHT</th> : null}
                   <th className="border border-border px-2 py-2 text-[14px] leading-tight whitespace-nowrap">产品图</th>
                   <th className="border border-border px-2 py-2.5 text-[14px] whitespace-nowrap">MARKA</th>
                   <th className="border border-border px-2 py-2.5 text-[14px] whitespace-nowrap">DETAILS</th>
-                  <th className="border border-border px-2 py-2 text-[14px] leading-tight whitespace-nowrap"><TwoLineHeader zh="箱数" en="CTN" /></th>
-                  <th className="border border-border px-2 py-2 text-[14px] leading-tight whitespace-nowrap"><TwoLineHeader zh="件/箱" en="PCS/CTN" /></th>
-                  <th className="border border-border px-2 py-2 text-[14px] leading-tight whitespace-nowrap">TOTAL Pieces</th>
-                  <th className="border border-border px-2 py-2 text-[13px] leading-tight whitespace-nowrap"><TwoLineHeader zh="单价" en="PRICE/PC" /></th>
-                  <th className="border border-border px-2 py-2 text-[13px] leading-tight whitespace-nowrap"><TwoLineHeader zh="金额" en="TOTAL AMOUNT" /></th>
-                  <th className="border border-border px-2 py-2 text-[15px] leading-tight whitespace-nowrap" data-export-hidden="true">COPY</th>
+                  <th className="border border-border px-1.5 py-2 text-[14px] leading-tight whitespace-nowrap"><TwoLineHeader zh="箱数" en="CTN" /></th>
+                  <th className="border border-border px-1.5 py-2 text-[14px] leading-tight whitespace-nowrap"><TwoLineHeader zh="件/箱" en="PCS/CTN" /></th>
+                  <th className="border border-border px-1.5 py-2 text-[14px] leading-tight whitespace-nowrap">TOTAL Pieces</th>
+                  <th className="border border-border px-1.5 py-2 text-[13px] leading-tight whitespace-nowrap"><TwoLineHeader zh="单价" en="PRICE/PC" /></th>
+                  <th className="border border-border px-1.5 py-2 text-[13px] leading-tight whitespace-nowrap"><TwoLineHeader zh="金额" en="TOTAL AMOUNT" /></th>
+                  <th className="border border-border px-1.5 py-2 text-[15px] leading-tight whitespace-nowrap" data-export-hidden="true">COPY</th>
                 </tr>
               </thead>
               <tbody>
@@ -290,87 +299,94 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
                   const lineTotal = totalPcs * (line.rmbPerPcs || 0);
                   const productPhoto = getLineProductPhoto(line);
                   const dimPhoto = getLineDimensionPhoto(line);
+                  const dimWeightValue = line.picDim?.trim() || "";
+                  const hasDimWeightContent = Boolean(dimPhoto || dimWeightValue);
                   const copyTextBlock = buildLineCopyText(line);
-                  const detailParts = getLineDetailsParts(line);
-                  const hasAnyDetail = Boolean(detailParts.detail1 || detailParts.detail2 || detailParts.detail3);
+                  const visibleDetails = getVisibleDetails(line);
+                  const hasAnyDetail = visibleDetails.length > 0;
 
                   return (
                     <tr key={line.id} className="align-middle">
-                      <td className="border border-border px-1 py-2 text-center font-bold tabular-nums">{idx + 1}</td>
-                      <td className="px-1.5 py-1.5 align-middle">
-                        <div className="mx-auto flex h-[170px] w-[150px] items-center justify-center overflow-hidden rounded bg-bg-subtle text-[10px] font-semibold text-fg-subtle">
-                          {dimPhoto ? (
-                            <button
-                              type="button"
-                              title="Open image preview"
-                              aria-label="Open image preview"
-                              className="flex h-full w-full cursor-zoom-in items-center justify-center"
-                              onClick={() => setPreviewImage(dimPhoto)}
-                            >
-                              <img
-                                src={getCloudinaryOptimizedUrl(dimPhoto, { width: 390, height: 390, crop: "fit" })}
-                                crossOrigin="anonymous"
-                                alt="dimension"
-                                className="block max-h-full max-w-full object-contain object-center"
-                                loading="lazy"
-                                decoding="async"
-                              />
-                            </button>
-                          ) : (
-                            "No photo"
-                          )}
-                        </div>
+                      <td className="border border-border px-0.5 py-0 text-center align-middle whitespace-nowrap">
+                        <span className="inline-block text-[15px] font-semibold leading-none tabular-nums">{idx + 1}</span>
                       </td>
-                      <td className="px-1.5 py-1.5 align-middle">
-                        <div className="mx-auto flex h-[120px] w-[150px] items-center justify-center overflow-hidden rounded bg-bg-subtle text-[10px] font-semibold text-fg-subtle">
+                      {hasDimWeightColumn ? (
+                        <td className="border border-border px-2 py-2 align-top">
+                          {hasDimWeightContent ? (
+                            <div className="inline-flex w-fit max-w-[252px] flex-col items-center gap-1.5 rounded bg-bg-subtle px-2 py-2">
+                              {dimPhoto ? (
+                                <button
+                                  type="button"
+                                  title="Open image preview"
+                                  aria-label="Open image preview"
+                                  className="inline-flex cursor-zoom-in items-center justify-center"
+                                  onClick={() => setPreviewImage(dimPhoto)}
+                                >
+                                  <img
+                                    src={getCloudinaryOptimizedUrl(dimPhoto, { width: 420, height: 420, crop: "fit" })}
+                                    crossOrigin="anonymous"
+                                    alt="dimension"
+                                    className="block max-h-[180px] max-w-[220px] object-contain object-center"
+                                    loading="lazy"
+                                    decoding="async"
+                                  />
+                                </button>
+                              ) : null}
+                              {dimWeightValue ? <div className="max-w-[200px] whitespace-normal text-center text-[11px] font-semibold leading-tight text-fg">{dimWeightValue}</div> : null}
+                            </div>
+                          ) : null}
+                        </td>
+                      ) : null}
+                      <td className="border border-border px-2 py-2 align-top">
+                        <div className="inline-flex w-fit min-h-[112px] min-w-[112px] max-w-[264px] items-center justify-center overflow-hidden rounded bg-bg-subtle px-2 py-2 text-[10px] font-semibold text-fg-subtle">
                           {productPhoto ? (
                             <button
                               type="button"
                               title="Open image preview"
                               aria-label="Open image preview"
-                              className="flex h-full w-full cursor-zoom-in items-center justify-center"
+                              className="inline-flex cursor-zoom-in items-center justify-center"
                               onClick={() => setPreviewImage(productPhoto)}
                             >
                               <img
-                                src={getCloudinaryOptimizedUrl(productPhoto, { width: 360, height: 360, crop: "fit" })}
+                                src={getCloudinaryOptimizedUrl(productPhoto, { width: 520, height: 520, crop: "fit" })}
                                 crossOrigin="anonymous"
                                 alt="product"
-                                className="block max-h-full max-w-full object-contain object-center"
+                                className="block max-h-[220px] max-w-[240px] object-contain object-center"
                                 loading="lazy"
                                 decoding="async"
                               />
                             </button>
                           ) : (
-                            "No photo"
+                            "—"
                           )}
                         </div>
                       </td>
-                      <td className="border border-border px-2 py-2 text-[16px] font-semibold leading-tight break-words">{line.marka || "—"}</td>
-                      <td className="border border-border px-2 py-2 text-[16px] font-semibold leading-tight break-words">
+                      <td className="border border-border px-2.5 py-1.5 text-[18px] font-bold leading-tight break-words whitespace-normal">
+                        <div className="inline-block max-w-[220px]">{line.marka || "—"}</div>
+                      </td>
+                      <td className="border border-border px-2.5 py-1.5 text-[18px] font-bold leading-tight break-words whitespace-normal">
                         {hasAnyDetail ? (
-                          <div className="space-y-1">
-                            <div>{detailParts.detail1 || "—"}</div>
-                            {detailParts.detail2 ? <div>{detailParts.detail2}</div> : null}
-                            {detailParts.detail3 ? <div>{detailParts.detail3}</div> : null}
+                          <div className="inline-block max-w-[300px] space-y-0.5">
+                            {visibleDetails.map((detail, detailIndex) => <div key={`${line.id}-detail-${detailIndex}`}>{detail}</div>)}
                           </div>
                         ) : (
                           "—"
                         )}
                       </td>
-                      <td className="border border-border px-1 py-2 text-center text-[16px] font-bold leading-tight tabular-nums">{line.totalCtns || 0}</td>
-                      <td className="border border-border px-1 py-2 text-center text-[16px] font-bold leading-tight tabular-nums">{line.pcsPerCtn || 0}</td>
-                      <td className="border border-border px-1 py-2 text-center text-[16px] font-bold leading-tight tabular-nums">{totalPcs || 0}</td>
-                      <td className="border border-border px-1 py-2 text-center text-[16px] font-bold leading-tight tabular-nums">
+                      <td className="border border-border px-1.5 py-1.5 text-center text-[16px] font-bold leading-tight tabular-nums whitespace-nowrap">{line.totalCtns || 0}</td>
+                      <td className="border border-border px-1.5 py-1.5 text-center text-[16px] font-bold leading-tight tabular-nums whitespace-nowrap">{line.pcsPerCtn || 0}</td>
+                      <td className="border border-border px-1.5 py-1.5 text-center text-[16px] font-bold leading-tight tabular-nums whitespace-nowrap">{totalPcs || 0}</td>
+                      <td className="border border-border px-1.5 py-1.5 text-center text-[16px] font-bold leading-tight tabular-nums whitespace-nowrap">
                         {line.rmbPerPcs ? formatPlainAmount(line.rmbPerPcs) : "0.00"}
                       </td>
-                      <td className="border border-border px-1 py-2 text-center text-[16px] font-bold leading-tight tabular-nums">
+                      <td className="border border-border px-1.5 py-1.5 text-center text-[16px] font-bold leading-tight tabular-nums whitespace-nowrap">
                         {lineTotal ? formatPlainAmount(lineTotal) : "0.00"}
                       </td>
-                      <td className="border border-border px-1 py-1 text-center" data-export-hidden="true">
+                      <td className="border border-border px-1.5 py-1 text-center" data-export-hidden="true">
                         <button
                           type="button"
                           onClick={() => copyText(copyTextBlock, `line-${line.id}`)}
-                          className="inline-flex w-full items-center justify-center gap-1 rounded border border-border bg-bg-subtle px-1 py-1 text-[10px] font-semibold"
+                          className="inline-flex items-center justify-center gap-1 rounded border border-border bg-bg-subtle px-2 py-1 text-[10px] font-semibold whitespace-nowrap"
                         >
                           <Copy size={10} /> {copiedKey === `line-${line.id}` ? "Copied" : "Copy"}
                         </button>
@@ -380,7 +396,7 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
                 })}
                 {order.lines.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="border border-border px-3 py-8 text-center text-fg-subtle">
+                    <td colSpan={emptyStateColSpan} className="border border-border px-3 py-8 text-center text-fg-subtle">
                       No order lines to display.
                     </td>
                   </tr>
@@ -388,22 +404,22 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
               </tbody>
               <tfoot>
                 <tr className="bg-bg-subtle">
-                  <td colSpan={7} className="border-t-2 border-border px-2 py-3" />
-                  <td colSpan={2} className="border-t-2 border-border px-1 py-3 text-right align-middle">
+                  <td colSpan={leadingFooterColSpan} className="border-t-2 border-border px-2 py-3" />
+                  <td colSpan={2} className="border-t-2 border-border px-1.5 py-3 text-right align-middle">
                     <div className="inline-flex bg-bg-card px-2 py-1 text-right text-[16px] font-bold uppercase leading-tight tracking-wide text-danger whitespace-nowrap">
                       TOTAL AMOUNT
                     </div>
                   </td>
-                  <td className="border-t-2 border-border px-1 py-3 text-center align-middle">
-                    <div className="mx-auto inline-flex rounded border-2 border-border bg-[var(--brand)] px-3 py-1 text-[18px] font-bold text-[var(--brand-fg)] tabular-nums">
+                  <td className="border-t-2 border-border px-1.5 py-3 text-center align-middle">
+                    <div className="mx-auto inline-flex rounded border-2 border-border bg-[var(--brand)] px-3 py-1 text-[18px] font-bold text-[var(--brand-fg)] tabular-nums whitespace-nowrap">
                       {formatPlainAmount(orderTotal(order))}
                     </div>
                   </td>
-                  <td className="border-t-2 border-border px-1 py-3 text-center align-middle" data-export-hidden="true">
+                  <td className="border-t-2 border-border px-1.5 py-3 text-center align-middle" data-export-hidden="true">
                     <button
                       type="button"
                       onClick={() => copyText(order.lines.map((line) => buildLineCopyText(line)).join("\n\n\n"), "all")}
-                      className="inline-flex items-center justify-center gap-1 rounded border border-border bg-bg-card px-2 py-1 text-[11px] font-semibold"
+                      className="inline-flex items-center justify-center gap-1 rounded border border-border bg-bg-card px-2 py-1 text-[11px] font-semibold whitespace-nowrap"
                     >
                       <Copy size={13} />
                       {copiedKey === "all" ? "Copied all" : "Copy All"}
@@ -411,7 +427,9 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
                   </td>
                 </tr>
               </tfoot>
-            </table>
+              </table>
+              </div>
+            </div>
           </div>
         </div>
       </div>
