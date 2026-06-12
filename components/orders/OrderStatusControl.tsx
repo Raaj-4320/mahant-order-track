@@ -33,9 +33,11 @@ type Props = {
   disabled?: boolean;
   debugOrderId?: string;
   options?: Array<{ value: Order["status"]; label: string }>;
+  compact?: boolean;
+  neutral?: boolean;
 };
 
-export function OrderStatusControl({ value, onChange, disabled = false, debugOrderId, options }: Props) {
+export function OrderStatusControl({ value, onChange, disabled = false, debugOrderId, options, compact = false, neutral = false }: Props) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const resolvedOptions = options && options.length ? options : STATUS_OPTIONS;
@@ -72,8 +74,8 @@ onChange(status);
           return nextOpen;
         })}
         className={cn(
-          "inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[12px] font-medium transition-colors",
-          statusClasses[value] || statusClasses.saved,
+          compact ? "inline-flex h-7 items-center gap-1 rounded-full border px-2.5 text-[11.5px] font-medium transition-colors" : "inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[12px] font-medium transition-colors",
+          neutral ? "border-border bg-bg-subtle text-fg" : (statusClasses[value] || statusClasses.saved),
           disabled ? "cursor-not-allowed opacity-60" : "hover:brightness-95",
         )}
       >

@@ -49,7 +49,9 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
   const emptyStateColSpan = hasDimWeightColumn ? 10 : 9;
   const getVisibleDetails = (line: Order["lines"][number]) => {
     const parts = getLineDetailsParts(line);
-    return [parts.detail1, parts.detail2, parts.detail3].map((part) => part?.trim() || "").filter(Boolean);
+    const values = [parts.detail1, parts.detail2, parts.detail3].map((part) => part?.trim() || "").filter(Boolean);
+    if (values.length > 0) return values;
+    return line.details?.trim() ? [line.details.trim()] : [];
   };
 
   const buildLineCopyText = (line: Order["lines"][number]) => {
@@ -361,7 +363,11 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
                       </td>
                       <td className="border border-border px-2.5 py-1.5 text-[18px] font-bold leading-tight">
                         {hasAnyDetail ? (
-                          <div className="inline-block whitespace-nowrap">{visibleDetails.join(" / ")}</div>
+                          <div className="inline-flex flex-col items-start gap-0.5 whitespace-nowrap">
+                            {visibleDetails.map((detail, index) => (
+                              <div key={`${line.id}-detail-${index}`}>{detail}</div>
+                            ))}
+                          </div>
                         ) : (
                           "—"
                         )}

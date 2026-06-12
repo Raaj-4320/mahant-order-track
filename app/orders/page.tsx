@@ -5,7 +5,7 @@ import { useStore } from "@/lib/store";
 import { OrderForm, newLine } from "@/components/orders/OrderForm";
 import { OrderFooter } from "@/components/orders/OrderFooter";
 import { formatDate } from "@/lib/data";
-import { formatIndianDateTime } from "@/lib/dateFormat";
+import { formatIndianDate } from "@/lib/dateFormat";
 import { Order, PaymentAgent, orderTotal } from "@/lib/types";
 import { syncOrderLinesToProducts, archiveProductsForOrder, archiveProductsForRemovedOrderLines } from "@/services/productCatalogSync";
 import { Button } from "@/components/ui/Button";
@@ -31,7 +31,7 @@ import { ordersDataSourceSelection } from "@/lib/runtimeConfig";
 import { LoadingDateControl } from "@/components/orders/LoadingDateControl";
 import { OrderStatusControl } from "@/components/orders/OrderStatusControl";
 import { isOrderEligibleForCreditSettlement } from "@/services/settlement/orderCreditEligibility";
-import { joinLineDetails, seedDetailBoxesFromLegacy, withDerivedLegacyDetails } from "@/lib/orderLineDetails";
+import { getLineDetailsParts, joinLineDetails, seedDetailBoxesFromLegacy, withDerivedLegacyDetails } from "@/lib/orderLineDetails";
 import { orderLifecycleService } from "@/services/orderLifecycleService";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -581,12 +581,23 @@ try {
     return candidate.photoUrl || candidate.dimensionPhotoUrl || candidate.sizePhotoUrl || "";
   };
   const getLineCustomerName = (line: Order["lines"][number]) => line.customerName || line.customerSnapshot?.name || line.customerId || "â€”";
-  const fmtDateTime = (order: Order) => {
+  const getVisibleLineDetails = (line: Order["lines"][number]) => {
+    const parts = getLineDetailsParts(line);
+    const values = [parts.detail1, parts.detail2, parts.detail3].map((part) => part.trim()).filter(Boolean);
+    if (values.length > 0) return values;
+    return line.details?.trim() ? [line.details.trim()] : [];
+  };
+  const getHistoryRowTone = (loadingDate?: string) => {
+    return loadingDate?.trim()
+      ? "bg-emerald-50/70 dark:bg-emerald-950/20"
+      : "bg-amber-50/75 dark:bg-amber-950/20";
+  };
+  const fmtOrderDate = (order: Order) => {
     const raw = order.date || order.createdAt || order.updatedAt;
     if (!raw) return "â€”";
     const d = new Date(raw);
     if (Number.isNaN(d.getTime())) return formatDate(raw);
-    return formatIndianDateTime(d);
+    return formatIndianDate(d);
   };
 
 
@@ -691,56 +702,92 @@ await recalculateFromOrders(orders.filter((x) => x.id !== o.id && x.status === "
         <section className="card overflow-hidden">
           {/* <div className="flex items-center justify-between px-4 py-3 border-b border-border"><h3 className="font-semibold">Order History</h3><div className="text-[12px] text-fg-subtle">Showing 1 to {history.length} of {activeOrders.length} orders</div></div> */}
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1320px] text-[13px]">
+            <table className="w-full min-w-[1080px] text-[13px]">
               <thead className="bg-bg-subtle/70">
                 <tr className="text-left text-[13px] uppercase  text-fg-subtle">
-                  <th className="px-4 py-2 w-[150px]">Date</th><th className="w-[150px]">Order Number</th><th className="w-[190px]">Paid By</th><th className="w-[180px]">WeChat ID</th><th className="w-[170px]">Loading Date</th><th className="w-[120px]">Total CTNS</th><th className="w-[150px]">Total Amount</th><th className="w-[120px]">Status</th><th className="text-right px-4 w-[170px]">Actions</th>
+                  <th className="px-4 py-2 w-[220px]">Order Number</th><th className="w-[175px]">Paid By</th><th className="w-[165px]">WeChat ID</th><th className="w-[136px]">Loading Date</th><th className="w-[120px]">Total CTNS</th><th className="w-[138px]">Total Amount</th><th className="w-[112px]">Status</th><th className="text-right px-4 w-[144px]">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {history.length === 0 ? <tr><td colSpan={9} className="px-4 py-8 text-center text-fg-subtle">No orders yet. Click Add Order to create one.</td></tr> : history.map((o) => {
+                {history.length === 0 ? <tr><td colSpan={8} className="px-4 py-8 text-center text-fg-subtle">No orders yet. Click Add Order to create one.</td></tr> : history.map((o) => {
                   const paymentMeta = getPaymentAgentMeta(o);
                   const paymentName = paymentMeta.value;
                   const canEditOperationalFields = o.status !== "draft" && o.status !== "archived";
                   const rowValue = getRowValue(o);
                   const rowDirty = rowValue.loadingDate !== o.loadingDate || rowValue.status !== o.status;
-                  const hasLoadingDate = Boolean((rowValue.loadingDate || o.loadingDate || "").trim());
-                  const rowTone = hasLoadingDate ? "border-emerald-200" : "border-amber-200";
-                  const middleCellClass = cn("border-y bg-bg-card transition-colors", rowTone);
-                  const firstCellClass = cn("rounded-l-2xl border border-r-0 bg-bg-card transition-colors", rowTone);
-                  const lastCellClass = cn("rounded-r-2xl border border-l-0 bg-bg-card transition-colors", rowTone);
+                  const effectiveLoadingDate = rowValue.loadingDate || o.loadingDate;
+                  const rowTone = getHistoryRowTone(effectiveLoadingDate);
+                  const middleCellClass = cn("border-y border-border transition-colors", rowTone);
+                  const firstCellClass = cn("rounded-l-2xl border border-r-0 border-border transition-colors", rowTone);
+                  const lastCellClass = cn("rounded-r-2xl border border-l-0 border-border transition-colors", rowTone);
                   const orderLines = getOrderLines(o);
+                  const isSingleLineOrder = orderLines.length === 1;
+                  const singleLine = orderLines[0];
                   const totalCtns = getOrderTotalCtns(o);
                   const totalAmount = getOrderTotalAmount(o);
 
+                  if (isSingleLineOrder && singleLine) {
+                    const productPhoto = getLineProductPhoto(singleLine);
+                    const lineTotalPcs = getLineTotalPcs(singleLine);
+                    const pcsPerCtn = getLinePcsPerCtn(singleLine);
+                    const marka = singleLine.marka?.trim() || "—";
+
+                    return <Fragment key={o.id}>
+                      <tr className="align-middle h-[60px]">
+                        <td className={cn(firstCellClass, "px-4 py-2.5")}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-[18px] font-semibold leading-tight" title={o.number || o.orderNumber || "Draft"}>{o.number || o.orderNumber || "Draft"}</div>
+                              <div className="mt-0.5 text-[12px] text-fg-subtle tabular-nums">{fmtOrderDate(o)}</div>
+                            </div>
+                            <div className="w-[74px] shrink-0">
+                              {productPhoto ? <button type="button" onClick={() => setPreviewImage({ src: productPhoto, alt: "Product photo" })} className="grid h-[58px] w-[58px] place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle"><img src={getCloudinaryOptimizedUrl(productPhoto, { width: 144, height: 144, crop: "fit" })} alt="product" className="h-full w-full object-contain" loading="lazy" decoding="async" /></button> : null}
+                              <div className={cn("mt-1 text-[12.5px] font-semibold leading-tight text-fg", productPhoto ? "w-[74px]" : "w-full")} title={marka}>{marka}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className={cn(middleCellClass, "px-3 py-2.5")}><div className={cn("truncate text-[15px] font-medium", paymentMeta.isMissing && "text-[var(--danger)]")} title={paymentName}>{paymentName}</div></td>
+                        <td className={cn(middleCellClass, "px-3 py-2.5")}><div className="truncate text-[15px] font-medium" title={o.wechatId || "—"}>{o.wechatId || "—"}</div></td>
+                        <td className={cn(middleCellClass, "px-2 py-2.5")}>{canEditOperationalFields ? <LoadingDateControl compact debugOrderId={o.id} value={rowValue.loadingDate} onChange={(next) => { setRowEdit(o, { loadingDate: next }, "date_selected"); }} /> : <span className="inline-flex rounded-full border border-border bg-bg-subtle px-2 py-1 text-[11px] text-fg-muted">{o.loadingDate ? formatDate(o.loadingDate) : "Set date"}</span>}</td>
+                        <td className={cn(middleCellClass, "px-3 py-2.5")}>
+                          <div className="text-[16px] font-semibold tabular-nums leading-tight">{totalCtns.toLocaleString()}</div>
+                          <div className="mt-1 text-[12px] text-fg-subtle tabular-nums">{pcsPerCtn.toLocaleString()} pcs/ctn</div>
+                          <div className="text-[12px] text-fg-subtle tabular-nums">{lineTotalPcs.toLocaleString()} total pcs</div>
+                        </td>
+                        <td className={cn(middleCellClass, "px-3 py-2.5 text-[20px] font-bold tabular-nums text-[var(--success)] leading-tight")}>{formatPlainAmount(totalAmount)}</td>
+                        <td className={cn(middleCellClass, "px-2 py-2.5")}><div className="text-[14px]">{canEditOperationalFields ? <OrderStatusControl compact neutral debugOrderId={o.id} options={resolveStatusOptions(o, rowValue)} value={rowValue.status} onChange={(next) => { setRowEdit(o, { status: next }, "status_selected"); }} /> : <span className="inline-flex rounded-full border border-border bg-bg-subtle px-2 py-1 text-[11px] text-fg">{o.status === "packed" ? "Loaded" : o.status}</span>}</div></td>
+                        <td className={cn(lastCellClass, "px-3 py-2.5")}><div className="flex justify-end gap-1">{canEditOperationalFields && rowDirty ? <Button size="sm" variant="primary" title="Save row changes" disabled={rowValue.saving} onClick={() => { void saveRowEdit(o); }}>Save</Button> : null}<Button size="sm" variant="secondary" title="View" onClick={() => setViewOrder(o)}><Eye size={13} /></Button><Button size="sm" variant="secondary" title="Edit" onClick={() => startEdit(o)}><SquarePen size={13} /></Button><Button size="sm" variant="secondary" title="Delete" onClick={() => removeOrder(o)}><Trash2 size={13} /></Button></div></td>
+                      </tr>
+                    </Fragment>;
+                  }
+
                   return <Fragment key={o.id}>
-                    <tr className="align-middle h-[68px]">
-                      <td className={cn(firstCellClass, "px-4 py-3")}><div className="text-[14px] font-medium tabular-nums">{fmtDateTime(o)}</div></td>
-                      <td className={cn(middleCellClass, "px-3")}><div className="text-[15px] font-semibold">{o.number || o.orderNumber || "Draft"}</div></td>
-                      <td className={cn(middleCellClass, "px-3")}><div className={paymentMeta.isMissing ? "text-[13px] text-[var(--danger)]" : "text-[14px] font-medium"}>{paymentName}</div>{o.paymentAgentSnapshot?.name && o.paymentAgentSnapshot?.name !== paymentName ? <div className="text-[11px] text-fg-subtle">{o.paymentAgentSnapshot.name}</div> : null}</td>
-                      <td className={cn(middleCellClass, "px-3")}><div className="text-[14px] font-medium">{o.wechatId || "—"}</div></td>
-                      <td className={cn(middleCellClass, "px-3")}>{canEditOperationalFields ? <LoadingDateControl debugOrderId={o.id} value={rowValue.loadingDate} onChange={(next) => { setRowEdit(o, { loadingDate: next }, "date_selected"); }} /> : <span className="inline-flex rounded-full border border-border bg-bg-subtle px-2.5 py-1 text-[12px] text-fg-muted">{o.loadingDate ? formatDate(o.loadingDate) : "Set date"}</span>}</td>
-                      <td className={cn(middleCellClass, "px-3 text-[14px] font-semibold tabular-nums")}>{totalCtns.toLocaleString()}</td>
-                      <td className={cn(middleCellClass, "px-3 text-[15px] font-semibold tabular-nums text-[var(--success)]")}>{formatPlainAmount(totalAmount)}</td>
-                      <td className={cn(middleCellClass, "px-3")}>{canEditOperationalFields ? <OrderStatusControl debugOrderId={o.id} options={resolveStatusOptions(o, rowValue)} value={rowValue.status} onChange={(next) => { setRowEdit(o, { status: next }, "status_selected"); }} /> : <span className="inline-flex rounded-full border border-border bg-bg-subtle px-2.5 py-1 text-[12px] text-fg">{o.status === "packed" ? "Loaded" : o.status}</span>}</td>
-                      <td className={cn(lastCellClass, "px-4")}><div className="flex justify-end gap-1.5">{canEditOperationalFields && rowDirty ? <Button size="sm" variant="primary" title="Save row changes" disabled={rowValue.saving} onClick={() => { void saveRowEdit(o); }}>{rowValue.saving ? "Saving..." : "Save"}</Button> : null}<Button size="sm" variant="secondary" title="View" onClick={() => setViewOrder(o)}><Eye size={13} /></Button><Button size="sm" variant="secondary" title="Edit" onClick={() => startEdit(o)}><SquarePen size={13} /></Button><Button size="sm" variant="secondary" title="Delete" onClick={() => removeOrder(o)}><Trash2 size={13} /></Button></div></td>
+                    <tr className="align-middle h-[60px]">
+                      <td className={cn(firstCellClass, "px-4 py-2.5")}><div className="truncate text-[18px] font-semibold leading-tight" title={o.number || o.orderNumber || "Draft"}>{o.number || o.orderNumber || "Draft"}</div><div className="mt-0.5 text-[12px] text-fg-subtle tabular-nums">{fmtOrderDate(o)}</div></td>
+                      <td className={cn(middleCellClass, "px-3 py-2.5")}><div className={cn("truncate text-[15px] font-medium", paymentMeta.isMissing && "text-[var(--danger)]")} title={paymentName}>{paymentName}</div>{o.paymentAgentSnapshot?.name && o.paymentAgentSnapshot?.name !== paymentName ? <div className="truncate text-[11px] text-fg-subtle" title={o.paymentAgentSnapshot.name}>{o.paymentAgentSnapshot.name}</div> : null}</td>
+                      <td className={cn(middleCellClass, "px-3 py-2.5")}><div className="truncate text-[15px] font-medium" title={o.wechatId || "—"}>{o.wechatId || "—"}</div></td>
+                      <td className={cn(middleCellClass, "px-2 py-2.5")}>{canEditOperationalFields ? <LoadingDateControl compact debugOrderId={o.id} value={rowValue.loadingDate} onChange={(next) => { setRowEdit(o, { loadingDate: next }, "date_selected"); }} /> : <span className="inline-flex rounded-full border border-border bg-bg-subtle px-2 py-1 text-[11px] text-fg-muted">{o.loadingDate ? formatDate(o.loadingDate) : "Set date"}</span>}</td>
+                      <td className={cn(middleCellClass, "px-3 py-2.5 text-[16px] font-semibold tabular-nums")}>{totalCtns.toLocaleString()}</td>
+                      <td className={cn(middleCellClass, "px-3 py-2.5 text-[20px] font-bold tabular-nums text-[var(--success)] leading-tight")}>{formatPlainAmount(totalAmount)}</td>
+                      <td className={cn(middleCellClass, "px-2 py-2.5")}><div className="text-[14px]">{canEditOperationalFields ? <OrderStatusControl compact neutral debugOrderId={o.id} options={resolveStatusOptions(o, rowValue)} value={rowValue.status} onChange={(next) => { setRowEdit(o, { status: next }, "status_selected"); }} /> : <span className="inline-flex rounded-full border border-border bg-bg-subtle px-2 py-1 text-[11px] text-fg">{o.status === "packed" ? "Loaded" : o.status}</span>}</div></td>
+                      <td className={cn(lastCellClass, "px-3 py-2.5")}><div className="flex justify-end gap-1">{canEditOperationalFields && rowDirty ? <Button size="sm" variant="primary" title="Save row changes" disabled={rowValue.saving} onClick={() => { void saveRowEdit(o); }}>Save</Button> : null}<Button size="sm" variant="secondary" title="View" onClick={() => setViewOrder(o)}><Eye size={13} /></Button><Button size="sm" variant="secondary" title="Edit" onClick={() => startEdit(o)}><SquarePen size={13} /></Button><Button size="sm" variant="secondary" title="Delete" onClick={() => removeOrder(o)}><Trash2 size={13} /></Button></div></td>
                     </tr>
                     <tr>
-                      <td colSpan={9} className="px-0 pb-4 pt-2">
-                        <div className="ml-[2.5%] overflow-x-auto rounded-2xl border border-border/80 bg-bg-card">
-                          <table className="w-full min-w-[1180px] text-[12.5px]">
+                      <td colSpan={8} className="px-0 pb-4 pt-2">
+                        <div className="ml-[2.5%] w-[92.5%] overflow-x-auto rounded-xl border border-border/70 bg-bg-subtle/55">
+                          <table className="w-full min-w-[980px] table-auto text-[12px]">
                             <thead className="bg-bg-subtle/50">
-                              <tr className="text-left text-[11px] uppercase tracking-[0.04em] text-fg-subtle">
-                                <th className="w-[96px] px-3 py-2">Dim Photo</th>
-                                <th className="w-[116px] px-3 py-2">Product Photo</th>
-                                <th className="px-3 py-2 whitespace-nowrap">Marka</th>
-                                <th className="px-3 py-2 whitespace-nowrap">Details</th>
-                                <th className="px-3 py-2 whitespace-nowrap">CTNS</th>
-                                <th className="px-3 py-2 whitespace-nowrap">Pcs/Ctn</th>
-                                <th className="px-3 py-2 whitespace-nowrap">Total Pcs</th>
-                                <th className="px-3 py-2 whitespace-nowrap">Rate/Pcs</th>
-                                <th className="px-3 py-2 whitespace-nowrap">Line Total Amount</th>
-                                <th className="px-3 py-2 whitespace-nowrap">Customer</th>
+                              <tr className="text-left text-[10.5px] uppercase tracking-[0.06em] text-fg-subtle">
+                                <th className="w-[76px] px-2 py-2">Dim Photo</th>
+                                <th className="w-[88px] px-2 py-2">Product Photo</th>
+                                <th className="min-w-[190px] px-3 py-2">Marka</th>
+                                <th className="w-[130px] px-2 py-2">Details</th>
+                                <th className="w-[56px] px-2 py-2 whitespace-nowrap">CTNS</th>
+                                <th className="w-[66px] px-2 py-2 whitespace-nowrap">PCS/CTN</th>
+                                <th className="w-[70px] px-2 py-2 whitespace-nowrap">Total PCS</th>
+                                <th className="w-[76px] px-2 py-2 whitespace-nowrap">Rate</th>
+                                <th className="w-[118px] px-3 py-2 whitespace-nowrap">Line Total Amount</th>
+                                <th className="w-[144px] px-3 py-2">Customer</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -750,19 +797,20 @@ await recalculateFromOrders(orders.filter((x) => x.id !== o.id && x.status === "
                                 const lineTotalPcs = getLineTotalPcs(line);
                                 const lineRate = getLineRate(line);
                                 const lineAmount = getLineAmount(line);
-                                const details = joinLineDetails(line) || "—";
+                                const detailLines = getVisibleLineDetails(line);
+                                const detailTitle = detailLines.length > 0 ? detailLines.join("\n") : "—";
 
                                 return <tr key={line.id} className="border-t border-border/70 align-middle">
-                                  <td className="px-3 py-3">{dimPhoto ? <button type="button" onClick={() => setPreviewImage({ src: dimPhoto, alt: "Dim photo" })} className="grid h-16 w-16 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle"><img src={getCloudinaryOptimizedUrl(dimPhoto, { width: 120, height: 120, crop: "fit" })} alt="dim" className="h-full w-full object-contain" loading="lazy" decoding="async" /></button> : null}</td>
-                                  <td className="px-3 py-3">{productPhoto ? <button type="button" onClick={() => setPreviewImage({ src: productPhoto, alt: "Product photo" })} className="grid h-20 w-20 place-items-center overflow-hidden rounded-xl border border-border bg-bg-subtle"><img src={getCloudinaryOptimizedUrl(productPhoto, { width: 180, height: 180, crop: "fit" })} alt="product" className="h-full w-full object-contain" loading="lazy" decoding="async" /></button> : null}</td>
-                                  <td className="px-3 py-3 font-semibold whitespace-nowrap">{line.marka || "—"}</td>
-                                  <td className="px-3 py-3 font-medium whitespace-nowrap">{details}</td>
-                                  <td className="px-3 py-3 font-semibold tabular-nums whitespace-nowrap">{getLineCtns(line).toLocaleString()}</td>
-                                  <td className="px-3 py-3 font-semibold tabular-nums whitespace-nowrap">{getLinePcsPerCtn(line).toLocaleString()}</td>
-                                  <td className="px-3 py-3 font-semibold tabular-nums whitespace-nowrap">{lineTotalPcs.toLocaleString()}</td>
-                                  <td className="px-3 py-3 font-semibold tabular-nums whitespace-nowrap">{formatPlainAmount(lineRate)}</td>
-                                  <td className="px-3 py-3 font-semibold tabular-nums whitespace-nowrap text-[var(--success)]">{formatPlainAmount(lineAmount)}</td>
-                                  <td className="px-3 py-3 whitespace-nowrap">{getLineCustomerName(line)}</td>
+                                  <td className="px-2 py-2.5 align-top">{dimPhoto ? <button type="button" onClick={() => setPreviewImage({ src: dimPhoto, alt: "Dim photo" })} className="grid h-14 w-14 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle"><img src={getCloudinaryOptimizedUrl(dimPhoto, { width: 120, height: 120, crop: "fit" })} alt="dim" className="h-full w-full object-contain" loading="lazy" decoding="async" /></button> : <span className="text-[10px] text-fg-subtle">—</span>}</td>
+                                  <td className="px-2 py-2.5 align-top">{productPhoto ? <button type="button" onClick={() => setPreviewImage({ src: productPhoto, alt: "Product photo" })} className="grid h-[72px] w-[72px] place-items-center overflow-hidden rounded-xl border border-border bg-bg-subtle"><img src={getCloudinaryOptimizedUrl(productPhoto, { width: 180, height: 180, crop: "fit" })} alt="product" className="h-full w-full object-contain" loading="lazy" decoding="async" /></button> : <span className="text-[10px] text-fg-subtle">—</span>}</td>
+                                  <td className="px-3 py-2.5 align-top"><div className="text-[17px] font-semibold leading-tight" title={line.marka || "—"}>{line.marka || "—"}</div></td>
+                                  <td className="px-2 py-2.5 align-top"><div className="space-y-0.5 text-[13.5px] font-medium leading-tight text-fg-muted" title={detailTitle}>{detailLines.length > 0 ? detailLines.map((detail, index) => <div key={`${line.id}-detail-${index}`}>{detail}</div>) : <div>—</div>}</div></td>
+                                  <td className="px-2 py-2.5 align-top text-[14px] font-semibold tabular-nums whitespace-nowrap">{getLineCtns(line).toLocaleString()}</td>
+                                  <td className="px-2 py-2.5 align-top text-[14px] font-semibold tabular-nums whitespace-nowrap">{getLinePcsPerCtn(line).toLocaleString()}</td>
+                                  <td className="px-2 py-2.5 align-top text-[14px] font-semibold tabular-nums whitespace-nowrap">{lineTotalPcs.toLocaleString()}</td>
+                                  <td className="px-2 py-2.5 align-top text-[14px] font-medium tabular-nums whitespace-nowrap">{formatPlainAmount(lineRate)}</td>
+                                  <td className="px-3 py-2.5 align-top text-[17px] font-bold tabular-nums whitespace-nowrap text-[var(--success)]">{formatPlainAmount(lineAmount)}</td>
+                                  <td className="px-3 py-2.5 align-top"><div className="truncate text-[14px] font-medium" title={getLineCustomerName(line)}>{getLineCustomerName(line)}</div></td>
                                 </tr>;
                               })}
                             </tbody>
