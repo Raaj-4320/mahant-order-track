@@ -45,8 +45,8 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
 
   const orderNo = order.number || order.orderNumber || "—";
   const hasDimWeightColumn = order.lines.some((line) => Boolean(getLineDimensionPhoto(line) || line.picDim?.trim()));
-  const leadingFooterColSpan = hasDimWeightColumn ? 7 : 6;
-  const emptyStateColSpan = hasDimWeightColumn ? 11 : 10;
+  const leadingFooterColSpan = hasDimWeightColumn ? 6 : 5;
+  const emptyStateColSpan = hasDimWeightColumn ? 10 : 9;
   const getVisibleDetails = (line: Order["lines"][number]) => {
     const parts = getLineDetailsParts(line);
     return [parts.detail1, parts.detail2, parts.detail3].map((part) => part?.trim() || "").filter(Boolean);
@@ -266,7 +266,6 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
               <div className="inline-block w-fit align-top">
               <table className="inline-table w-max min-w-0 table-auto text-[12px]">
                 <colgroup>
-                  <col style={{ width: "42px" }} />
                   {hasDimWeightColumn ? <col className="w-[1%]" /> : null}
                   <col className="w-[1%]" />
                   <col className="w-[1%]" />
@@ -280,7 +279,6 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
                 </colgroup>
               <thead className="bg-[var(--brand)] text-center uppercase tracking-wide text-[var(--brand-fg)]">
                 <tr>
-                  <th className="border border-border px-1 py-2.5 text-center align-middle">#</th>
                   {hasDimWeightColumn ? <th className="border border-border px-2 py-2 text-[14px] leading-tight whitespace-nowrap">DIM/WEIGHT</th> : null}
                   <th className="border border-border px-2 py-2 text-[14px] leading-tight whitespace-nowrap">产品图</th>
                   <th className="border border-border px-2 py-2.5 text-[14px] whitespace-nowrap">MARKA</th>
@@ -294,7 +292,7 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
                 </tr>
               </thead>
               <tbody>
-                {order.lines.map((line, idx) => {
+                {order.lines.map((line) => {
                   const totalPcs = (line.totalCtns || 0) * (line.pcsPerCtn || 0);
                   const lineTotal = totalPcs * (line.rmbPerPcs || 0);
                   const productPhoto = getLineProductPhoto(line);
@@ -307,9 +305,6 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
 
                   return (
                     <tr key={line.id} className="align-middle">
-                      <td className="border border-border px-0.5 py-0 text-center align-middle whitespace-nowrap">
-                        <span className="inline-block text-[15px] font-semibold leading-none tabular-nums">{idx + 1}</span>
-                      </td>
                       {hasDimWeightColumn ? (
                         <td className="border border-border px-2 py-2 align-top">
                           {hasDimWeightContent ? (
@@ -362,13 +357,11 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
                         </div>
                       </td>
                       <td className="border border-border px-2.5 py-1.5 text-[18px] font-bold leading-tight break-words whitespace-normal">
-                        <div className="inline-block max-w-[220px]">{line.marka || "—"}</div>
+                        <div className="inline-block whitespace-nowrap">{line.marka || "—"}</div>
                       </td>
-                      <td className="border border-border px-2.5 py-1.5 text-[18px] font-bold leading-tight break-words whitespace-normal">
+                      <td className="border border-border px-2.5 py-1.5 text-[18px] font-bold leading-tight">
                         {hasAnyDetail ? (
-                          <div className="inline-block max-w-[300px] space-y-0.5">
-                            {visibleDetails.map((detail, detailIndex) => <div key={`${line.id}-detail-${detailIndex}`}>{detail}</div>)}
-                          </div>
+                          <div className="inline-block whitespace-nowrap">{visibleDetails.join(" / ")}</div>
                         ) : (
                           "—"
                         )}

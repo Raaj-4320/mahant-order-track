@@ -1,6 +1,6 @@
-"use client";
+﻿"use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
 import { OrderForm, newLine } from "@/components/orders/OrderForm";
 import { OrderFooter } from "@/components/orders/OrderFooter";
@@ -26,7 +26,6 @@ import { cn } from "@/lib/cn";
 import { getOrderPaymentAgentDisplay } from "@/lib/orderDisplay";
 import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
 import { useTheme } from "@/components/ThemeProvider";
-import { FloatingPortal } from "@/components/ui/FloatingPortal";
 import { ImageLightbox } from "@/components/ui/ImageLightbox";
 import { ordersDataSourceSelection } from "@/lib/runtimeConfig";
 import { LoadingDateControl } from "@/components/orders/LoadingDateControl";
@@ -130,8 +129,6 @@ export default function OrdersPage() {
   const [headerPaymentQuery, setHeaderPaymentQuery] = useState("");
   const [headerPaymentOpen, setHeaderPaymentOpen] = useState(false);
   const [headerWechatOpen, setHeaderWechatOpen] = useState(false);
-  type MoreProductsPopup = { orderId: string; anchor: HTMLElement | null; lines: Array<{ line: any; idx: number; image: string; marka: string }> } | null;
-  const [hoverPreview, setHoverPreview] = useState<MoreProductsPopup>(null);
   const [previewImage, setPreviewImage] = useState<{ src: string; alt: string; caption?: string } | null>(null);
   const [rowEdits, setRowEdits] = useState<Record<string, RowEditState>>({});
 
@@ -182,7 +179,7 @@ export default function OrdersPage() {
     const q = headerPaymentQuery.trim().toLowerCase();
     return paymentAgents.filter((p) => !q || p.name.toLowerCase().includes(q) || (p.agentCode || "").toLowerCase().includes(q) || p.id.toLowerCase().includes(q)).slice(0, 4);
   }, [paymentAgents, headerPaymentQuery]);
-  const paymentLabel = (p: any) => (p.creditBalance ?? 0) > 0 ? `${p.name} — Credit: ${(p.creditBalance ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : p.name;
+  const paymentLabel = (p: any) => (p.creditBalance ?? 0) > 0 ? `${p.name} â€” Credit: ${(p.creditBalance ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : p.name;
 
   const headerWechatSuggestions = useMemo(() => {
     const q = (draft.wechatId || "").trim().toLowerCase();
@@ -560,7 +557,14 @@ try {
   const formatPlainAmount = (value: number) =>
     value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const getPaymentAgentMeta = (order: Order) => getOrderPaymentAgentDisplay(order, paymentAgents);
-  const getTotalCtns = (order: Order) => order.lines.reduce((sum, line) => sum + (Number(line.totalCtns) || 0), 0);
+  const getOrderLines = (order: Order) => order.lines || [];
+  const getLineCtns = (line: Order["lines"][number]) => Number(line.totalCtns) || 0;
+  const getLinePcsPerCtn = (line: Order["lines"][number]) => Number(line.pcsPerCtn) || 0;
+  const getLineTotalPcs = (line: Order["lines"][number]) => getLineCtns(line) * getLinePcsPerCtn(line);
+  const getLineRate = (line: Order["lines"][number]) => Number(line.rmbPerPcs) || 0;
+  const getLineAmount = (line: Order["lines"][number]) => getLineTotalPcs(line) * getLineRate(line);
+  const getOrderTotalCtns = (order: Order) => getOrderLines(order).reduce((sum, line) => sum + getLineCtns(line), 0);
+  const getOrderTotalAmount = (order: Order) => getOrderLines(order).reduce((sum, line) => sum + getLineAmount(line), 0);
   const getFirstDraftPhoto = (order: Order) => order.lines.find((line) => line.productPhotoUrl || line.photoUrl)?.productPhotoUrl || order.lines.find((line) => line.productPhotoUrl || line.photoUrl)?.photoUrl || "";
   const renderDraftMissing = () => <span className="text-[var(--danger)]">Not present</span>;
   const getDraftMarkaSummary = (order: Order) => {
@@ -568,20 +572,18 @@ try {
     if (markas.length === 0) return null;
     return markas.length === 1 ? markas[0] : `${markas[0]} +${markas.length - 1} more`;
   };
-  const getHistoryLineImage = (line: any) => line.productPhotoUrl || line.productImage || line.image || line.photoUrl || "";
-
-  const morePopupRef = useRef<HTMLDivElement | null>(null);
-  const openMorePopup = (orderId: string, anchor: HTMLElement, lines: Array<{ line: any; idx: number; image: string; marka: string }>) =>
-    setHoverPreview({ orderId, anchor, lines });
-  const getHistoryPhotoCells = (order: Order) => {
-    const lines = order.lines.map((line, idx) => ({ line, idx, image: getHistoryLineImage(line), marka: (line.marka || "").trim() || "No marka" }));
-    const first = lines[0] ?? null;
-    const more = lines.slice(1);
-    return { first, more, all: lines };
+  const getLineProductPhoto = (line: Order["lines"][number]) => {
+    const candidate = line as Order["lines"][number] & { productImage?: string; image?: string };
+    return candidate.productPhotoUrl || candidate.productImage || candidate.image || "";
   };
+  const getLineDimPhoto = (line: Order["lines"][number]) => {
+    const candidate = line as Order["lines"][number] & { dimensionPhotoUrl?: string; sizePhotoUrl?: string };
+    return candidate.photoUrl || candidate.dimensionPhotoUrl || candidate.sizePhotoUrl || "";
+  };
+  const getLineCustomerName = (line: Order["lines"][number]) => line.customerName || line.customerSnapshot?.name || line.customerId || "â€”";
   const fmtDateTime = (order: Order) => {
     const raw = order.date || order.createdAt || order.updatedAt;
-    if (!raw) return "—";
+    if (!raw) return "â€”";
     const d = new Date(raw);
     if (Number.isNaN(d.getTime())) return formatDate(raw);
     return formatIndianDateTime(d);
@@ -636,32 +638,13 @@ await recalculateFromOrders(orders.filter((x) => x.id !== o.id && x.status === "
     return () => document.removeEventListener("mousedown", onClick);
   }, [pickerOpen]);
 
-  useEffect(() => {
-    if (!hoverPreview?.anchor) return;
-    const onDown = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (hoverPreview.anchor?.contains(target)) return;
-      if (morePopupRef.current?.contains(target)) return;
-      setHoverPreview(null);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setHoverPreview(null);
-    };
-    document.addEventListener("mousedown", onDown);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [hoverPreview]);
-
   return (
     <div className="flex h-screen min-h-0 flex-col">
       <div className="flex flex-wrap items-center gap-2 px-5 py-3 border-b border-border bg-bg">
         <div className="min-w-[280px] flex-1 max-w-xl"><Input value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="Search orders, customers..." leadingIcon={<Search size={15} />} /></div>
         <div className="relative" ref={pickerRef}>
-          <Button size="sm" onClick={() => setPickerOpen((v) => !v)}><List size={14} /><span className="text-fg-muted">Order</span><span className="font-semibold">{(editingOrder?.number || draft.number || history[0]?.number || "—")}</span><ChevronDown size={13} /></Button>
-          {pickerOpen && <div className="absolute left-0 top-full z-20 mt-2 w-72 rounded-xl border border-border bg-bg-card p-1.5 shadow-card max-h-[320px] overflow-y-auto">{activeOrders.slice(0,30).map((o) => <button key={o.id} onClick={() => { setPickerOpen(false); startEdit(o); }} className="block w-full rounded-md px-2.5 py-2 text-left text-[12.5px] hover:bg-bg-subtle transition-colors"><div className="flex items-center justify-between"><span className="text-[14px] font-semibold">{o.number || o.orderNumber || "Draft"}</span><span className="text-[11px] text-fg-subtle">{formatDate(o.date)}</span></div><div className="mt-0.5 text-[11.5px] text-fg-muted">{o.lines.length} lines · {formatPlainAmount(orderTotal(o))}</div></button>)}</div>}
+          <Button size="sm" onClick={() => setPickerOpen((v) => !v)}><List size={14} /><span className="text-fg-muted">Order</span><span className="font-semibold">{(editingOrder?.number || draft.number || history[0]?.number || "â€”")}</span><ChevronDown size={13} /></Button>
+          {pickerOpen && <div className="absolute left-0 top-full z-20 mt-2 w-72 rounded-xl border border-border bg-bg-card p-1.5 shadow-card max-h-[320px] overflow-y-auto">{activeOrders.slice(0,30).map((o) => <button key={o.id} onClick={() => { setPickerOpen(false); startEdit(o); }} className="block w-full rounded-md px-2.5 py-2 text-left text-[12.5px] hover:bg-bg-subtle transition-colors"><div className="flex items-center justify-between"><span className="text-[14px] font-semibold">{o.number || o.orderNumber || "Draft"}</span><span className="text-[11px] text-fg-subtle">{formatDate(o.date)}</span></div><div className="mt-0.5 text-[11.5px] text-fg-muted">{o.lines.length} lines Â· {formatPlainAmount(orderTotal(o))}</div></button>)}</div>}
         </div>
         <Button size="sm" variant="secondary" disabled title="Filtering is not enabled in this phase."><Filter size={14} />Filter</Button>
         <Button size="sm" variant="secondary" disabled title="Sorting is not enabled in this phase."><ArrowUpDown size={14} />Sort</Button>
@@ -688,10 +671,10 @@ await recalculateFromOrders(orders.filter((x) => x.id !== o.id && x.status === "
                   const paymentMeta = getPaymentAgentMeta(o);
                   const marka = getDraftMarkaSummary(o);
                   const totalPcs = o.lines.reduce((sum, line) => sum + ((Number(line.totalCtns) || 0) * (Number(line.pcsPerCtn) || 0)), 0);
-                  const totalCtns = getTotalCtns(o);
-                  const totalAmount = orderTotal(o);
+                  const totalCtns = getOrderTotalCtns(o);
+                  const totalAmount = getOrderTotalAmount(o);
                   return <tr key={o.id} className="border-t border-border/80 hover:bg-bg-subtle/40 align-middle">
-                    <td className="px-4 py-3"><div className="grid h-10 w-10 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle">{photo ? <button type="button" title="Open image preview" aria-label="Open image preview" className="h-full w-full cursor-zoom-in" onClick={() => setPreviewImage({ src: photo, alt: "Draft line photo" })}><img src={photo} alt="draft line" className="h-full w-full object-cover" loading="lazy" decoding="async" /></button> : <span className="text-[10px] text-fg-subtle">—</span>}</div></td>
+                    <td className="px-4 py-3"><div className="grid h-10 w-10 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle">{photo ? <button type="button" title="Open image preview" aria-label="Open image preview" className="h-full w-full cursor-zoom-in" onClick={() => setPreviewImage({ src: photo, alt: "Draft line photo" })}><img src={photo} alt="draft line" className="h-full w-full object-cover" loading="lazy" decoding="async" /></button> : <span className="text-[10px] text-fg-subtle">â€”</span>}</div></td>
                     <td>{o.wechatId?.trim() ? <span>{o.wechatId}</span> : renderDraftMissing()}</td>
                     <td>{paymentMeta.isMissing ? renderDraftMissing() : <span>{paymentMeta.value}</span>}</td>
                     <td>{marka ? <span>{marka}</span> : renderDraftMissing()}</td>
@@ -708,17 +691,15 @@ await recalculateFromOrders(orders.filter((x) => x.id !== o.id && x.status === "
         <section className="card overflow-hidden">
           {/* <div className="flex items-center justify-between px-4 py-3 border-b border-border"><h3 className="font-semibold">Order History</h3><div className="text-[12px] text-fg-subtle">Showing 1 to {history.length} of {activeOrders.length} orders</div></div> */}
           <div className="overflow-x-auto">
-            <table className="w-full text-[13px]">
+            <table className="w-full min-w-[1320px] text-[13px]">
               <thead className="bg-bg-subtle/70">
                 <tr className="text-left text-[13px] uppercase  text-fg-subtle">
-                  <th className="px-4 py-2 w-[180 px]">Order Number</th><th className="w-[120px]">Product</th><th className="w-[140px]">Marka</th><th className="w-[105px]">Items</th><th className="w-[190px]">Paid By</th><th className="w-[130px]">Order Total</th><th className="w-[160px]">Loading Date</th><th className="w-[120px]">Status</th><th className="text-right px-4 w-[120px]">Actions</th>
+                  <th className="px-4 py-2 w-[150px]">Date</th><th className="w-[150px]">Order Number</th><th className="w-[190px]">Paid By</th><th className="w-[180px]">WeChat ID</th><th className="w-[170px]">Loading Date</th><th className="w-[120px]">Total CTNS</th><th className="w-[150px]">Total Amount</th><th className="w-[120px]">Status</th><th className="text-right px-4 w-[170px]">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {history.length === 0 ? <tr><td colSpan={9} className="px-4 py-8 text-center text-fg-subtle">No orders yet. Click Add Order to create one.</td></tr> : history.map((o) => {
-                  const productCount = o.lines.length;
                   const paymentMeta = getPaymentAgentMeta(o);
-                  const { first, more, all } = getHistoryPhotoCells(o);
                   const paymentName = paymentMeta.value;
                   const canEditOperationalFields = o.status !== "draft" && o.status !== "archived";
                   const rowValue = getRowValue(o);
@@ -728,46 +709,73 @@ await recalculateFromOrders(orders.filter((x) => x.id !== o.id && x.status === "
                   const middleCellClass = cn("border-y bg-bg-card transition-colors", rowTone);
                   const firstCellClass = cn("rounded-l-2xl border border-r-0 bg-bg-card transition-colors", rowTone);
                   const lastCellClass = cn("rounded-r-2xl border border-l-0 bg-bg-card transition-colors", rowTone);
+                  const orderLines = getOrderLines(o);
+                  const totalCtns = getOrderTotalCtns(o);
+                  const totalAmount = getOrderTotalAmount(o);
 
-                  return <tr key={o.id} className="align-middle h-[68px]">
-                    <td className={cn(firstCellClass, "px-4 py-3")}><div className="text-[20px] font-semibold">{o.number || o.orderNumber || "Draft"}</div><div className="text-[12px] text-fg-subtle truncate max-w-[170px]">{fmtDateTime(o)}</div></td>
-                    <td className={middleCellClass}>
-                      <div className="flex items-center gap-2">
-                        {first ? <button type="button" onClick={() => first.image && setPreviewImage({ src: first.image, alt: "Product photo" })} className="grid h-14 w-14 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle">{first.image ? <img src={getCloudinaryOptimizedUrl(first.image, { width: 140, height: 140, crop: "fit" })} alt="product" className="h-full w-full object-contain" loading="lazy" decoding="async" /> : <span className="text-[10px] text-fg-subtle">—</span>}</button> : null}
-                        {more.length > 0 ? <button type="button" onClick={(e) => openMorePopup(o.id, e.currentTarget, all)} className="rounded-full border border-border bg-bg-subtle px-2 py-1 text-[11px] text-fg-muted">+more {more.length}</button> : null}
-                      </div>
-                    </td>
-                    <td className={middleCellClass}><div className="max-w-[130px] truncate text-[14px] font-medium">{first?.marka || "No marka"}</div></td>
-                    <td className={middleCellClass}><span className="inline-flex rounded-full border border-border bg-bg-subtle px-2.5 py-1 text-[12.5px]">{productCount} {productCount === 1 ? "Item" : "Items"}</span></td>
-                    <td className={middleCellClass}><div className={paymentMeta.isMissing ? "text-[var(--danger)] text-[13px]" : "text-[14px] font-medium" }>{paymentName}</div>{o.paymentAgentSnapshot?.name && o.paymentAgentSnapshot?.name !== paymentName ? <div className="text-[11px] text-fg-subtle">{o.paymentAgentSnapshot.name}</div> : null}</td>
-                    <td className={cn(middleCellClass, "font-semibold text-[var(--success)] text-[15px] tabular-nums")}>{formatPlainAmount(orderTotal(o))}</td>
-                    <td className={middleCellClass}>{canEditOperationalFields ? <LoadingDateControl debugOrderId={o.id} value={rowValue.loadingDate} onChange={(next) => { setRowEdit(o, { loadingDate: next }, "date_selected"); }} /> : <span className="inline-flex rounded-full border border-border bg-bg-subtle px-2.5 py-1 text-[12px] text-fg-muted">{o.loadingDate ? formatDate(o.loadingDate) : "Set date"}</span>}</td>
-                    <td className={middleCellClass}>{canEditOperationalFields ? <OrderStatusControl debugOrderId={o.id} options={resolveStatusOptions(o, rowValue)} value={rowValue.status} onChange={(next) => { setRowEdit(o, { status: next }, "status_selected"); }} /> : <span className="inline-flex rounded-full border border-border bg-bg-subtle px-2.5 py-1 text-[12px] text-fg">{o.status === "packed" ? "Loaded" : o.status}</span>}</td>
-                    <td className={cn(lastCellClass, "px-4")}><div className="flex justify-end gap-1.5">{canEditOperationalFields && rowDirty ? <Button size="sm" variant="primary" title="Save row changes" disabled={rowValue.saving} onClick={() => { void saveRowEdit(o); }}>{rowValue.saving ? "Saving..." : "Save"}</Button> : null}<Button size="sm" variant="secondary" title="View" onClick={() => setViewOrder(o)}><Eye size={13} /></Button><Button size="sm" variant="secondary" title="Edit" onClick={() => startEdit(o)}><SquarePen size={13} /></Button><Button size="sm" variant="secondary" title="Delete" onClick={() => removeOrder(o)}><Trash2 size={13} /></Button></div></td>
-                  </tr>;
+                  return <Fragment key={o.id}>
+                    <tr className="align-middle h-[68px]">
+                      <td className={cn(firstCellClass, "px-4 py-3")}><div className="text-[14px] font-medium tabular-nums">{fmtDateTime(o)}</div></td>
+                      <td className={cn(middleCellClass, "px-3")}><div className="text-[15px] font-semibold">{o.number || o.orderNumber || "Draft"}</div></td>
+                      <td className={cn(middleCellClass, "px-3")}><div className={paymentMeta.isMissing ? "text-[13px] text-[var(--danger)]" : "text-[14px] font-medium"}>{paymentName}</div>{o.paymentAgentSnapshot?.name && o.paymentAgentSnapshot?.name !== paymentName ? <div className="text-[11px] text-fg-subtle">{o.paymentAgentSnapshot.name}</div> : null}</td>
+                      <td className={cn(middleCellClass, "px-3")}><div className="text-[14px] font-medium">{o.wechatId || "—"}</div></td>
+                      <td className={cn(middleCellClass, "px-3")}>{canEditOperationalFields ? <LoadingDateControl debugOrderId={o.id} value={rowValue.loadingDate} onChange={(next) => { setRowEdit(o, { loadingDate: next }, "date_selected"); }} /> : <span className="inline-flex rounded-full border border-border bg-bg-subtle px-2.5 py-1 text-[12px] text-fg-muted">{o.loadingDate ? formatDate(o.loadingDate) : "Set date"}</span>}</td>
+                      <td className={cn(middleCellClass, "px-3 text-[14px] font-semibold tabular-nums")}>{totalCtns.toLocaleString()}</td>
+                      <td className={cn(middleCellClass, "px-3 text-[15px] font-semibold tabular-nums text-[var(--success)]")}>{formatPlainAmount(totalAmount)}</td>
+                      <td className={cn(middleCellClass, "px-3")}>{canEditOperationalFields ? <OrderStatusControl debugOrderId={o.id} options={resolveStatusOptions(o, rowValue)} value={rowValue.status} onChange={(next) => { setRowEdit(o, { status: next }, "status_selected"); }} /> : <span className="inline-flex rounded-full border border-border bg-bg-subtle px-2.5 py-1 text-[12px] text-fg">{o.status === "packed" ? "Loaded" : o.status}</span>}</td>
+                      <td className={cn(lastCellClass, "px-4")}><div className="flex justify-end gap-1.5">{canEditOperationalFields && rowDirty ? <Button size="sm" variant="primary" title="Save row changes" disabled={rowValue.saving} onClick={() => { void saveRowEdit(o); }}>{rowValue.saving ? "Saving..." : "Save"}</Button> : null}<Button size="sm" variant="secondary" title="View" onClick={() => setViewOrder(o)}><Eye size={13} /></Button><Button size="sm" variant="secondary" title="Edit" onClick={() => startEdit(o)}><SquarePen size={13} /></Button><Button size="sm" variant="secondary" title="Delete" onClick={() => removeOrder(o)}><Trash2 size={13} /></Button></div></td>
+                    </tr>
+                    <tr>
+                      <td colSpan={9} className="px-0 pb-4 pt-2">
+                        <div className="ml-[2.5%] overflow-x-auto rounded-2xl border border-border/80 bg-bg-card">
+                          <table className="w-full min-w-[1180px] text-[12.5px]">
+                            <thead className="bg-bg-subtle/50">
+                              <tr className="text-left text-[11px] uppercase tracking-[0.04em] text-fg-subtle">
+                                <th className="w-[96px] px-3 py-2">Dim Photo</th>
+                                <th className="w-[116px] px-3 py-2">Product Photo</th>
+                                <th className="px-3 py-2 whitespace-nowrap">Marka</th>
+                                <th className="px-3 py-2 whitespace-nowrap">Details</th>
+                                <th className="px-3 py-2 whitespace-nowrap">CTNS</th>
+                                <th className="px-3 py-2 whitespace-nowrap">Pcs/Ctn</th>
+                                <th className="px-3 py-2 whitespace-nowrap">Total Pcs</th>
+                                <th className="px-3 py-2 whitespace-nowrap">Rate/Pcs</th>
+                                <th className="px-3 py-2 whitespace-nowrap">Line Total Amount</th>
+                                <th className="px-3 py-2 whitespace-nowrap">Customer</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {orderLines.map((line) => {
+                                const dimPhoto = getLineDimPhoto(line);
+                                const productPhoto = getLineProductPhoto(line);
+                                const lineTotalPcs = getLineTotalPcs(line);
+                                const lineRate = getLineRate(line);
+                                const lineAmount = getLineAmount(line);
+                                const details = joinLineDetails(line) || "—";
+
+                                return <tr key={line.id} className="border-t border-border/70 align-middle">
+                                  <td className="px-3 py-3">{dimPhoto ? <button type="button" onClick={() => setPreviewImage({ src: dimPhoto, alt: "Dim photo" })} className="grid h-16 w-16 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle"><img src={getCloudinaryOptimizedUrl(dimPhoto, { width: 120, height: 120, crop: "fit" })} alt="dim" className="h-full w-full object-contain" loading="lazy" decoding="async" /></button> : null}</td>
+                                  <td className="px-3 py-3">{productPhoto ? <button type="button" onClick={() => setPreviewImage({ src: productPhoto, alt: "Product photo" })} className="grid h-20 w-20 place-items-center overflow-hidden rounded-xl border border-border bg-bg-subtle"><img src={getCloudinaryOptimizedUrl(productPhoto, { width: 180, height: 180, crop: "fit" })} alt="product" className="h-full w-full object-contain" loading="lazy" decoding="async" /></button> : null}</td>
+                                  <td className="px-3 py-3 font-semibold whitespace-nowrap">{line.marka || "—"}</td>
+                                  <td className="px-3 py-3 font-medium whitespace-nowrap">{details}</td>
+                                  <td className="px-3 py-3 font-semibold tabular-nums whitespace-nowrap">{getLineCtns(line).toLocaleString()}</td>
+                                  <td className="px-3 py-3 font-semibold tabular-nums whitespace-nowrap">{getLinePcsPerCtn(line).toLocaleString()}</td>
+                                  <td className="px-3 py-3 font-semibold tabular-nums whitespace-nowrap">{lineTotalPcs.toLocaleString()}</td>
+                                  <td className="px-3 py-3 font-semibold tabular-nums whitespace-nowrap">{formatPlainAmount(lineRate)}</td>
+                                  <td className="px-3 py-3 font-semibold tabular-nums whitespace-nowrap text-[var(--success)]">{formatPlainAmount(lineAmount)}</td>
+                                  <td className="px-3 py-3 whitespace-nowrap">{getLineCustomerName(line)}</td>
+                                </tr>;
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </td>
+                    </tr>
+                  </Fragment>;
                 })}
               </tbody>
             </table>
           </div>
         </section>
-      <FloatingPortal anchorRef={{ current: hoverPreview?.anchor as any }} open={Boolean(hoverPreview?.anchor)} width={280} placement="bottom" align="center">
-        <div ref={morePopupRef} className="rounded-xl border border-border bg-bg-card p-2 shadow-card">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="text-[12px] font-semibold">Product / Marka</div>
-            <button type="button" onClick={() => setHoverPreview(null)} className="rounded-md border border-border px-1.5 text-[11px] text-fg-muted">x</button>
-          </div>
-          <div className="max-h-[50vh] space-y-2 overflow-y-auto pr-1">
-            {(hoverPreview?.lines || []).map(({ line, idx, image, marka }) => (
-              <div key={`${line.id}-${idx}`} className="flex items-center gap-2 rounded-lg border border-border/90 bg-bg p-1.5">
-                <button type="button" className="grid h-10 w-10 place-items-center overflow-hidden rounded-md border border-border bg-bg-subtle cursor-zoom-in" onClick={(e) => { e.stopPropagation(); image && setPreviewImage({ src: image, alt: "Product photo" }); }}>
-                  {image ? <img src={getCloudinaryOptimizedUrl(image, { width: 90, height: 90, crop: "fit" })} alt="product" className="h-full w-full object-contain" loading="lazy" decoding="async" /> : <span className="text-[10px] text-fg-subtle">—</span>}
-                </button>
-                <div className="min-w-0 flex-1 truncate text-[12px] font-medium">{marka}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </FloatingPortal>
       <ImageLightbox src={previewImage?.src} alt={previewImage?.alt} caption={previewImage?.caption} open={Boolean(previewImage?.src)} onClose={() => setPreviewImage(null)} />
       </main>
       {isOrderModalOpen && <div className="fixed inset-0 z-50 bg-black/45 p-3 md:p-6" onClick={onCancel}>
@@ -778,7 +786,7 @@ await recalculateFromOrders(orders.filter((x) => x.id !== o.id && x.status === "
                 <h3 className="text-[16px] font-semibold">{editingOrder ? (editingOrder.status === "draft" ? "Complete Draft" : "Edit Order") : "Add Order"}</h3>
                 {isFirebaseOrdersMode && <div className="text-[11px] text-fg-subtle mt-0.5">{autosaveStatus === "saving" ? "Saving draft..." : autosaveStatus === "saved" ? "Draft saved" : autosaveStatus === "error" ? "Draft autosave failed" : ""}</div>}
               </div>
-              <Button size="sm" variant="secondary" onClick={onCancel}>✕</Button>
+              <Button size="sm" variant="secondary" onClick={onCancel}>âœ•</Button>
             </div>
             <div className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-[minmax(220px,0.8fr)_minmax(145px,0.55fr)_minmax(145px,0.55fr)_minmax(160px,0.55fr)_minmax(220px,0.8fr)]">
               <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Payment By</span><div className="relative"><Input value={headerPaymentQuery} onFocus={() => setHeaderPaymentOpen(true)} onBlur={() => window.setTimeout(() => setHeaderPaymentOpen(false),120)} onChange={(e)=>{const next=e.target.value;
@@ -795,7 +803,7 @@ setHeaderPaymentQuery(next); setHeaderPaymentOpen(true); setDraft((d)=>({...d,pa
                 <div className="text-sm font-semibold text-amber-900">Missing before Save Order</div>
                 <ul className="mt-1 list-disc pl-5 text-[12px] text-amber-800 space-y-0.5">{validationWarning.items.map((item, idx) => <li key={`${item}-${idx}`}>{item}</li>)}</ul>
               </div>
-              <button className="text-amber-800 text-xs rounded px-1 py-0.5 hover:bg-amber-100" onClick={() => setValidationWarning({ visible: false, items: [] })}>✕</button>
+              <button className="text-amber-800 text-xs rounded px-1 py-0.5 hover:bg-amber-100" onClick={() => setValidationWarning({ visible: false, items: [] })}>âœ•</button>
             </div>
           </div> : null}
           <div className="min-h-0 flex-1 overflow-y-auto">
@@ -809,5 +817,6 @@ setHeaderPaymentQuery(next); setHeaderPaymentOpen(true); setDraft((d)=>({...d,pa
     </div>
   );
 }
+
 
 
