@@ -179,7 +179,7 @@ export default function OrdersPage() {
     const q = headerPaymentQuery.trim().toLowerCase();
     return paymentAgents.filter((p) => !q || p.name.toLowerCase().includes(q) || (p.agentCode || "").toLowerCase().includes(q) || p.id.toLowerCase().includes(q)).slice(0, 4);
   }, [paymentAgents, headerPaymentQuery]);
-  const paymentLabel = (p: any) => (p.creditBalance ?? 0) > 0 ? `${p.name} â€” Credit: ${(p.creditBalance ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : p.name;
+  const paymentLabel = (p: any) => (p.creditBalance ?? 0) > 0 ? `${p.name} â€” Credit: ${(p.creditBalance ?? 0).toLocaleString("en-US", { maximumFractionDigits: 20 })}` : p.name;
 
   const headerWechatSuggestions = useMemo(() => {
     const q = (draft.wechatId || "").trim().toLowerCase();
@@ -555,7 +555,7 @@ try {
   };
   const drafts = useMemo(() => (isFirebaseOrdersMode ? firebaseDraftOrders : orders.filter((o) => o.status === "draft")), [isFirebaseOrdersMode, orders, firebaseDraftOrders]);
   const formatPlainAmount = (value: number) =>
-    value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    value.toLocaleString("en-US", { maximumFractionDigits: 20 });
   const getPaymentAgentMeta = (order: Order) => getOrderPaymentAgentDisplay(order, paymentAgents);
   const getOrderLines = (order: Order) => order.lines || [];
   const getLineCtns = (line: Order["lines"][number]) => Number(line.totalCtns) || 0;
@@ -775,13 +775,13 @@ await recalculateFromOrders(orders.filter((x) => x.id !== o.id && x.status === "
                     <tr>
                       <td colSpan={8} className="px-0 pb-4 pt-2">
                         <div className="ml-[2.5%] w-[92.5%] overflow-x-auto rounded-xl border border-border/70 bg-bg-subtle/55">
-                          <table className="w-full min-w-[980px] table-auto text-[12px]">
+                          <table className="w-full min-w-[960px] table-auto text-[12px]">
                             <thead className="bg-bg-subtle/50">
                               <tr className="text-left text-[10.5px] uppercase tracking-[0.06em] text-fg-subtle">
                                 <th className="w-[76px] px-2 py-2">Dim Photo</th>
                                 <th className="w-[88px] px-2 py-2">Product Photo</th>
-                                <th className="min-w-[190px] px-3 py-2">Marka</th>
-                                <th className="w-[130px] px-2 py-2">Details</th>
+                                <th className="min-w-[160px] max-w-[260px] px-2.5 py-2">Marka</th>
+                                <th className="w-[122px] px-2 py-2">Details</th>
                                 <th className="w-[56px] px-2 py-2 whitespace-nowrap">CTNS</th>
                                 <th className="w-[66px] px-2 py-2 whitespace-nowrap">PCS/CTN</th>
                                 <th className="w-[70px] px-2 py-2 whitespace-nowrap">Total PCS</th>
@@ -803,7 +803,7 @@ await recalculateFromOrders(orders.filter((x) => x.id !== o.id && x.status === "
                                 return <tr key={line.id} className="border-t border-border/70 align-middle">
                                   <td className="px-2 py-2.5 align-top">{dimPhoto ? <button type="button" onClick={() => setPreviewImage({ src: dimPhoto, alt: "Dim photo" })} className="grid h-14 w-14 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle"><img src={getCloudinaryOptimizedUrl(dimPhoto, { width: 120, height: 120, crop: "fit" })} alt="dim" className="h-full w-full object-contain" loading="lazy" decoding="async" /></button> : <span className="text-[10px] text-fg-subtle">—</span>}</td>
                                   <td className="px-2 py-2.5 align-top">{productPhoto ? <button type="button" onClick={() => setPreviewImage({ src: productPhoto, alt: "Product photo" })} className="grid h-[72px] w-[72px] place-items-center overflow-hidden rounded-xl border border-border bg-bg-subtle"><img src={getCloudinaryOptimizedUrl(productPhoto, { width: 180, height: 180, crop: "fit" })} alt="product" className="h-full w-full object-contain" loading="lazy" decoding="async" /></button> : <span className="text-[10px] text-fg-subtle">—</span>}</td>
-                                  <td className="px-3 py-2.5 align-top"><div className="text-[17px] font-semibold leading-tight" title={line.marka || "—"}>{line.marka || "—"}</div></td>
+                                  <td className="px-2.5 py-2.5 align-top"><div className="max-w-[260px] text-[17px] font-semibold leading-tight" title={line.marka || "—"}>{line.marka || "—"}</div></td>
                                   <td className="px-2 py-2.5 align-top"><div className="space-y-0.5 text-[13.5px] font-medium leading-tight text-fg-muted" title={detailTitle}>{detailLines.length > 0 ? detailLines.map((detail, index) => <div key={`${line.id}-detail-${index}`}>{detail}</div>) : <div>—</div>}</div></td>
                                   <td className="px-2 py-2.5 align-top text-[14px] font-semibold tabular-nums whitespace-nowrap">{getLineCtns(line).toLocaleString()}</td>
                                   <td className="px-2 py-2.5 align-top text-[14px] font-semibold tabular-nums whitespace-nowrap">{getLinePcsPerCtn(line).toLocaleString()}</td>

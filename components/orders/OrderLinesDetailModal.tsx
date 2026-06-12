@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { ImageLightbox } from "@/components/ui/ImageLightbox";
 import { Copy, X } from "lucide-react";
 import { useRef, useState } from "react";
-import { getLineDetailsParts, joinLineDetails } from "@/lib/orderLineDetails";
+import { getLineDetailsParts } from "@/lib/orderLineDetails";
 
 type OrderLinesDetailModalProps = {
   order: Order | null;
@@ -15,7 +15,7 @@ type OrderLinesDetailModalProps = {
 };
 
 const formatPlainAmount = (value: number) =>
-  value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  value.toLocaleString("en-US", { maximumFractionDigits: 20 });
 
 const EXPORT_HIDDEN_ATTR = "data-export-hidden";
 const TwoLineHeader = ({ zh, en }: { zh: string; en?: string }) => (
@@ -56,7 +56,7 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
 
   const buildLineCopyText = (line: Order["lines"][number]) => {
     const qtyPerCtn = line.pcsPerCtn || 0;
-    const markaTitle = line.marka?.trim() || joinLineDetails(line) || "—";
+    const markaTitle = line.marka?.trim() || "—";
     return `外套编织袋唛头一 正一侧唛头如下:\n\n${markaTitle}\n\nQty/Ctn - ${qtyPerCtn} PCS\n\nGW: 待填\n\nMEAS: 待填\n\n(${orderNo || "—"})`;
   };
 
@@ -180,7 +180,7 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
       image.src = svgDataUrl;
     });
 
-    const scale = 2;
+    const scale = Math.max(2, Math.min(3, typeof window !== "undefined" ? window.devicePixelRatio || 1 : 2));
     const canvas = document.createElement("canvas");
     canvas.width = width * scale;
     canvas.height = height * scale;
@@ -190,6 +190,8 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("Canvas not supported");
 
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
     ctx.scale(scale, scale);
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, width, height);
@@ -206,7 +208,7 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
       if (!source) throw new Error("Export node not found.");
 
       const canvas = await renderExportNodeToCanvas(source);
-      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png", 1));
       if (!blob) throw new Error("Failed to create clipboard image blob");
       const canWriteClipboardImage =
         typeof navigator !== "undefined" &&
@@ -372,14 +374,14 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
                           "—"
                         )}
                       </td>
-                      <td className="border border-border px-1.5 py-1.5 text-center text-[16px] font-bold leading-tight tabular-nums whitespace-nowrap">{line.totalCtns || 0}</td>
-                      <td className="border border-border px-1.5 py-1.5 text-center text-[16px] font-bold leading-tight tabular-nums whitespace-nowrap">{line.pcsPerCtn || 0}</td>
-                      <td className="border border-border px-1.5 py-1.5 text-center text-[16px] font-bold leading-tight tabular-nums whitespace-nowrap">{totalPcs || 0}</td>
-                      <td className="border border-border px-1.5 py-1.5 text-center text-[16px] font-bold leading-tight tabular-nums whitespace-nowrap">
-                        {line.rmbPerPcs ? formatPlainAmount(line.rmbPerPcs) : "0.00"}
+                      <td className="border border-border px-1.5 py-1.5 text-center text-[18px] font-bold leading-tight tabular-nums whitespace-nowrap">{line.totalCtns || 0}</td>
+                      <td className="border border-border px-1.5 py-1.5 text-center text-[18px] font-bold leading-tight tabular-nums whitespace-nowrap">{line.pcsPerCtn || 0}</td>
+                      <td className="border border-border px-1.5 py-1.5 text-center text-[18px] font-bold leading-tight tabular-nums whitespace-nowrap">{totalPcs || 0}</td>
+                      <td className="border border-border px-1.5 py-1.5 text-center text-[18px] font-bold leading-tight tabular-nums whitespace-nowrap">
+                        {formatPlainAmount(line.rmbPerPcs || 0)}
                       </td>
-                      <td className="border border-border px-1.5 py-1.5 text-center text-[16px] font-bold leading-tight tabular-nums whitespace-nowrap">
-                        {lineTotal ? formatPlainAmount(lineTotal) : "0.00"}
+                      <td className="border border-border px-1.5 py-1.5 text-center text-[18px] font-bold leading-tight tabular-nums whitespace-nowrap">
+                        {formatPlainAmount(lineTotal || 0)}
                       </td>
                       <td className="border border-border px-1.5 py-1 text-center" data-export-hidden="true">
                         <button
@@ -417,7 +419,7 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
                   <td className="border-t-2 border-border px-1.5 py-3 text-center align-middle" data-export-hidden="true">
                     <button
                       type="button"
-                      onClick={() => copyText(order.lines.map((line) => buildLineCopyText(line)).join("\n\n\n"), "all")}
+                      onClick={() => copyText(order.lines.map((line) => buildLineCopyText(line)).join("\n\n"), "all")}
                       className="inline-flex items-center justify-center gap-1 rounded border border-border bg-bg-card px-2 py-1 text-[11px] font-semibold whitespace-nowrap"
                     >
                       <Copy size={13} />
