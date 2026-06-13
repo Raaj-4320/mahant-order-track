@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
 import { OrderForm, newLine } from "@/components/orders/OrderForm";
 import { OrderFooter } from "@/components/orders/OrderFooter";
@@ -21,7 +21,7 @@ import { customerLedgerService } from "@/services/customerLedgerService";
 import { resolveCustomersForOrderLines } from "@/services/customers/customerResolution";
 import { logCustomer, logDB, logError, logOrder, logPageAccess, logDataFlow } from "@/lib/logger";
 import { ensureFinalOrderNumber, peekNextOrderNumber } from "@/services/orderNumberService";
-import { ArrowUpDown, Bell, CalendarDays, ChevronDown, Eye, Filter, LayoutGrid, List, Moon, Search, SquarePen, Sun, Trash2 } from "lucide-react";
+import { ArrowUpDown, Bell, CalendarDays, Check, ChevronDown, Eye, Filter, LayoutGrid, List, Moon, Search, SquarePen, Sun, Trash2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { getOrderPaymentAgentDisplay } from "@/lib/orderDisplay";
 import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
@@ -71,6 +71,12 @@ type RowEditState = {
   loadingDate: string | undefined;
   status: Order["status"];
   saving: boolean;
+};
+type FlatHistoryRow = {
+  key: string;
+  order: Order;
+  line: Order["lines"][number] | null;
+  paymentMeta: ReturnType<typeof getOrderPaymentAgentDisplay>;
 };
 const STATUS_OPTIONS_WITH_DATE: Array<{ value: Order["status"]; label: string }> = [
   { value: "packed", label: "Loaded" },
@@ -137,7 +143,13 @@ export default function OrdersPage() {
 
   const activeOrders = useMemo(() => (isFirebaseOrdersMode ? firebaseOrders : orders).filter((o) => o.status !== "archived"), [isFirebaseOrdersMode, firebaseOrders, orders]);
   const total = useMemo(() => orderTotal(draft), [draft]);
-  const history = useMemo(() => activeOrders.filter((o) => { const q=query.toLowerCase().trim(); if(!q) return true; const customerText=o.lines.map(l=>l.customerSnapshot?.name || "").join(" ").toLowerCase(); const payment=getOrderPaymentAgentDisplay(o, paymentAgents).value.toLowerCase(); return (o.number || o.orderNumber || "").toLowerCase().includes(q)||o.wechatId.toLowerCase().includes(q)||customerText.includes(q)||payment.includes(q); }).slice(0, 10), [activeOrders, query, paymentAgents]);
+  const filteredOrders = useMemo(() => activeOrders.filter((o) => { const q=query.toLowerCase().trim(); if(!q) return true; const customerText=o.lines.map(l=>l.customerSnapshot?.name || "").join(" ").toLowerCase(); const payment=getOrderPaymentAgentDisplay(o, paymentAgents).value.toLowerCase(); return (o.number || o.orderNumber || "").toLowerCase().includes(q)||o.wechatId.toLowerCase().includes(q)||customerText.includes(q)||payment.includes(q); }), [activeOrders, query, paymentAgents]);
+  const history = useMemo<FlatHistoryRow[]>(() => filteredOrders.flatMap<FlatHistoryRow>((order) => {
+    const paymentMeta = getOrderPaymentAgentDisplay(order, paymentAgents);
+    const orderLines = (order.lines || []).filter((line) => meaningfulLine(line));
+    if (orderLines.length === 0) return [{ key: `${order.id}::fallback`, order, line: null, paymentMeta }];
+    return orderLines.map((line, index) => ({ key: `${order.id}::${line.id || index}`, order, line, paymentMeta }));
+  }).slice(0, 10), [filteredOrders, paymentAgents]);
 
   const ordersFlowLoggedRef = useRef(false);
 
@@ -160,10 +172,10 @@ export default function OrdersPage() {
       result: { count: allOrders.length, reachedComponent: true, renderedRows: history.length },
       counts: { saved: allOrders.filter((o) => o.status === "saved").length, draft: allOrders.filter((o) => o.status === "draft").length, archived: allOrders.filter((o) => o.status === "archived").length },
       customersLoadedCount: customers.length,
-      sampleOrders: history.slice(0, 5).map(summarizeOrderForLog),
+      sampleOrders: filteredOrders.slice(0, 5).map(summarizeOrderForLog),
       query: query.trim() || undefined,
     });
-  }, [isFirebaseOrdersMode, isOrdersLoading, isCustomersLoading, ordersLoadError, firebaseOrders, orders, history, query, customers.length]);
+  }, [isFirebaseOrdersMode, isOrdersLoading, isCustomersLoading, ordersLoadError, firebaseOrders, orders, history.length, filteredOrders, query, customers.length]);
   const editingOrder = editingOrderId ? activeOrders.find((o) => o.id === editingOrderId) ?? null : null;
   const wechatSuggestions = useMemo(() => Array.from(new Set(activeOrders.map((o) => o.wechatId.trim()).filter(Boolean))).slice(0, 5), [activeOrders]);
   const customerSuggestions = useMemo(() => {
@@ -557,14 +569,13 @@ try {
   const formatPlainAmount = (value: number) =>
     value.toLocaleString("en-US", { maximumFractionDigits: 20 });
   const getPaymentAgentMeta = (order: Order) => getOrderPaymentAgentDisplay(order, paymentAgents);
-  const getOrderLines = (order: Order) => order.lines || [];
   const getLineCtns = (line: Order["lines"][number]) => Number(line.totalCtns) || 0;
   const getLinePcsPerCtn = (line: Order["lines"][number]) => Number(line.pcsPerCtn) || 0;
   const getLineTotalPcs = (line: Order["lines"][number]) => getLineCtns(line) * getLinePcsPerCtn(line);
   const getLineRate = (line: Order["lines"][number]) => Number(line.rmbPerPcs) || 0;
   const getLineAmount = (line: Order["lines"][number]) => getLineTotalPcs(line) * getLineRate(line);
-  const getOrderTotalCtns = (order: Order) => getOrderLines(order).reduce((sum, line) => sum + getLineCtns(line), 0);
-  const getOrderTotalAmount = (order: Order) => getOrderLines(order).reduce((sum, line) => sum + getLineAmount(line), 0);
+  const getOrderTotalCtns = (order: Order) => (order.lines || []).reduce((sum, line) => sum + getLineCtns(line), 0);
+  const getOrderTotalAmount = (order: Order) => (order.lines || []).reduce((sum, line) => sum + getLineAmount(line), 0);
   const getFirstDraftPhoto = (order: Order) => order.lines.find((line) => line.productPhotoUrl || line.photoUrl)?.productPhotoUrl || order.lines.find((line) => line.productPhotoUrl || line.photoUrl)?.photoUrl || "";
   const renderDraftMissing = () => <span className="text-[var(--danger)]">Not present</span>;
   const getDraftMarkaSummary = (order: Order) => {
@@ -576,11 +587,6 @@ try {
     const candidate = line as Order["lines"][number] & { productImage?: string; image?: string };
     return candidate.productPhotoUrl || candidate.productImage || candidate.image || "";
   };
-  const getLineDimPhoto = (line: Order["lines"][number]) => {
-    const candidate = line as Order["lines"][number] & { dimensionPhotoUrl?: string; sizePhotoUrl?: string };
-    return candidate.photoUrl || candidate.dimensionPhotoUrl || candidate.sizePhotoUrl || "";
-  };
-  const getLineCustomerName = (line: Order["lines"][number]) => line.customerName || line.customerSnapshot?.name || line.customerId || "â€”";
   const getVisibleLineDetails = (line: Order["lines"][number]) => {
     const parts = getLineDetailsParts(line);
     const values = [parts.detail1, parts.detail2, parts.detail3].map((part) => part.trim()).filter(Boolean);
@@ -592,6 +598,7 @@ try {
       ? "bg-emerald-50/70 dark:bg-emerald-950/20"
       : "bg-amber-50/75 dark:bg-amber-950/20";
   };
+  const historyGridTemplate = "86px 100px minmax(110px,0.8fr) minmax(176px,1.4fr) 54px minmax(185px,1.45fr) minmax(100px,0.7fr) 42px 60px 72px 48px 92px 78px 118px";
   const fmtOrderDate = (order: Order) => {
     const raw = order.date || order.createdAt || order.updatedAt;
     if (!raw) return "â€”";
@@ -654,7 +661,7 @@ await recalculateFromOrders(orders.filter((x) => x.id !== o.id && x.status === "
       <div className="flex flex-wrap items-center gap-2 px-5 py-3 border-b border-border bg-bg">
         <div className="min-w-[280px] flex-1 max-w-xl"><Input value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="Search orders, customers..." leadingIcon={<Search size={15} />} /></div>
         <div className="relative" ref={pickerRef}>
-          <Button size="sm" onClick={() => setPickerOpen((v) => !v)}><List size={14} /><span className="text-fg-muted">Order</span><span className="font-semibold">{(editingOrder?.number || draft.number || history[0]?.number || "â€”")}</span><ChevronDown size={13} /></Button>
+          <Button size="sm" onClick={() => setPickerOpen((v) => !v)}><List size={14} /><span className="text-fg-muted">Order</span><span className="font-semibold">{(editingOrder?.number || draft.number || history[0]?.order.number || history[0]?.order.orderNumber || "â€”")}</span><ChevronDown size={13} /></Button>
           {pickerOpen && <div className="absolute left-0 top-full z-20 mt-2 w-72 rounded-xl border border-border bg-bg-card p-1.5 shadow-card max-h-[320px] overflow-y-auto">{activeOrders.slice(0,30).map((o) => <button key={o.id} onClick={() => { setPickerOpen(false); startEdit(o); }} className="block w-full rounded-md px-2.5 py-2 text-left text-[12.5px] hover:bg-bg-subtle transition-colors"><div className="flex items-center justify-between"><span className="text-[14px] font-semibold">{o.number || o.orderNumber || "Draft"}</span><span className="text-[11px] text-fg-subtle">{formatDate(o.date)}</span></div><div className="mt-0.5 text-[11.5px] text-fg-muted">{o.lines.length} lines Â· {formatPlainAmount(orderTotal(o))}</div></button>)}</div>}
         </div>
         <Button size="sm" variant="secondary" disabled title="Filtering is not enabled in this phase."><Filter size={14} />Filter</Button>
@@ -702,126 +709,71 @@ await recalculateFromOrders(orders.filter((x) => x.id !== o.id && x.status === "
         <section className="card overflow-hidden">
           {/* <div className="flex items-center justify-between px-4 py-3 border-b border-border"><h3 className="font-semibold">Order History</h3><div className="text-[12px] text-fg-subtle">Showing 1 to {history.length} of {activeOrders.length} orders</div></div> */}
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[1080px] text-[13px]">
-              <thead className="bg-bg-subtle/70">
-                <tr className="text-left text-[13px] uppercase  text-fg-subtle">
-                  <th className="px-4 py-2 w-[220px]">Order Number</th><th className="w-[175px]">Paid By</th><th className="w-[165px]">WeChat ID</th><th className="w-[136px]">Loading Date</th><th className="w-[120px]">Total CTNS</th><th className="w-[138px]">Total Amount</th><th className="w-[112px]">Status</th><th className="text-right px-4 w-[144px]">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {history.length === 0 ? <tr><td colSpan={8} className="px-4 py-8 text-center text-fg-subtle">No orders yet. Click Add Order to create one.</td></tr> : history.map((o) => {
-                  const paymentMeta = getPaymentAgentMeta(o);
+            <div className="w-full min-w-0 px-1 py-1">
+              <div className="grid items-center border-b border-border bg-white text-[13px] font-bold uppercase tracking-[0.01em] text-fg-muted" style={{ gridTemplateColumns: historyGridTemplate }}>
+                <div className="px-1.5 py-2">Order Number</div>
+                <div className="px-1.5 py-2">Loading Date</div>
+                <div className="min-w-0 px-1.5 py-2">Paid By</div>
+                <div className="min-w-0 px-1.5 py-2">WeChat ID</div>
+                <div className="px-1.5 py-2 text-center">Product Photo</div>
+                <div className="min-w-0 px-1.5 py-2 text-center">Marka</div>
+                <div className="min-w-0 px-1.5 py-2">Details</div>
+                <div className="px-1.5 py-2 text-center">CTNS</div>
+                <div className="px-1.5 py-2 text-center leading-tight"><div>PCS/</div><div>CTN</div></div>
+                <div className="px-1.5 py-2 text-center">Total PCS</div>
+                <div className="px-1.5 py-2 text-center">Rate</div>
+                <div className="px-1.5 py-2 text-right">Total Amount</div>
+                <div className="px-1.5 py-2 text-center">Status</div>
+                <div className="px-1.5 py-2 text-center">Actions</div>
+              </div>
+              <div className="space-y-2 pt-2">
+                {history.length === 0 ? <div className="px-4 py-8 text-center text-fg-subtle">No orders yet. Click Add Order to create one.</div> : history.map((row) => {
+                  const { order, line, paymentMeta } = row;
                   const paymentName = paymentMeta.value;
-                  const canEditOperationalFields = o.status !== "draft" && o.status !== "archived";
-                  const rowValue = getRowValue(o);
-                  const rowDirty = rowValue.loadingDate !== o.loadingDate || rowValue.status !== o.status;
-                  const effectiveLoadingDate = rowValue.loadingDate || o.loadingDate;
+                  const canEditOperationalFields = order.status !== "draft" && order.status !== "archived";
+                  const rowValue = getRowValue(order);
+                  const rowDirty = rowValue.loadingDate !== order.loadingDate || rowValue.status !== order.status;
+                  const effectiveLoadingDate = rowValue.loadingDate || order.loadingDate;
                   const rowTone = getHistoryRowTone(effectiveLoadingDate);
-                  const middleCellClass = cn("border-y border-border transition-colors", rowTone);
-                  const firstCellClass = cn("rounded-l-2xl border border-r-0 border-border transition-colors", rowTone);
-                  const lastCellClass = cn("rounded-r-2xl border border-l-0 border-border transition-colors", rowTone);
-                  const orderLines = getOrderLines(o);
-                  const isSingleLineOrder = orderLines.length === 1;
-                  const singleLine = orderLines[0];
-                  const totalCtns = getOrderTotalCtns(o);
-                  const totalAmount = getOrderTotalAmount(o);
+                  const rowClass = cn("grid items-center rounded-2xl border border-border transition-colors", rowTone);
+                  const productPhoto = line ? getLineProductPhoto(line) : "";
+                  const detailLines = line ? getVisibleLineDetails(line) : [];
+                  const detailTitle = detailLines.length > 0 ? detailLines.join("\n") : "—";
+                  const ctns = line ? getLineCtns(line) : getOrderTotalCtns(order);
+                  const pcsPerCtn = line ? getLinePcsPerCtn(line) : 0;
+                  const totalPcs = line ? getLineTotalPcs(line) : 0;
+                  const rate = line ? getLineRate(line) : 0;
+                  const amount = line ? getLineAmount(line) : getOrderTotalAmount(order);
+                  const marka = line?.marka?.trim() || "—";
 
-                  if (isSingleLineOrder && singleLine) {
-                    const productPhoto = getLineProductPhoto(singleLine);
-                    const lineTotalPcs = getLineTotalPcs(singleLine);
-                    const pcsPerCtn = getLinePcsPerCtn(singleLine);
-                    const marka = singleLine.marka?.trim() || "—";
-
-                    return <Fragment key={o.id}>
-                      <tr className="align-middle h-[60px]">
-                        <td className={cn(firstCellClass, "px-4 py-2.5")}>
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0 flex-1">
-                              <div className="truncate text-[18px] font-semibold leading-tight" title={o.number || o.orderNumber || "Draft"}>{o.number || o.orderNumber || "Draft"}</div>
-                              <div className="mt-0.5 text-[12px] text-fg-subtle tabular-nums">{fmtOrderDate(o)}</div>
-                            </div>
-                            <div className="w-[74px] shrink-0">
-                              {productPhoto ? <button type="button" onClick={() => setPreviewImage({ src: productPhoto, alt: "Product photo" })} className="grid h-[58px] w-[58px] place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle"><img src={getCloudinaryOptimizedUrl(productPhoto, { width: 144, height: 144, crop: "fit" })} alt="product" className="h-full w-full object-contain" loading="lazy" decoding="async" /></button> : null}
-                              <div className={cn("mt-1 text-[12.5px] font-semibold leading-tight text-fg", productPhoto ? "w-[74px]" : "w-full")} title={marka}>{marka}</div>
-                            </div>
-                          </div>
-                        </td>
-                        <td className={cn(middleCellClass, "px-3 py-2.5")}><div className={cn("truncate text-[15px] font-medium", paymentMeta.isMissing && "text-[var(--danger)]")} title={paymentName}>{paymentName}</div></td>
-                        <td className={cn(middleCellClass, "px-3 py-2.5")}><div className="truncate text-[15px] font-medium" title={o.wechatId || "—"}>{o.wechatId || "—"}</div></td>
-                        <td className={cn(middleCellClass, "px-2 py-2.5")}>{canEditOperationalFields ? <LoadingDateControl compact debugOrderId={o.id} value={rowValue.loadingDate} onChange={(next) => { setRowEdit(o, { loadingDate: next }, "date_selected"); }} /> : <span className="inline-flex rounded-full border border-border bg-bg-subtle px-2 py-1 text-[11px] text-fg-muted">{o.loadingDate ? formatDate(o.loadingDate) : "Set date"}</span>}</td>
-                        <td className={cn(middleCellClass, "px-3 py-2.5")}>
-                          <div className="text-[16px] font-semibold tabular-nums leading-tight">{totalCtns.toLocaleString()}</div>
-                          <div className="mt-1 text-[12px] text-fg-subtle tabular-nums">{pcsPerCtn.toLocaleString()} pcs/ctn</div>
-                          <div className="text-[12px] text-fg-subtle tabular-nums">{lineTotalPcs.toLocaleString()} total pcs</div>
-                        </td>
-                        <td className={cn(middleCellClass, "px-3 py-2.5 text-[20px] font-bold tabular-nums text-[var(--success)] leading-tight")}>{formatPlainAmount(totalAmount)}</td>
-                        <td className={cn(middleCellClass, "px-2 py-2.5")}><div className="text-[14px]">{canEditOperationalFields ? <OrderStatusControl compact neutral debugOrderId={o.id} options={resolveStatusOptions(o, rowValue)} value={rowValue.status} onChange={(next) => { setRowEdit(o, { status: next }, "status_selected"); }} /> : <span className="inline-flex rounded-full border border-border bg-bg-subtle px-2 py-1 text-[11px] text-fg">{o.status === "packed" ? "Loaded" : o.status}</span>}</div></td>
-                        <td className={cn(lastCellClass, "px-3 py-2.5")}><div className="flex justify-end gap-1">{canEditOperationalFields && rowDirty ? <Button size="sm" variant="primary" title="Save row changes" disabled={rowValue.saving} onClick={() => { void saveRowEdit(o); }}>Save</Button> : null}<Button size="sm" variant="secondary" title="View" onClick={() => setViewOrder(o)}><Eye size={13} /></Button><Button size="sm" variant="secondary" title="Edit" onClick={() => startEdit(o)}><SquarePen size={13} /></Button><Button size="sm" variant="secondary" title="Delete" onClick={() => removeOrder(o)}><Trash2 size={13} /></Button></div></td>
-                      </tr>
-                    </Fragment>;
-                  }
-
-                  return <Fragment key={o.id}>
-                    <tr className="align-middle h-[60px]">
-                      <td className={cn(firstCellClass, "px-4 py-2.5")}><div className="truncate text-[18px] font-semibold leading-tight" title={o.number || o.orderNumber || "Draft"}>{o.number || o.orderNumber || "Draft"}</div><div className="mt-0.5 text-[12px] text-fg-subtle tabular-nums">{fmtOrderDate(o)}</div></td>
-                      <td className={cn(middleCellClass, "px-3 py-2.5")}><div className={cn("truncate text-[15px] font-medium", paymentMeta.isMissing && "text-[var(--danger)]")} title={paymentName}>{paymentName}</div>{o.paymentAgentSnapshot?.name && o.paymentAgentSnapshot?.name !== paymentName ? <div className="truncate text-[11px] text-fg-subtle" title={o.paymentAgentSnapshot.name}>{o.paymentAgentSnapshot.name}</div> : null}</td>
-                      <td className={cn(middleCellClass, "px-3 py-2.5")}><div className="truncate text-[15px] font-medium" title={o.wechatId || "—"}>{o.wechatId || "—"}</div></td>
-                      <td className={cn(middleCellClass, "px-2 py-2.5")}>{canEditOperationalFields ? <LoadingDateControl compact debugOrderId={o.id} value={rowValue.loadingDate} onChange={(next) => { setRowEdit(o, { loadingDate: next }, "date_selected"); }} /> : <span className="inline-flex rounded-full border border-border bg-bg-subtle px-2 py-1 text-[11px] text-fg-muted">{o.loadingDate ? formatDate(o.loadingDate) : "Set date"}</span>}</td>
-                      <td className={cn(middleCellClass, "px-3 py-2.5 text-[16px] font-semibold tabular-nums")}>{totalCtns.toLocaleString()}</td>
-                      <td className={cn(middleCellClass, "px-3 py-2.5 text-[20px] font-bold tabular-nums text-[var(--success)] leading-tight")}>{formatPlainAmount(totalAmount)}</td>
-                      <td className={cn(middleCellClass, "px-2 py-2.5")}><div className="text-[14px]">{canEditOperationalFields ? <OrderStatusControl compact neutral debugOrderId={o.id} options={resolveStatusOptions(o, rowValue)} value={rowValue.status} onChange={(next) => { setRowEdit(o, { status: next }, "status_selected"); }} /> : <span className="inline-flex rounded-full border border-border bg-bg-subtle px-2 py-1 text-[11px] text-fg">{o.status === "packed" ? "Loaded" : o.status}</span>}</div></td>
-                      <td className={cn(lastCellClass, "px-3 py-2.5")}><div className="flex justify-end gap-1">{canEditOperationalFields && rowDirty ? <Button size="sm" variant="primary" title="Save row changes" disabled={rowValue.saving} onClick={() => { void saveRowEdit(o); }}>Save</Button> : null}<Button size="sm" variant="secondary" title="View" onClick={() => setViewOrder(o)}><Eye size={13} /></Button><Button size="sm" variant="secondary" title="Edit" onClick={() => startEdit(o)}><SquarePen size={13} /></Button><Button size="sm" variant="secondary" title="Delete" onClick={() => removeOrder(o)}><Trash2 size={13} /></Button></div></td>
-                    </tr>
-                    <tr>
-                      <td colSpan={8} className="px-0 pb-4 pt-2">
-                        <div className="ml-[2.5%] w-[92.5%] overflow-x-auto rounded-xl border border-border/70 bg-bg-subtle/55">
-                          <table className="w-full min-w-[960px] table-auto text-[12px]">
-                            <thead className="bg-bg-subtle/50">
-                              <tr className="text-left text-[10.5px] uppercase tracking-[0.06em] text-fg-subtle">
-                                <th className="w-[76px] px-2 py-2">Dim Photo</th>
-                                <th className="w-[88px] px-2 py-2">Product Photo</th>
-                                <th className="min-w-[160px] max-w-[260px] px-2.5 py-2">Marka</th>
-                                <th className="w-[122px] px-2 py-2">Details</th>
-                                <th className="w-[56px] px-2 py-2 whitespace-nowrap">CTNS</th>
-                                <th className="w-[66px] px-2 py-2 whitespace-nowrap">PCS/CTN</th>
-                                <th className="w-[70px] px-2 py-2 whitespace-nowrap">Total PCS</th>
-                                <th className="w-[76px] px-2 py-2 whitespace-nowrap">Rate</th>
-                                <th className="w-[118px] px-3 py-2 whitespace-nowrap">Line Total Amount</th>
-                                <th className="w-[144px] px-3 py-2">Customer</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {orderLines.map((line) => {
-                                const dimPhoto = getLineDimPhoto(line);
-                                const productPhoto = getLineProductPhoto(line);
-                                const lineTotalPcs = getLineTotalPcs(line);
-                                const lineRate = getLineRate(line);
-                                const lineAmount = getLineAmount(line);
-                                const detailLines = getVisibleLineDetails(line);
-                                const detailTitle = detailLines.length > 0 ? detailLines.join("\n") : "—";
-
-                                return <tr key={line.id} className="border-t border-border/70 align-middle">
-                                  <td className="px-2 py-2.5 align-top">{dimPhoto ? <button type="button" onClick={() => setPreviewImage({ src: dimPhoto, alt: "Dim photo" })} className="grid h-14 w-14 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle"><img src={getCloudinaryOptimizedUrl(dimPhoto, { width: 120, height: 120, crop: "fit" })} alt="dim" className="h-full w-full object-contain" loading="lazy" decoding="async" /></button> : <span className="text-[10px] text-fg-subtle">—</span>}</td>
-                                  <td className="px-2 py-2.5 align-top">{productPhoto ? <button type="button" onClick={() => setPreviewImage({ src: productPhoto, alt: "Product photo" })} className="grid h-[72px] w-[72px] place-items-center overflow-hidden rounded-xl border border-border bg-bg-subtle"><img src={getCloudinaryOptimizedUrl(productPhoto, { width: 180, height: 180, crop: "fit" })} alt="product" className="h-full w-full object-contain" loading="lazy" decoding="async" /></button> : <span className="text-[10px] text-fg-subtle">—</span>}</td>
-                                  <td className="px-2.5 py-2.5 align-top"><div className="max-w-[260px] text-[17px] font-semibold leading-tight" title={line.marka || "—"}>{line.marka || "—"}</div></td>
-                                  <td className="px-2 py-2.5 align-top"><div className="space-y-0.5 text-[13.5px] font-medium leading-tight text-fg-muted" title={detailTitle}>{detailLines.length > 0 ? detailLines.map((detail, index) => <div key={`${line.id}-detail-${index}`}>{detail}</div>) : <div>—</div>}</div></td>
-                                  <td className="px-2 py-2.5 align-top text-[14px] font-semibold tabular-nums whitespace-nowrap">{getLineCtns(line).toLocaleString()}</td>
-                                  <td className="px-2 py-2.5 align-top text-[14px] font-semibold tabular-nums whitespace-nowrap">{getLinePcsPerCtn(line).toLocaleString()}</td>
-                                  <td className="px-2 py-2.5 align-top text-[14px] font-semibold tabular-nums whitespace-nowrap">{lineTotalPcs.toLocaleString()}</td>
-                                  <td className="px-2 py-2.5 align-top text-[14px] font-medium tabular-nums whitespace-nowrap">{formatPlainAmount(lineRate)}</td>
-                                  <td className="px-3 py-2.5 align-top text-[17px] font-bold tabular-nums whitespace-nowrap text-[var(--success)]">{formatPlainAmount(lineAmount)}</td>
-                                  <td className="px-3 py-2.5 align-top"><div className="truncate text-[14px] font-medium" title={getLineCustomerName(line)}>{getLineCustomerName(line)}</div></td>
-                                </tr>;
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      </td>
-                    </tr>
-                  </Fragment>;
+                  return <div key={row.key} className={rowClass} style={{ gridTemplateColumns: historyGridTemplate }}>
+                    <div className="min-w-0 px-1.5 py-2.5">
+                      <div className="min-w-0">
+                        <div className="truncate text-[16px] font-bold leading-tight" title={order.number || order.orderNumber || "Draft"}>{order.number || order.orderNumber || "Draft"}</div>
+                        <div className="mt-0.5 text-[12px] text-fg-subtle tabular-nums">{fmtOrderDate(order)}</div>
+                      </div>
+                    </div>
+                    <div className="min-w-0 pl-1.5 pr-3.5 py-2">
+                      <div className="min-w-0 [&_button]:max-w-full [&_button]:text-[11px] [&_button]:leading-tight">
+                        {canEditOperationalFields ? <LoadingDateControl compact debugOrderId={order.id} value={rowValue.loadingDate} onChange={(next) => { setRowEdit(order, { loadingDate: next }, "date_selected"); }} /> : <span className="inline-flex max-w-full rounded-full border border-border bg-bg-subtle px-2 py-1 text-[10.5px] text-fg-muted">{order.loadingDate ? formatDate(order.loadingDate) : "Set date"}</span>}
+                      </div>
+                    </div>
+                    <div className="min-w-0 pl-2.5 pr-1.5 py-2"><div className={cn("block w-full min-w-0 text-[15px] font-semibold leading-tight", paymentMeta.isMissing && "text-[var(--danger)]")} title={paymentName}>{paymentName}</div></div>
+                    <div className="min-w-0 px-1.5 py-2"><div className="block w-full min-w-0 text-[15px] font-semibold leading-tight" title={order.wechatId || "—"}>{order.wechatId || "—"}</div></div>
+                    <div className="px-1 py-2"><div className="flex justify-center">{productPhoto ? <button type="button" onClick={() => setPreviewImage({ src: productPhoto, alt: "Product photo" })} className="grid h-[44px] w-[44px] shrink-0 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle"><img src={getCloudinaryOptimizedUrl(productPhoto, { width: 96, height: 96, crop: "fit" })} alt="product" className="h-full w-full object-contain" loading="lazy" decoding="async" /></button> : <span className="text-[10px] text-fg-subtle">—</span>}</div></div>
+                    <div className="min-w-0 px-1.5 py-2"><div className="text-[14px] font-bold leading-tight" title={marka}>{marka}</div></div>
+                    <div className="min-w-0 px-1.5 py-2"><div className="space-y-0.5 text-[14px] font-medium leading-tight text-fg" title={detailLines.length > 0 ? detailLines.join("\n") : "—"}>{detailLines.length > 0 ? detailLines.map((detail, index) => <div key={`${row.key}-detail-${index}`}>{detail}</div>) : <div>—</div>}</div></div>
+                    <div className="px-1.5 py-2 text-center text-[14.5px] font-semibold tabular-nums">{ctns.toLocaleString()}</div>
+                    <div className="px-1.5 py-2 text-center text-[14.5px] font-semibold tabular-nums">{pcsPerCtn.toLocaleString()}</div>
+                    <div className="px-1.5 py-2 text-center text-[14.5px] font-semibold tabular-nums">{totalPcs.toLocaleString()}</div>
+                    <div className="px-1.5 py-2 text-center text-[14.5px] font-semibold tabular-nums">{formatPlainAmount(rate)}</div>
+                    <div className="px-1.5 py-2 text-right text-[18px] font-extrabold tabular-nums text-[var(--success)]">{formatPlainAmount(amount)}</div>
+                    <div className="min-w-0 px-1 py-2 text-center"><div className="mx-auto max-w-full text-[12.5px] [&_button]:max-w-full">{canEditOperationalFields ? <OrderStatusControl compact neutral debugOrderId={order.id} options={resolveStatusOptions(order, rowValue)} value={rowValue.status} onChange={(next) => { setRowEdit(order, { status: next }, "status_selected"); }} /> : <span className="inline-flex rounded-full border border-border bg-bg-subtle px-1.5 py-0.5 text-[12px] text-fg">{order.status === "packed" ? "Loaded" : order.status}</span>}</div>{canEditOperationalFields && rowDirty ? <button type="button" title="Save row changes" aria-label="Save row changes" className="mt-1 inline-flex text-[11px] font-semibold text-brand transition-colors hover:underline disabled:opacity-60" disabled={rowValue.saving} onClick={() => { void saveRowEdit(order); }}>{rowValue.saving ? "Saving..." : "Save"}</button> : null}</div>
+                    <div className="px-0.5 py-2"><div className="flex justify-center gap-1 whitespace-nowrap"><button type="button" title="View" aria-label="View" className="grid h-7 w-7 place-items-center rounded-md text-fg transition-colors hover:bg-bg-subtle" onClick={() => setViewOrder(order)}><Eye size={14} /></button><button type="button" title="Edit" aria-label="Edit" className="grid h-7 w-7 place-items-center rounded-md text-fg transition-colors hover:bg-bg-subtle" onClick={() => startEdit(order)}><SquarePen size={14} /></button><button type="button" title="Delete" aria-label="Delete" className="grid h-7 w-7 place-items-center rounded-md text-[var(--danger)] transition-colors hover:bg-[var(--danger)]/10" onClick={() => removeOrder(order)}><Trash2 size={14} /></button></div></div>
+                  </div>;
                 })}
-              </tbody>
-            </table>
+              </div>
+            </div>
           </div>
         </section>
       <ImageLightbox src={previewImage?.src} alt={previewImage?.alt} caption={previewImage?.caption} open={Boolean(previewImage?.src)} onClose={() => setPreviewImage(null)} />

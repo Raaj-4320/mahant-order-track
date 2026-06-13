@@ -74,13 +74,13 @@ onChange(status);
           return nextOpen;
         })}
         className={cn(
-          compact ? "inline-flex h-7 items-center gap-1 rounded-full border px-2.5 text-[11.5px] font-medium transition-colors" : "inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[12px] font-medium transition-colors",
+          compact ? "inline-flex h-6 items-center gap-0.5 rounded-full border px-1.5 text-[11px] font-medium transition-colors" : "inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[12px] font-medium transition-colors",
           neutral ? "border-border bg-bg-subtle text-fg" : (statusClasses[value] || statusClasses.saved),
           disabled ? "cursor-not-allowed opacity-60" : "hover:brightness-95",
         )}
       >
         <span>{selected?.label || value}</span>
-        <ChevronDown size={13} className={cn("transition-transform", open && "rotate-180")} />
+        <ChevronDown size={12} className={cn("transition-transform", open && "rotate-180")} />
       </button>
       <FloatingPortal anchorRef={rootRef as any} open={open && !disabled} width={176}>
         <div className="rounded-xl border border-border bg-bg-card p-1.5 shadow-card">

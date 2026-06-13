@@ -100,13 +100,13 @@ setOpen(false);
           });
         }}
         className={cn(
-          compact ? "inline-flex h-7 items-center gap-1 rounded-full border border-border bg-bg-card px-2.5 text-[11.5px] text-fg" : "inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-bg-card px-3 text-[12px] text-fg",
+          compact ? "inline-flex h-6 items-center gap-0.5 whitespace-nowrap rounded-full border border-border bg-bg-card px-1 text-[11px] text-fg" : "inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-bg-card px-3 text-[12px] text-fg",
           disabled ? "cursor-not-allowed opacity-60" : "hover:border-fg-subtle"
         )}
       >
-        <CalendarDays size={13} className="text-fg-subtle" />
+        <CalendarDays size={12} className="text-fg-subtle" />
         <span>{label}</span>
-        <ChevronDown size={13} className={cn("text-fg-subtle transition-transform", open && "rotate-180")} />
+        <ChevronDown size={12} className={cn("text-fg-subtle transition-transform", open && "rotate-180")} />
       </button>
       <FloatingPortal anchorRef={rootRef as any} open={open && !disabled} width={260}>
         <div className="rounded-xl border border-border bg-bg-card p-2 shadow-card">
