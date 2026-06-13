@@ -9,6 +9,7 @@ import type { RecycleBinEntry } from "@/lib/types";
 import { formatIndianDateTime } from "@/lib/dateFormat";
 import { Search } from "lucide-react";
 import { useStore } from "@/lib/store";
+import { sanitizeUserFacingText } from "@/lib/userFacingText";
 
 export default function RecycleBinPage() {
   const [entries, setEntries] = useState<RecycleBinEntry[]>([]);
@@ -37,7 +38,13 @@ export default function RecycleBinPage() {
     return entries.filter((entry) => {
       if (entry.status !== "deleted") return false;
       if (!normalized) return true;
-      return [entry.label, entry.originalReference, entry.itemType, entry.referenceType || ""].join(" ").toLowerCase().includes(normalized);
+      return [
+        sanitizeUserFacingText(entry.label, ""),
+        sanitizeUserFacingText(entry.originalReference, ""),
+        entry.itemType,
+        entry.referenceType || "",
+        entry.deletedBy || "",
+      ].join(" ").toLowerCase().includes(normalized);
     });
   }, [entries, query]);
 
@@ -83,8 +90,8 @@ export default function RecycleBinPage() {
                   filtered.map((entry) => (
                     <tr key={entry.id} className="border-t border-border">
                       <td className="px-4 py-3 font-semibold">{entry.referenceType ? `${entry.itemType} / ${entry.referenceType}` : entry.itemType}</td>
-                      <td>{entry.label}</td>
-                      <td>{entry.originalReference}</td>
+                      <td>{sanitizeUserFacingText(entry.label)}</td>
+                      <td>{sanitizeUserFacingText(entry.originalReference)}</td>
                       <td>{entry.deletedAt ? formatIndianDateTime(entry.deletedAt) : "—"}</td>
                       <td>{entry.deletedBy || "system"}</td>
                       <td className="px-4 py-3 text-right">

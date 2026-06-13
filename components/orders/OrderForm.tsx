@@ -3,6 +3,7 @@
 import { Pencil, Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Field, Input } from "@/components/ui/Input";
+import { formatAmount } from "@/lib/data";
 import { OrderLineRow, LINE_GRID } from "./OrderLineRow";
 import { Customer, Order, OrderLine, PaymentAgent } from "@/lib/types";
 
@@ -47,19 +48,12 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
     return paymentAgents
       .filter((p) => {
         if (!q) return true;
-        return (
-          p.name.toLowerCase().includes(q) ||
-          (p.agentCode || "").toLowerCase().includes(q) ||
-          p.id.toLowerCase().includes(q)
-        );
+        return p.name.toLowerCase().includes(q) || (p.agentCode || "").toLowerCase().includes(q) || p.id.toLowerCase().includes(q);
       })
       .slice(0, 4);
   }, [paymentAgents, paymentQuery]);
 
-  const paymentLabel = (p: PaymentAgent) =>
-    (p.creditBalance ?? 0) > 0
-      ? `${p.name} — Credit: ${(p.creditBalance ?? 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-      : p.name;
+  const paymentLabel = (p: PaymentAgent) => ((p.creditBalance ?? 0) > 0 ? `${p.name} — Credit: ${formatAmount(p.creditBalance ?? 0)}` : p.name);
 
   const updateLine = (id: string, patch: Partial<OrderLine>) =>
     setDraft((d) => ({
@@ -67,14 +61,14 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
       lines: d.lines.map((l) => (l.id === id ? { ...l, ...patch } : l)),
     }));
 
-  const addLine = () =>
-    setDraft((d) => ({ ...d, lines: [...d.lines, newLine()] }));
+  const addLine = () => setDraft((d) => ({ ...d, lines: [...d.lines, newLine()] }));
 
   const selectedPaymentAgent = paymentAgents.find((p) => {
     const reference = draft.paymentAgentId || draft.paymentBy;
     return p.id === reference || normalizeAgentValue(p.name) === normalizeAgentValue(reference);
   });
   const selectedLabel = selectedPaymentAgent ? paymentLabel(selectedPaymentAgent) : "";
+
   useEffect(() => {
     if (paymentOpen) return;
     setPaymentQuery(selectedLabel || draft.paymentBy || "");
@@ -82,91 +76,92 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
 
   return (
     <div className="flex flex-col gap-3 px-5 py-4">
-      {showOrderInfo ? <section className="card p-3.5">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-[minmax(180px,0.7fr)_minmax(145px,0.55fr)_minmax(145px,0.55fr)_minmax(150px,0.55fr)_minmax(180px,0.7fr)]">
-          <Field label="Payment By">
-            <div className="relative">
-              <Input
-                value={paymentQuery}
-                onFocus={() => setPaymentOpen(true)}
-                onBlur={() => window.setTimeout(() => setPaymentOpen(false), 120)}
-                onChange={(e) => {
-                  const next = e.target.value;
-setPaymentQuery(next);
-                  setPaymentOpen(true);
-                  setDraft((d) => ({ ...d, paymentBy: next, paymentAgentId: "" }));
-                }}
-                placeholder={paymentAgents.length ? "Search payment agent" : "No payment agents yet"}
-              />
-              {paymentOpen && paymentSuggestions.length > 0 ? (
-                <div className="absolute z-30 mt-1 max-h-44 w-full overflow-auto rounded-lg border border-border bg-bg-card shadow-card">
-                  {paymentSuggestions.map((p) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        const label = paymentLabel(p);
-                        setPaymentQuery(label);
-                        setPaymentOpen(false);
-                        setDraft((d) => ({ ...d, paymentBy: p.id, paymentAgentId: p.id }));
-                      }}
-                      className="block w-full px-2 py-1.5 text-left text-[12px] hover:bg-bg-subtle"
-                    >
-                      {paymentLabel(p)}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          </Field>
+      {showOrderInfo ? (
+        <section className="card p-3.5">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-[minmax(180px,0.7fr)_minmax(145px,0.55fr)_minmax(145px,0.55fr)_minmax(150px,0.55fr)_minmax(180px,0.7fr)]">
+            <Field label="Payment By">
+              <div className="relative">
+                <Input
+                  value={paymentQuery}
+                  onFocus={() => setPaymentOpen(true)}
+                  onBlur={() => window.setTimeout(() => setPaymentOpen(false), 120)}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setPaymentQuery(next);
+                    setPaymentOpen(true);
+                    setDraft((d) => ({ ...d, paymentBy: next, paymentAgentId: "", paymentAgentSnapshot: undefined }));
+                  }}
+                  placeholder={paymentAgents.length ? "Search payment agent" : "No payment agents yet"}
+                />
+                {paymentQuery || draft.paymentAgentId || draft.paymentBy ? (
+                  <button
+                    type="button"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-fg-subtle transition-colors hover:text-fg"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      setPaymentQuery("");
+                      setPaymentOpen(false);
+                      setDraft((d) => ({ ...d, paymentBy: "", paymentAgentId: "", paymentAgentSnapshot: undefined }));
+                    }}
+                  >
+                    Clear
+                  </button>
+                ) : null}
+                {paymentOpen && paymentSuggestions.length > 0 ? (
+                  <div className="absolute z-30 mt-1 max-h-44 w-full overflow-auto rounded-lg border border-border bg-bg-card shadow-card">
+                    {paymentSuggestions.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          const label = paymentLabel(p);
+                          setPaymentQuery(label);
+                          setPaymentOpen(false);
+                          setDraft((d) => ({
+                            ...d,
+                            paymentBy: p.id,
+                            paymentAgentId: p.id,
+                            paymentAgentSnapshot: { id: p.id, name: p.name, code: p.agentCode },
+                          }));
+                        }}
+                        className="block w-full px-2 py-1.5 text-left text-[12px] hover:bg-bg-subtle"
+                      >
+                        {paymentLabel(p)}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </Field>
 
-          <Field label="Date">
-            <Input
-              type="date"
-              value={draft.date}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, date: e.target.value }))
-              }
-            />
-          </Field>
+            <Field label="Date">
+              <Input type="date" value={draft.date} onChange={(e) => setDraft((d) => ({ ...d, date: e.target.value }))} />
+            </Field>
 
-          <Field label="Loading Date">
-            <Input
-              type="date"
-              value={draft.loadingDate || ""}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, loadingDate: e.target.value || undefined }))
-              }
-            />
-          </Field>
-          
-          <Field label="Order Number">
-            <Input
-              value={draft.number}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, number: e.target.value, orderNumber: e.target.value }))
-              }
-              trailingIcon={<Pencil size={14} />}
-            />
-          </Field>
+            <Field label="Loading Date">
+              <Input type="date" value={draft.loadingDate || ""} onChange={(e) => setDraft((d) => ({ ...d, loadingDate: e.target.value || undefined }))} />
+            </Field>
 
-          <Field label="WeChat ID">
-            <div className="relative">
-              <Input value={draft.wechatId} onChange={(e) => setDraft((d) => ({ ...d, wechatId: e.target.value }))} placeholder="Enter WeChat ID" list="wechat-suggestions" />
-              <datalist id="wechat-suggestions">{wechatSuggestions.map((w) => <option key={w} value={w} />)}</datalist>
-            </div>
-          </Field>
-        </div>
-      </section> : null}
+            <Field label="Order Number">
+              <Input value={draft.number} onChange={(e) => setDraft((d) => ({ ...d, number: e.target.value, orderNumber: e.target.value }))} trailingIcon={<Pencil size={14} />} />
+            </Field>
+
+            <Field label="WeChat ID">
+              <div className="relative">
+                <Input value={draft.wechatId} onChange={(e) => setDraft((d) => ({ ...d, wechatId: e.target.value }))} placeholder="Enter WeChat ID" list="wechat-suggestions" />
+                <datalist id="wechat-suggestions">{wechatSuggestions.map((w) => <option key={w} value={w} />)}</datalist>
+              </div>
+            </Field>
+          </div>
+        </section>
+      ) : null}
 
       <section className="card overflow-hidden">
         <div className="px-2 py-1.5 overflow-x-auto">
           <div className="flex justify-end px-2 pb-1 text-[11px] text-fg-subtle">{draft.lines.length} line{draft.lines.length === 1 ? "" : "s"}</div>
           <div className="min-w-[960px]">
-            <div
-              className={`${LINE_GRID} px-2 py-1.5 text-[13px] font-medium uppercase tracking-wide text-fg-subtle border-b border-border`}
-            >
+            <div className={`${LINE_GRID} px-2 py-1.5 text-[13px] font-medium uppercase tracking-wide text-fg-subtle border-b border-border`}>
               <span className="text-center">Pic + Dim</span>
               <span className="text-center">Product</span>
               <span>MARKA</span>
@@ -176,7 +171,7 @@ setPaymentQuery(next);
               <span className="text-center">Total PCS</span>
               <span className="text-center">Rate / PCS</span>
               <span className="text-center">Total Amount</span>
-              <span>Customer</span>
+              <span className="text-center">Customer</span>
               <span className="text-center">·</span>
             </div>
 
@@ -195,11 +190,7 @@ setPaymentQuery(next);
                   onPreviewImage={onPreviewImage}
                 />
               ))}
-              {draft.lines.length === 0 && (
-                <div className="py-6 text-center text-[12.5px] text-fg-subtle">
-                  No lines yet — add your first line below.
-                </div>
-              )}
+              {draft.lines.length === 0 ? <div className="py-6 text-center text-[12.5px] text-fg-subtle">No lines yet — add your first line below.</div> : null}
             </div>
 
             <button
@@ -215,4 +206,3 @@ setPaymentQuery(next);
     </div>
   );
 }
-

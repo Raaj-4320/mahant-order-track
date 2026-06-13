@@ -12,6 +12,7 @@ import { StatCard } from "@/components/StatCard";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { TablePagination } from "@/components/table/TablePagination";
 import { formatAmount } from "@/lib/data";
 import { uploadImageUnsigned } from "@/lib/cloudinary/client";
@@ -76,13 +77,23 @@ export default function ProductsPage() {
   const [file, setFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [pendingDeleteProduct, setPendingDeleteProduct] = useState<Product | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   const categories = Array.from(new Set(rows.map((r) => r.category)));
   const filtered = useMemo(
     () =>
       rows.filter(
         (p) =>
-          [p.name, p.sku, p.marka, p.category].join(" ").toLowerCase().includes(q.toLowerCase().trim()) &&
+          [
+            p.name,
+            p.sku,
+            p.productCode,
+            p.marka,
+            p.category,
+            p.defaultDim || "",
+            p.status,
+          ].join(" ").toLowerCase().includes(q.toLowerCase().trim()) &&
           (status === "all" || p.status === status) &&
           (category === "all" || p.category === category),
       ),
@@ -102,7 +113,7 @@ export default function ProductsPage() {
 
   const productTableRows = useMemo(
     () =>
-      filtered.map((p) => {
+      rows.map((p) => {
         const sourceOrderIds = new Set(
           [p.sourceOrderId, ...(p.sourceOrderIds ?? [])].filter((value): value is string => Boolean(value)),
         );
@@ -165,8 +176,27 @@ export default function ProductsPage() {
           ratePerPcs,
           amount,
         };
+      }).filter((row) => {
+        if (!(status === "all" || row.product.status === status)) return false;
+        if (!(category === "all" || row.product.category === category)) return false;
+        const qValue = q.toLowerCase().trim();
+        if (!qValue) return true;
+        return [
+          row.product.name,
+          row.product.sku,
+          row.product.productCode,
+          row.product.marka,
+          row.product.category,
+          row.details,
+          row.paymentAgentName,
+          row.wechatId,
+          row.customerName,
+          formatAmount(row.amount),
+          formatAmount(row.totalQty),
+          formatAmount(row.ratePerPcs),
+        ].join(" ").toLowerCase().includes(qValue);
       }),
-    [filtered, orders, paymentAgents, customers],
+    [rows, orders, paymentAgents, customers, status, category, q],
   );
 
   const productsFlowLoggedRef = useRef(false);
@@ -243,14 +273,18 @@ export default function ProductsPage() {
     }
   };
 
-  const removeProduct = async (product: Product) => {
-    if (!window.confirm(`Move ${product.name || product.productCode || product.id} to Recycle Bin?`)) return;
+  const removeProduct = async () => {
+    if (!pendingDeleteProduct || deleteBusy) return;
+    setDeleteBusy(true);
     try {
-      await orderLifecycleService.safeDeleteProduct(product.id, "products-page");
+      await orderLifecycleService.safeDeleteProduct(pendingDeleteProduct.id, "products-page");
       await reloadProducts();
       pushToast({ tone: "success", text: "Product moved to Recycle Bin." });
+      setPendingDeleteProduct(null);
     } catch (error) {
       pushToast({ tone: "danger", text: error instanceof Error ? error.message : "Could not delete product." });
+    } finally {
+      setDeleteBusy(false);
     }
   };
 
@@ -285,7 +319,7 @@ export default function ProductsPage() {
 
         <div className="card flex flex-wrap items-center gap-2 p-3">
           <div className="min-w-[280px] flex-1">
-            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by product name, SKU, marka, category..." leadingIcon={<Search size={14} />} />
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by product, marka, details, customer, payment agent, WeChat, amount..." leadingIcon={<Search size={14} />} />
           </div>
           <div className="w-[170px]">
             <Select value={category} onChange={(e) => setCategory(e.target.value)} options={[{ value: "all", label: "All Categories" }, ...categories.map((c) => ({ value: c, label: c }))]} />
@@ -353,7 +387,7 @@ export default function ProductsPage() {
                     <td className="font-semibold tabular-nums text-[var(--success)]">{formatAmount(row.ratePerPcs)}</td>
                     <td className="px-4 font-semibold tabular-nums">{formatAmount(row.amount)}</td>
                     <td className="px-4 py-3 text-right">
-                      <Button size="sm" variant="secondary" onClick={() => void removeProduct(row.product)}>
+                      <Button size="sm" variant="secondary" onClick={() => setPendingDeleteProduct(row.product)}>
                         <Trash2 size={13} />
                       </Button>
                     </td>
@@ -369,7 +403,7 @@ export default function ProductsPage() {
               </tbody>
             </table>
           </div>
-          <TablePagination total={filtered.length} />
+          <TablePagination total={productTableRows.length} />
         </div>
 
         {open && (
@@ -412,6 +446,16 @@ export default function ProductsPage() {
         )}
 
         <ImageLightbox src={previewImage} alt="Product photo" open={Boolean(previewImage)} onClose={() => setPreviewImage(null)} />
+        <ConfirmDialog
+          open={Boolean(pendingDeleteProduct)}
+          title="Delete this product?"
+          description={pendingDeleteProduct ? `Move ${pendingDeleteProduct.name || pendingDeleteProduct.productCode || pendingDeleteProduct.id} to Recycle Bin?` : ""}
+          confirmLabel="Move to Recycle Bin"
+          danger
+          busy={deleteBusy}
+          onCancel={() => { if (!deleteBusy) setPendingDeleteProduct(null); }}
+          onConfirm={() => { void removeProduct(); }}
+        />
       </div>
     </PageShell>
   );

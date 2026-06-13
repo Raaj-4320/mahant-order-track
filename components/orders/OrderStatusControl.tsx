@@ -35,9 +35,12 @@ type Props = {
   options?: Array<{ value: Order["status"]; label: string }>;
   compact?: boolean;
   neutral?: boolean;
+  buttonClassName?: string;
+  portalWidth?: number;
+  showDot?: boolean;
 };
 
-export function OrderStatusControl({ value, onChange, disabled = false, debugOrderId, options, compact = false, neutral = false }: Props) {
+export function OrderStatusControl({ value, onChange, disabled = false, debugOrderId, options, compact = false, neutral = false, buttonClassName, portalWidth = 176, showDot = false }: Props) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const resolvedOptions = options && options.length ? options : STATUS_OPTIONS;
@@ -74,15 +77,17 @@ onChange(status);
           return nextOpen;
         })}
         className={cn(
-          compact ? "inline-flex h-6 items-center gap-0.5 rounded-full border px-1.5 text-[11px] font-medium transition-colors" : "inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[12px] font-medium transition-colors",
+          compact ? "inline-flex h-[22px] items-center gap-[2px] rounded-full border px-1 text-[10.5px] font-medium transition-colors" : "inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[12px] font-medium transition-colors",
           neutral ? "border-border bg-bg-subtle text-fg" : (statusClasses[value] || statusClasses.saved),
           disabled ? "cursor-not-allowed opacity-60" : "hover:brightness-95",
+          buttonClassName,
         )}
       >
+        {showDot ? <span className="h-2.5 w-2.5 rounded-full bg-current/80" /> : null}
         <span>{selected?.label || value}</span>
-        <ChevronDown size={12} className={cn("transition-transform", open && "rotate-180")} />
+        <ChevronDown size={11} className={cn("transition-transform", open && "rotate-180")} />
       </button>
-      <FloatingPortal anchorRef={rootRef as any} open={open && !disabled} width={176}>
+      <FloatingPortal anchorRef={rootRef as any} open={open && !disabled} width={portalWidth}>
         <div className="rounded-xl border border-border bg-bg-card p-1.5 shadow-card">
           {resolvedOptions.map((option) => (
             <button

@@ -7,6 +7,7 @@ import { applyTypedCustomerToLine } from "@/services/customers/customerResolutio
 import { PhotoUpload } from "./PhotoUpload";
 import { useMemo, useState } from "react";
 import { getLineDetailsParts } from "@/lib/orderLineDetails";
+import { formatAmount } from "@/lib/data";
 
 type Props = {
   line: OrderLine;
@@ -74,6 +75,7 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
         type="number"
         inputMode="numeric"
         min={0}
+        step="any"
         value={line.totalCtns}
         onChange={(e) => onChange({ totalCtns: Number(e.target.value) || 0 })}
         className="text-center no-spinner"
@@ -85,6 +87,7 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
         type="number"
         inputMode="numeric"
         min={0}
+        step="any"
         value={line.pcsPerCtn}
         onChange={(e) => onChange({ pcsPerCtn: Number(e.target.value) || 0 })}
         className="text-center no-spinner"
@@ -92,7 +95,7 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
       />
 
       <div className="text-center font-semibold text-[var(--success)] tabular-nums">
-        {pcs.toLocaleString()}
+        {formatAmount(pcs)}
       </div>
 
       <Input
@@ -100,7 +103,7 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
         type="number"
         inputMode="decimal"
         min={0}
-        step="0.01"
+        step="any"
         value={line.rmbPerPcs}
         onChange={(e) => onChange({ rmbPerPcs: Number(e.target.value) || 0 })}
         className="text-center no-spinner"
@@ -108,7 +111,7 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
       />
 
       <div className="rounded-md border border-border/70 bg-bg-subtle px-2 py-1 text-center tabular-nums leading-tight text-[14.5px] font-semibold">
-        {totalRmb.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        {formatAmount(totalRmb)}
       </div>
 
       <div className="relative"><Input compact value={line.customerName ?? ""} onFocus={() => setCustomerOpen(true)} onBlur={() => window.setTimeout(() => setCustomerOpen(false), 120)} onChange={(e) => { onChange(applyTypedCustomerToLine(line, e.target.value, customers)); setCustomerOpen(true); }} placeholder="Customer" />{customerOpen && topCustomerSuggestions.length > 0 ? <div className="absolute z-20 mt-1 w-full rounded-lg border border-border bg-bg-card shadow-card">{topCustomerSuggestions.map((name) => <button key={name} type="button" className="block w-full px-2 py-1 text-left text-[12px] hover:bg-bg-subtle" onMouseDown={(e)=>{e.preventDefault(); onChange(applyTypedCustomerToLine(line, name, customers)); setCustomerOpen(false);}}>{name}</button>)}</div> : null}</div>

@@ -1,17 +1,18 @@
 "use client";
 
 import { Button } from "@/components/ui/Button";
-import { useEffect } from "react";
+import { formatAmount } from "@/lib/data";
 import type { PaymentAgent } from "@/lib/types";
 import type { PaymentAgentSettlementResult } from "@/services/settlement/paymentAgentSettlement";
 
 type Props = {
   total: number;
-  onCancel: () => void;
   onSaveDraft: () => void;
   onSaveOrder: () => void;
   saveOrderLabel?: string;
+  saveDraftLabel?: string;
   disableSaveOrder?: boolean;
+  disableSaveDraft?: boolean;
   paymentAgent: PaymentAgent | null;
   settlement: PaymentAgentSettlementResult;
   paidNow: number;
@@ -19,7 +20,7 @@ type Props = {
   onViewDetails: () => void;
 };
 
-const fmt = (v: number) => (Number(v || 0)).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmt = (value: number) => formatAmount(value);
 
 function Metric({ label, value, tone = "default" }: { label: string; value: string; tone?: "default" | "success" | "warning" | "info" }) {
   return (
@@ -30,10 +31,7 @@ function Metric({ label, value, tone = "default" }: { label: string; value: stri
   );
 }
 
-export function OrderFooter({ total, onCancel, onSaveDraft, onSaveOrder, saveOrderLabel = "Save Order", disableSaveOrder = false, paymentAgent, settlement, paidNow, onViewDetails }: Props) {
-  useEffect(() => {
-}, [settlement, paidNow]);
-
+export function OrderFooter({ total, onSaveDraft, onSaveOrder, saveOrderLabel = "Save Order", saveDraftLabel = "Save as Draft", disableSaveOrder = false, disableSaveDraft = false, paymentAgent, settlement, paidNow, onViewDetails }: Props) {
   return (
     <footer className="sticky bottom-0 z-20 border-t border-border bg-bg-card px-5 py-2.5">
       <div className="rounded-xl border border-border bg-bg-subtle px-2 py-2">
@@ -41,14 +39,13 @@ export function OrderFooter({ total, onCancel, onSaveDraft, onSaveOrder, saveOrd
           <div className="flex flex-wrap items-center divide-x divide-border/70">
             <Metric label="Agent Credit" value={paymentAgent ? fmt(settlement.existingCredit) : "—"} />
             <Metric label="Order Total" value={fmt(total)} />
-            <Metric label="Credit Used" value={paymentAgent ? fmt(settlement.creditUsed) : "0.00"} tone="info" />
+            <Metric label="Credit Used" value={paymentAgent ? fmt(settlement.creditUsed) : "0"} tone="info" />
             <Metric label="Payable" value={paymentAgent ? fmt(settlement.remainingPayable) : fmt(total)} tone={(paymentAgent ? settlement.remainingPayable : total) > 0 ? "warning" : "default"} />
             <Metric label="Credit Left" value={paymentAgent ? fmt(settlement.resultingCreditBalance) : "—"} tone={paymentAgent && settlement.resultingCreditBalance > 0 ? "success" : "default"} />
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <Button size="sm" variant="secondary" onClick={onCancel}>Cancel</Button>
-            <Button size="sm" variant="secondary" onClick={onSaveDraft}>Save as Draft</Button>
+            <Button size="sm" variant="secondary" onClick={onSaveDraft} disabled={disableSaveDraft}>{saveDraftLabel}</Button>
             <Button size="sm" variant="secondary" onClick={onViewDetails}>View Order Details →</Button>
             <Button size="sm" variant="primary" onClick={onSaveOrder} disabled={disableSaveOrder} title={disableSaveOrder ? "Complete required fields before saving as order." : undefined}>{saveOrderLabel}</Button>
           </div>
@@ -57,4 +54,3 @@ export function OrderFooter({ total, onCancel, onSaveDraft, onSaveOrder, saveOrd
     </footer>
   );
 }
-

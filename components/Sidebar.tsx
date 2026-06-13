@@ -8,10 +8,12 @@ import {
   LucideIcon,
   Package,
   RotateCcw,
+  Settings,
   Users,
   Wallet,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { getFirebaseConfigStatus } from "@/lib/firebase/client";
 
 type Item = {
   label: string;
@@ -25,12 +27,13 @@ const items: Item[] = [
   { label: "Customers", href: "/customers", icon: Users },
   { label: "Payment Agents", href: "/payment-agents", icon: Wallet },
   { label: "Products", href: "/products", icon: Package },
+  { label: "Settings", href: "/settings", icon: Settings },
   { label: "Recycle Bin", href: "/recycle-bin", icon: RotateCcw },
 ];
 
 export function Sidebar() {
   const pathname = usePathname();
-  const businessId = process.env.NEXT_PUBLIC_FIREBASE_BUSINESS_ID ?? "mahant";
+  const businessId = getFirebaseConfigStatus().businessId || "mahant";
 
   return (
     <aside className="hidden lg:flex w-[208px] shrink-0 flex-col border-r border-border bg-bg-subtle">
@@ -47,10 +50,10 @@ export function Sidebar() {
           const Icon = it.icon;
           return (
             <Link key={it.href} href={it.href} className="block">
-              <div className={cn("nav-item", active && "active")}>
+              <div className={cn("nav-item text-[25px]", active && "active")}>
                 <Icon size={16} />
                 <span>{it.label}</span>
-                {active ? <span className="absolute right-2 top-1/2 -translate-y-1/2 h-1.5 w-1.5 rounded-full bg-brand-fg" /> : null}
+                {active ? <span className="" /> : null}
               </div>
             </Link>
           );
@@ -61,16 +64,7 @@ export function Sidebar() {
         <div className="card p-3 text-[11.5px] space-y-2">
           <div className="font-semibold">Business</div>
           <div className="text-fg-subtle break-all">Business: {businessId}</div>
-          <div className="text-fg-subtle">Auth prompts are disabled. Firebase reads and writes use this business directly.</div>
-        </div>
-        <div className="card flex items-center gap-3 p-3">
-          <div className="grid h-9 w-9 place-items-center rounded-full bg-bg-subtle border border-border text-[12px] font-semibold">
-            AD
-          </div>
-          <div className="min-w-0">
-            <div className="truncate text-[13px] font-medium">Admin User</div>
-            <div className="truncate text-[11.5px] text-fg-subtle">admin@tradeflow.com</div>
-          </div>
+          <div className="text-fg-subtle">Workspace data is loaded from the configured Firebase business context.</div>
         </div>
       </div>
     </aside>

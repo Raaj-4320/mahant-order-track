@@ -1,4 +1,8 @@
 export const businessPath = (businessId: string) => `businesses/${businessId}`;
+export const membersPath = (businessId: string) => `${businessPath(businessId)}/members`;
+export const memberPath = (businessId: string, uid: string) => `${membersPath(businessId)}/${uid}`;
+export const settingsPath = (businessId: string) => `${businessPath(businessId)}/settings`;
+export const settingsDocPath = (businessId: string, docId: string) => `${settingsPath(businessId)}/${docId}`;
 
 export const productsPath = (businessId: string) => `${businessPath(businessId)}/products`;
 export const productPath = (businessId: string, productId: string) => `${productsPath(businessId)}/${productId}`;

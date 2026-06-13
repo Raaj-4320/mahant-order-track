@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { ImageLightbox } from "@/components/ui/ImageLightbox";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { useCustomers } from "@/hooks/useCustomers";
 import { useOrders } from "@/hooks/useOrders";
 import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
@@ -73,6 +74,8 @@ export default function CustomersPage() {
   const [sortBy, setSortBy] = useState("name");
   const [viewCustomerId, setViewCustomerId] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [pendingDeleteCustomer, setPendingDeleteCustomer] = useState<Customer | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   const [exportTick, setExportTick] = useState(0);
   void exportTick;
@@ -89,7 +92,7 @@ const rows: CustomerSummaryRow[] = customers.map((customer) => {
             return {
               orderId: order.id,
               orderNumber: order.number || order.orderNumber || "—",
-              wechatId: order.wechatId || "—",
+              wechatId: order.wechatId.trim() || "—",
               orderDate: order.updatedAt || order.createdAt || order.date || "",
               productImage: getLineImage(line),
               dimImage: getLineDimImage(line),
@@ -133,11 +136,24 @@ return rows;
     const q = query.trim().toLowerCase();
     const filtered = summaries.filter((row) => {
       if (!q) return true;
-      const name = (row.customer.displayName || row.customer.name || "").toLowerCase();
-      const wechat = row.allLineRows.map((line) => line.wechatId.toLowerCase()).join(" ");
-      const marka = row.allLineRows.map((line) => line.marka.toLowerCase()).join(" ");
-      const orderNo = row.allLineRows.map((line) => line.orderNumber.toLowerCase()).join(" ");
-      return [name, wechat, marka, orderNo].join(" ").includes(q);
+      const searchText = [
+        row.customer.displayName || row.customer.name || "",
+        row.customer.customerCode || "",
+        row.customer.phone || "",
+        row.customer.status || "",
+        formatAmount(row.latestOrderAmount),
+        formatAmount(row.totalOrdersAmount),
+        ...row.allLineRows.flatMap((line) => [
+          line.wechatId,
+          line.marka,
+          line.orderNumber,
+          line.details1,
+          line.details2,
+          line.details3,
+          formatAmount(line.totalAmount),
+        ]),
+      ].join(" ").toLowerCase();
+      return searchText.includes(q);
     });
 
     return [...filtered].sort((a, b) => {
@@ -162,9 +178,9 @@ const header = [
     const rows = filteredAndSorted.map((row) => [
       row.customer.displayName || row.customer.name || "—",
       row.latestProductMarka || "—",
-      row.latestOrderAmount.toFixed(2),
+      formatAmount(row.latestOrderAmount),
       String(row.totalOrders),
-      row.totalOrdersAmount.toFixed(2),
+      formatAmount(row.totalOrdersAmount),
     ]);
     const csv = [header, ...rows]
       .map((line) => line.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
@@ -179,14 +195,18 @@ const header = [
     setExportTick((x) => x + 1);
   };
 
-  const removeCustomer = async (customer: Customer) => {
-    if (!window.confirm(`Move ${customer.displayName || customer.name || customer.id} to Recycle Bin?`)) return;
+  const removeCustomer = async () => {
+    if (!pendingDeleteCustomer || deleteBusy) return;
+    setDeleteBusy(true);
     try {
-      await orderLifecycleService.safeDeleteCustomer(customer.id, "customers-page");
+      await orderLifecycleService.safeDeleteCustomer(pendingDeleteCustomer.id, "customers-page");
       await reloadCustomers();
       pushToast({ tone: "success", text: "Customer moved to Recycle Bin." });
+      setPendingDeleteCustomer(null);
     } catch (error) {
       pushToast({ tone: "danger", text: error instanceof Error ? error.message : "Could not delete customer." });
+    } finally {
+      setDeleteBusy(false);
     }
   };
 
@@ -282,7 +302,7 @@ const header = [
                         <Button size="sm" variant="secondary" onClick={() => { setViewCustomerId(row.customer.id); }}>
                           View
                         </Button>
-                        <Button size="sm" variant="secondary" onClick={() => void removeCustomer(row.customer)}>
+                        <Button size="sm" variant="secondary" onClick={() => setPendingDeleteCustomer(row.customer)}>
                           <Trash2 size={13} />
                         </Button>
                       </div>
@@ -407,6 +427,16 @@ const header = [
         ) : null}
 
         <ImageLightbox src={previewImage} alt="Customer order line image" open={Boolean(previewImage)} onClose={() => setPreviewImage(null)} />
+        <ConfirmDialog
+          open={Boolean(pendingDeleteCustomer)}
+          title="Delete this customer?"
+          description={pendingDeleteCustomer ? `Move ${pendingDeleteCustomer.displayName || pendingDeleteCustomer.name || pendingDeleteCustomer.id} to Recycle Bin?` : ""}
+          confirmLabel="Move to Recycle Bin"
+          danger
+          busy={deleteBusy}
+          onCancel={() => { if (!deleteBusy) setPendingDeleteCustomer(null); }}
+          onConfirm={() => { void removeCustomer(); }}
+        />
       </div>
     </PageShell>
   );

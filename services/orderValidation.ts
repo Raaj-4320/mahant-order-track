@@ -27,25 +27,22 @@ const isMeaningfulLine = (line: Order["lines"][number]) =>
       Number(line.rmbPerPcs) > 0,
   );
 
+export const getMeaningfulOrderLines = (lines: Order["lines"]) => lines.filter(isMeaningfulLine);
+
 export const validateOrderForSave = (order: Order): OrderValidationResult => {
   const missingFields: string[] = [];
   if (!order.date?.trim()) missingFields.push("Date is required.");
-  if (!order.wechatId?.trim()) missingFields.push("WeChat ID is required.");
 
-  const meaningfulLines = order.lines.filter(isMeaningfulLine);
+  const meaningfulLines = getMeaningfulOrderLines(order.lines);
   if (meaningfulLines.length === 0) missingFields.push("At least one meaningful order line is required.");
 
   const lineIssues: OrderLineValidationIssue[] = [];
   order.lines.forEach((line, idx) => {
+    if (!isMeaningfulLine(line)) return;
     const issues: string[] = [];
-    if (!isMeaningfulLine(line)) {
-      issues.push("Line is blank. Fill required fields or remove it.");
-    } else {
-      if (!hasProductIdentity(line)) issues.push("MARKA, Details, or product image is required.");
-      if (!(Number(line.totalCtns) > 0)) issues.push("CTNs must be greater than 0.");
-      if (!(Number(line.pcsPerCtn) > 0)) issues.push("PCS/CTN must be greater than 0.");
-      if (!(Number(line.rmbPerPcs) > 0)) issues.push("Rate / PCS must be greater than 0.");
-    }
+    if (!hasProductIdentity(line)) issues.push("MARKA, Details, or product image is required.");
+    if (!(Number(line.totalCtns) > 0)) issues.push("CTNs must be greater than 0.");
+    if (!(Number(line.pcsPerCtn) > 0)) issues.push("PCS/CTN must be greater than 0.");
     if (issues.length) lineIssues.push({ lineId: line.id, lineNumber: idx + 1, issues });
   });
 

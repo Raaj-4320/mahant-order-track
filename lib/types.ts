@@ -26,12 +26,13 @@ export type {
 } from "@/types/domain";
 
 import type { Order, OrderLine } from "@/types/domain";
+import { addNumbers, multiplyNumbers } from "@/lib/numbers";
 
 export const lineTotalPcs = (l: OrderLine) =>
-  (Number(l.totalCtns) || 0) * (Number(l.pcsPerCtn) || 0);
+  multiplyNumbers(l.totalCtns, l.pcsPerCtn);
 
 export const lineTotalRmb = (l: OrderLine) =>
-  lineTotalPcs(l) * (Number(l.rmbPerPcs) || 0);
+  multiplyNumbers(lineTotalPcs(l), l.rmbPerPcs);
 
 export const orderTotal = (o: Order) =>
-  o.lines.reduce((sum, l) => sum + lineTotalRmb(l), 0);
+  addNumbers(o.lines.map((l) => lineTotalRmb(l)));

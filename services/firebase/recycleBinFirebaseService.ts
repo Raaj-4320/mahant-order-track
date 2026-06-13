@@ -1,6 +1,6 @@
 import { collection, doc, getDoc, getDocs, setDoc } from "firebase/firestore";
 import { getFirestoreDb, requireFirebaseBusinessId } from "@/lib/firebase/client";
-import { recycleBinEntryFromFirestore, recycleBinEntryToFirestore } from "@/lib/firebase/mappers";
+import { recycleBinEntryFromFirestore, recycleBinEntryToFirestore, sanitizeFirestorePayload } from "@/lib/firebase/mappers";
 import { recycleBinEntryPath, recycleBinPath } from "@/lib/firebase/paths";
 import type { RecycleBinEntry } from "@/lib/types";
 
@@ -34,7 +34,8 @@ export const recycleBinFirebaseService = {
     const db = requireDb();
     const id = entry.id || makeId();
     const next = { ...entry, id };
-    await setDoc(doc(db, recycleBinEntryPath(businessId(), id)), recycleBinEntryToFirestore(next), { merge: true });
+    const payload = sanitizeFirestorePayload(recycleBinEntryToFirestore(next)).value;
+    await setDoc(doc(db, recycleBinEntryPath(businessId(), id)), payload, { merge: true });
     return next;
   },
 };

@@ -12,6 +12,8 @@ type Props = {
   disabled?: boolean;
   debugOrderId?: string;
   compact?: boolean;
+  buttonClassName?: string;
+  portalWidth?: number;
 };
 
 const WEEKDAY_LABELS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as const;
@@ -34,7 +36,7 @@ const parseIsoDate = (iso?: string) => {
 const sameDay = (left: Date | null, right: Date | null) =>
   Boolean(left && right && left.getFullYear() === right.getFullYear() && left.getMonth() === right.getMonth() && left.getDate() === right.getDate());
 
-export function LoadingDateControl({ value, onChange, disabled = false, debugOrderId, compact = false }: Props) {
+export function LoadingDateControl({ value, onChange, disabled = false, debugOrderId, compact = false, buttonClassName, portalWidth = 260 }: Props) {
   const label = useMemo(() => (value ? formatIndianDate(value) : "Set date"), [value]);
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -100,15 +102,16 @@ setOpen(false);
           });
         }}
         className={cn(
-          compact ? "inline-flex h-6 items-center gap-0.5 whitespace-nowrap rounded-full border border-border bg-bg-card px-1 text-[11px] text-fg" : "inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-bg-card px-3 text-[12px] text-fg",
-          disabled ? "cursor-not-allowed opacity-60" : "hover:border-fg-subtle"
+          compact ? "inline-flex h-[22px] items-center gap-[2px] whitespace-nowrap rounded-full border border-border bg-bg-card px-1 text-[10.5px] text-fg" : "inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-bg-card px-3 text-[12px] text-fg",
+          disabled ? "cursor-not-allowed opacity-60" : "hover:border-fg-subtle",
+          buttonClassName
         )}
       >
-        <CalendarDays size={12} className="text-fg-subtle" />
+        <CalendarDays size={11} className="text-fg-subtle" />
         <span>{label}</span>
-        <ChevronDown size={12} className={cn("text-fg-subtle transition-transform", open && "rotate-180")} />
+        <ChevronDown size={11} className={cn("text-fg-subtle transition-transform", open && "rotate-180")} />
       </button>
-      <FloatingPortal anchorRef={rootRef as any} open={open && !disabled} width={260}>
+      <FloatingPortal anchorRef={rootRef as any} open={open && !disabled} width={portalWidth}>
         <div className="rounded-xl border border-border bg-bg-card p-2 shadow-card">
           <div className="mb-2 flex items-center justify-between">
             <button

@@ -6,8 +6,9 @@ import { useTheme } from "./ThemeProvider";
 export function TopBar({ title }: { title: string }) {
   const { theme, toggle } = useTheme();
   return (
-    <header className="sticky top-0 z-30 flex h-[58px] items-center justify-between border-b border-border bg-bg/80 px-5 backdrop-blur">
-      <h1 className="text-[18px] font-semibold tracking-tight">{title}</h1>
+    <header className="sticky top-0 z-30 grid h-[58px] grid-cols-[1fr_auto_1fr] items-center border-b border-border bg-bg/80 px-5 backdrop-blur">
+      <div />
+      <h1 className="text-center text-[18px] font-semibold tracking-tight">{title}</h1>
       <div className="flex items-center gap-2">
         <button
           aria-label="Notifications"

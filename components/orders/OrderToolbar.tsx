@@ -2,7 +2,6 @@
 
 import {
   ArrowUpDown,
-  Bell,
   CalendarDays,
   ChevronDown,
   Filter,
@@ -196,13 +195,6 @@ export function OrderToolbar({
           <Plus size={14} />
           Add Order
         </Button>
-        <button
-          aria-label="Notifications"
-          className="relative grid h-8 w-8 place-items-center rounded-full border border-border bg-bg-card hover:border-fg-subtle transition-colors"
-        >
-          <Bell size={14} />
-          <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-[var(--danger)]" />
-        </button>
         <button
           aria-label="Toggle theme"
           onClick={toggle}

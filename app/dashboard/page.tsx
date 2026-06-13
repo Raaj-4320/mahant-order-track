@@ -84,7 +84,7 @@ export default function DashboardPage() {
   const viewOrder = sourceOrders.find((o) => o.id === viewOrderId) ?? null;
   const canConfirmReset = confirmText === "DELETE EVERYTHING";
   const canSeeDevReset = isDevResetEnabled() && (!isAuthRequiredModeEnabled() || canManageMaintenance);
-  const formatPlainAmount = (value: number) => value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const formatPlainAmount = (value: number) => formatAmount(value);
   useEffect(() => { logPageAccess("Dashboard", { component: "app/dashboard/page.tsx", source: ordersSource }); }, []);
   const businessId = process.env.NEXT_PUBLIC_FIREBASE_BUSINESS_ID ?? "mahant";
 
@@ -201,7 +201,7 @@ pushToast({ tone: "danger", text: "Failed to save row changes." });
           <div className="overflow-x-auto">
             <table className="w-full min-w-[980px] text-[13px]">
               <thead className="bg-bg-subtle">
-                <tr className="text-left text-[11.5px] uppercase tracking-wide text-fg-subtle">
+                <tr className="text-left text-[10px] uppercase tracking-wide text-fg-subtle">
                   <th className="px-4 py-2">Order Number</th><th>Total Unique Items</th><th>Order Total</th><th>Paid By</th><th>Loading Date</th><th>Status</th><th className="text-right px-4">Actions</th>
                 </tr>
               </thead>

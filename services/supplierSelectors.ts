@@ -61,7 +61,7 @@ export function getUniqueSupplierGroups(orders: Order[]) {
     const k = key(name);
     const row = groups.get(k) || { supplierKey: k, supplierName: name, entries: [] as any[] };
     row.entries.push({
-      orderId: o.id, orderNumber: o.number || o.orderNumber, wechatId: o.wechatId || "", date: o.date, loadingDate: o.loadingDate,
+      orderId: o.id, orderNumber: o.number || o.orderNumber, wechatId: norm(o.wechatId || ""), date: o.date, loadingDate: o.loadingDate,
       lineId: l.id, amount: lineTotalRmb(l), marka: l.marka, details: l.details,
       totalCtns: Number(l.totalCtns) || 0, totalPcs: lineTotalPcs(l), customerName: l.customerName || l.customerSnapshot?.name || "",
     });

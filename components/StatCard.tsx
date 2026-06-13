@@ -16,7 +16,7 @@ export function StatCard({
   return (
     <div className="card p-5">
       <div className="flex items-start justify-between">
-        <div>
+        <div className="flex-1 text-center">
           <div className="text-[12px] font-medium text-fg-muted">{label}</div>
           <div className="mt-1 text-[24px] font-semibold tabular-nums">{value}</div>
         </div>
@@ -26,7 +26,7 @@ export function StatCard({
           </div>
         )}
       </div>
-      {hint && <div className="mt-3 text-[12px] text-fg-subtle">{hint}</div>}
+      {hint && <div className="mt-3 text-center text-[12px] text-fg-subtle">{hint}</div>}
     </div>
   );
 }

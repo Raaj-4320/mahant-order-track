@@ -1,81 +1,153 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function canReadBusinessData(businessId) {
-      return true;
+    function isSignedIn() {
+      return request.auth != null;
     }
 
-    function canWriteBusinessData(businessId) {
-      return true;
+    function memberDocPath(businessId, uid) {
+      return /databases/$(database)/documents/businesses/$(businessId)/members/$(uid);
+    }
+
+    function authSettingsPath(businessId) {
+      return /databases/$(database)/documents/businesses/$(businessId)/settings/auth;
+    }
+
+    function authConfigured(businessId) {
+      return exists(authSettingsPath(businessId));
+    }
+
+    function hasMemberDoc(businessId) {
+      return isSignedIn() && exists(memberDocPath(businessId, request.auth.uid));
+    }
+
+    function memberData(businessId) {
+      return get(memberDocPath(businessId, request.auth.uid)).data;
+    }
+
+    function isActiveMember(businessId) {
+      return hasMemberDoc(businessId) && memberData(businessId).active == true;
     }
 
     function isOwnerOrAdmin(businessId) {
-      return true;
+      return isActiveMember(businessId) &&
+        (memberData(businessId).role == "owner" || memberData(businessId).role == "admin");
+    }
+
+    function canWriteBusinessData(businessId) {
+      return isActiveMember(businessId) &&
+        (memberData(businessId).role == "owner" ||
+         memberData(businessId).role == "admin" ||
+         memberData(businessId).role == "staff");
+    }
+
+    function canBootstrapFirstAdmin(businessId, uid) {
+      return isSignedIn() &&
+        request.auth.uid == uid &&
+        !authConfigured(businessId);
+    }
+
+    function isSelfMemberCreate(businessId, uid) {
+      return isSignedIn() &&
+        request.auth.uid == uid &&
+        request.resource.data.uid == uid &&
+        request.resource.data.active == true &&
+        request.resource.data.role == "admin";
+    }
+
+    function isSelfMemberMetadataUpdate(businessId, uid) {
+      return isSignedIn() &&
+        request.auth.uid == uid &&
+        resource.data.uid == uid &&
+        request.resource.data.uid == resource.data.uid &&
+        request.resource.data.role == resource.data.role &&
+        request.resource.data.active == resource.data.active &&
+        request.resource.data.email == resource.data.email &&
+        request.resource.data.name == resource.data.name &&
+        request.resource.data.authProvider == resource.data.authProvider &&
+        request.resource.data.createdAt == resource.data.createdAt;
     }
 
     match /businesses/{businessId} {
-      allow read, create, update, delete: if true;
+      allow create: if isSignedIn() &&
+        !authConfigured(businessId) &&
+        request.resource.data.ownerUid == request.auth.uid;
+      allow read: if isActiveMember(businessId) ||
+        (isSignedIn() && resource.data.ownerUid == request.auth.uid);
+      allow update, delete: if isOwnerOrAdmin(businessId);
 
       match /members/{uid} {
-        allow read, create, update, delete: if true;
+        allow read: if isActiveMember(businessId) || (isSignedIn() && request.auth.uid == uid);
+        allow create: if
+          (canBootstrapFirstAdmin(businessId, uid) && isSelfMemberCreate(businessId, uid))
+          ||
+          isSelfMemberCreate(businessId, uid)
+          ||
+          isOwnerOrAdmin(businessId);
+        allow update: if isOwnerOrAdmin(businessId) || isSelfMemberMetadataUpdate(businessId, uid);
+        allow delete: if isOwnerOrAdmin(businessId);
       }
 
       match /orders/{orderId} {
-        allow read: if canReadBusinessData(businessId);
+        allow read: if isActiveMember(businessId);
         allow create, update: if canWriteBusinessData(businessId);
         allow delete: if isOwnerOrAdmin(businessId);
       }
 
       match /counters/{docId} {
-        allow read: if canReadBusinessData(businessId);
+        allow read: if isActiveMember(businessId);
         allow create, update: if canWriteBusinessData(businessId);
         allow delete: if isOwnerOrAdmin(businessId);
       }
 
       match /products/{productId} {
-        allow read: if canReadBusinessData(businessId);
+        allow read: if isActiveMember(businessId);
         allow create, update: if canWriteBusinessData(businessId);
         allow delete: if isOwnerOrAdmin(businessId);
       }
 
       match /paymentAgents/{agentId} {
-        allow read: if canReadBusinessData(businessId);
+        allow read: if isActiveMember(businessId);
         allow create, update: if canWriteBusinessData(businessId);
         allow delete: if isOwnerOrAdmin(businessId);
       }
 
       match /paymentAgentLedger/{entryId} {
-        allow read: if canReadBusinessData(businessId);
+        allow read: if isActiveMember(businessId);
         allow create, update: if canWriteBusinessData(businessId);
         allow delete: if isOwnerOrAdmin(businessId);
       }
 
       match /customers/{customerId} {
-        allow read: if canReadBusinessData(businessId);
+        allow read: if isActiveMember(businessId);
         allow create, update: if canWriteBusinessData(businessId);
         allow delete: if isOwnerOrAdmin(businessId);
       }
 
       match /referenceRecords/{recordId} {
-        allow read: if canReadBusinessData(businessId);
+        allow read: if isActiveMember(businessId);
         allow create, update: if canWriteBusinessData(businessId);
         allow delete: if isOwnerOrAdmin(businessId);
       }
 
       match /recycleBin/{entryId} {
-        allow read: if canReadBusinessData(businessId);
+        allow read: if isActiveMember(businessId);
         allow create, update: if canWriteBusinessData(businessId);
         allow delete: if isOwnerOrAdmin(businessId);
       }
 
       match /settings/{docId} {
-        allow read: if canReadBusinessData(businessId);
-        allow create, update, delete: if isOwnerOrAdmin(businessId);
+        allow read: if docId == "auth" || isActiveMember(businessId);
+        allow create: if
+          (docId == "auth" && canBootstrapFirstAdmin(businessId, request.auth.uid) && request.resource.data.adminUid == request.auth.uid)
+          ||
+          isOwnerOrAdmin(businessId);
+        allow update, delete: if isOwnerOrAdmin(businessId);
       }
     }
 
     match /{document=**} {
-      allow read, write: if true;
+      allow read, write: if false;
     }
   }
 }

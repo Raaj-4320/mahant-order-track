@@ -1,5 +1,6 @@
 "use client";
 
+import { formatAmount } from "@/lib/data";
 import type { PaymentAgent } from "@/lib/types";
 import type { PaymentAgentSettlementResult } from "@/services/settlement/paymentAgentSettlement";
 
@@ -16,7 +17,7 @@ const badgeTone: Record<PaymentAgentSettlementResult["status"], string> = {
   paid: "bg-emerald-50 text-emerald-700 border-emerald-200",
   credit: "bg-sky-50 text-sky-700 border-sky-200",
 };
-const fmt = (v: number) => v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmt = (v: number) => formatAmount(v);
 
 export function PaymentAgentSettlementSummary({ paymentAgent, settlement, paidNow, onPaidNowChange }: Props) {
   if (!paymentAgent) return <div className="rounded border border-border/70 bg-bg-card p-3"><div className="flex items-center justify-between gap-2 mb-2"><div className="text-sm font-semibold">Payment Summary</div><span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-fg-subtle uppercase">No Agent</span></div><div className="text-[12px] text-fg-subtle">Select a payment agent to preview payable/credit adjustment.</div></div>;

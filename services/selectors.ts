@@ -32,7 +32,7 @@ export function getDashboardRows(orders: Order[], _suppliers: Supplier[], custom
     orderTotal: orderTotal(o),
     paidBy: getOrderPaymentAgentDisplay(o, paymentAgents).value,
     paymentAgentId: o.paymentAgentId || o.paymentBy,
-    wechatId: o.wechatId,
+    wechatId: o.wechatId.trim(),
     orderDate: o.date,
     productsSummary: o.lines.map((l) => l.details || l.productSnapshot?.name || "").filter(Boolean).join(", "),
     markaSummary: o.lines.map((l) => l.marka || "").filter(Boolean).join(", "),

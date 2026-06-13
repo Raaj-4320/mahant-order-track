@@ -1,7 +1,8 @@
 ﻿"use client";
 
 import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
-import { Order, orderTotal } from "@/lib/types";
+import { formatAmount } from "@/lib/data";
+import { Order, lineTotalPcs, lineTotalRmb, orderTotal } from "@/lib/types";
 import { Button } from "@/components/ui/Button";
 import { ImageLightbox } from "@/components/ui/ImageLightbox";
 import { Copy, X } from "lucide-react";
@@ -14,8 +15,7 @@ type OrderLinesDetailModalProps = {
   onClose: () => void;
 };
 
-const formatPlainAmount = (value: number) =>
-  value.toLocaleString("en-US", { maximumFractionDigits: 20 });
+const formatPlainAmount = (value: number) => formatAmount(value);
 
 const EXPORT_HIDDEN_ATTR = "data-export-hidden";
 const TwoLineHeader = ({ zh, en }: { zh: string; en?: string }) => (
@@ -44,6 +44,7 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
   };
 
   const orderNo = order.number || order.orderNumber || "—";
+  const displayWechatId = order.wechatId?.trim() || "—";
   const hasDimWeightColumn = order.lines.some((line) => Boolean(getLineDimensionPhoto(line) || line.picDim?.trim()));
   const leadingFooterColSpan = hasDimWeightColumn ? 6 : 5;
   const emptyStateColSpan = hasDimWeightColumn ? 10 : 9;
@@ -262,7 +263,7 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
             <div className="overflow-hidden rounded-xl border-2 border-border bg-bg">
               <div className="grid w-fit min-w-full grid-cols-[max-content_max-content] items-center gap-6 p-2.5">
                 <div className="text-[22px] font-bold tabular-nums leading-tight">{order.number || order.orderNumber || "—"}</div>
-                <div className="text-left text-[22px] font-bold leading-tight whitespace-nowrap">WECHAT : {order.wechatId || "—"}</div>
+                <div className="text-left text-[22px] font-bold leading-tight whitespace-nowrap">WECHAT : {displayWechatId}</div>
               </div>
             </div>
 
@@ -297,8 +298,8 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
               </thead>
               <tbody>
                 {order.lines.map((line) => {
-                  const totalPcs = (line.totalCtns || 0) * (line.pcsPerCtn || 0);
-                  const lineTotal = totalPcs * (line.rmbPerPcs || 0);
+                  const totalPcs = lineTotalPcs(line);
+                  const lineTotal = lineTotalRmb(line);
                   const productPhoto = getLineProductPhoto(line);
                   const dimPhoto = getLineDimensionPhoto(line);
                   const dimWeightValue = line.picDim?.trim() || "";
