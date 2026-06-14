@@ -6,6 +6,7 @@ import { Field, Input } from "@/components/ui/Input";
 import { formatAmount } from "@/lib/data";
 import { OrderLineRow, LINE_GRID } from "./OrderLineRow";
 import { Customer, Order, OrderLine, PaymentAgent } from "@/lib/types";
+import { resolveOrderPaymentAgent } from "@/lib/orderDisplay";
 
 export function newLine(): OrderLine {
   return {
@@ -41,7 +42,6 @@ type Props = {
 export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, wechatSuggestions = [], customerSuggestions = [], customers = [], paymentAgents = [], showOrderInfo = true, onPreviewImage }: Props) {
   const [paymentQuery, setPaymentQuery] = useState("");
   const [paymentOpen, setPaymentOpen] = useState(false);
-  const normalizeAgentValue = (value?: string) => (value || "").trim().toLowerCase();
 
   const paymentSuggestions = useMemo(() => {
     const q = paymentQuery.trim().toLowerCase();
@@ -63,16 +63,13 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
 
   const addLine = () => setDraft((d) => ({ ...d, lines: [...d.lines, newLine()] }));
 
-  const selectedPaymentAgent = paymentAgents.find((p) => {
-    const reference = draft.paymentAgentId || draft.paymentBy;
-    return p.id === reference || normalizeAgentValue(p.name) === normalizeAgentValue(reference);
-  });
+  const selectedPaymentAgent = resolveOrderPaymentAgent(draft as Order & { paymentByName?: string; paymentAgentName?: string }, paymentAgents);
   const selectedLabel = selectedPaymentAgent ? paymentLabel(selectedPaymentAgent) : "";
 
   useEffect(() => {
     if (paymentOpen) return;
-    setPaymentQuery(selectedLabel || draft.paymentBy || "");
-  }, [selectedLabel, draft.paymentBy, paymentOpen]);
+    setPaymentQuery(selectedLabel || draft.paymentAgentSnapshot?.name || (draft as any).paymentByName || (draft as any).paymentAgentName || draft.paymentBy || "");
+  }, [selectedLabel, draft.paymentAgentSnapshot?.name, draft.paymentBy, paymentOpen]);
 
   return (
     <div className="flex flex-col gap-3 px-5 py-4">

@@ -23,7 +23,7 @@ import { logCustomer, logDB, logError, logOrder, logPageAccess, logDataFlow } fr
 import { ensureFinalOrderNumber, peekNextOrderNumber } from "@/services/orderNumberService";
 import { ArrowUpDown, BadgePercent, Boxes, CalendarDays, Check, ChevronDown, Eye, Filter, IndianRupee, LayoutGrid, List, MessageCircleMore, Moon, Package2, Search, ShoppingBag, SquarePen, Sun, Trash2, UserRound, X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { getOrderPaymentAgentDisplay } from "@/lib/orderDisplay";
+import { getOrderPaymentAgentDisplay, resolveOrderPaymentAgent } from "@/lib/orderDisplay";
 import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
 import { useTheme } from "@/components/ThemeProvider";
 import { ImageLightbox } from "@/components/ui/ImageLightbox";
@@ -185,7 +185,7 @@ export default function OrdersPage() {
   const [headerWechatOpen, setHeaderWechatOpen] = useState(false);
   const [previewImage, setPreviewImage] = useState<{ src: string; alt: string; caption?: string } | null>(null);
   const [rowEdits, setRowEdits] = useState<Record<string, RowEditState>>({});
-  const [orderSaveState, setOrderSaveState] = useState<"idle" | "saving" | "syncing">("idle");
+  const [orderSaveState, setOrderSaveState] = useState<"idle" | "saving">("idle");
   const [pendingDeleteOrder, setPendingDeleteOrder] = useState<Order | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const wechatNormalizationStartedRef = useRef(false);
@@ -305,7 +305,7 @@ export default function OrdersPage() {
     return Array.from(new Set([...fromCustomerRows, ...fromOrders])).slice(0, 20);
   }, [customers, activeOrders]);
   const selectedPaymentAgentId = draft.paymentAgentId || draft.paymentBy;
-  const selectedPaymentAgent = paymentAgents.find((p) => p.id === selectedPaymentAgentId || normalizePaymentAgentValue(p.name) === normalizePaymentAgentValue(selectedPaymentAgentId) || p.agentCode === selectedPaymentAgentId) ?? null;
+  const selectedPaymentAgent = resolveOrderPaymentAgent(draft as Order & { paymentByName?: string; paymentAgentName?: string }, paymentAgents);
   const settlement = useMemo(() => calculatePaymentAgentSettlement({ orderTotal: total, existingCredit: selectedPaymentAgent?.creditBalance ?? 0, paidNow: draft.paidToPaymentAgentNow ?? 0 }), [total, selectedPaymentAgent, draft.paidToPaymentAgentNow]);
   const validation = useMemo(() => validateOrderForSave(draft), [draft]);
   const headerPaymentSuggestions = useMemo(() => {
@@ -322,8 +322,12 @@ export default function OrdersPage() {
   }, [wechatSuggestions, draft.wechatId]);
   useEffect(() => {
     if (headerPaymentOpen) return;
-    setHeaderPaymentQuery(selectedPaymentAgent ? paymentLabel(selectedPaymentAgent) : (draft.paymentBy || ""));
-  }, [selectedPaymentAgent, draft.paymentBy, headerPaymentOpen]);
+    setHeaderPaymentQuery(
+      selectedPaymentAgent
+        ? paymentLabel(selectedPaymentAgent)
+        : draft.paymentAgentSnapshot?.name || (draft as any).paymentByName || (draft as any).paymentAgentName || draft.paymentBy || ""
+    );
+  }, [selectedPaymentAgent, draft.paymentAgentSnapshot?.name, draft.paymentBy, headerPaymentOpen]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -676,9 +680,8 @@ try {
     const generatedProductIds = savedOrder.lines.map((l) => `order-line-${savedOrder.id}-${l.id}`);
     logDataFlow("Orders", JSON.stringify({ event: "order_side_effects_started", orderId: savedOrder.id, orderNumber: savedOrder.number, mode: result.mode, affectedCustomerIds, affectedPaymentAgentId: savedOrder.paymentAgentId || savedOrder.paymentBy, generatedProductIds }, null, 2));
 
-    setOrderSaveState("syncing");
+    setOrderSaveState("idle");
     resetOrderComposer(false);
-    pushToast({ tone: "success", text: "Order saved. Finishing background sync…" });
 
     void (async () => {
       if (editingOrderId && removedLineIds.length) {
@@ -730,6 +733,8 @@ try {
         else if (!result.customerReceivablesApplied) pushToast({ tone: "info", text: "Order saved, but customer receivable update failed." });
         else if (!result.paymentSettlementApplied) pushToast({ tone: "info", text: "Order saved, but payment-agent settlement failed." });
         else pushToast({ tone: "info", text: `Order saved with warnings: ${result.warnings[0]}` });
+      } else {
+        pushToast({ tone: "success", text: "Order saved." });
       }
       setOrderSaveState("idle");
     })().catch((error) => {
@@ -1271,7 +1276,7 @@ setHeaderPaymentQuery(next); setHeaderPaymentOpen(true); setDraft((d)=>({...d,pa
           <div className="min-h-0 flex-1 overflow-y-auto">
             <OrderForm showOrderInfo={false} draft={draft} setDraft={(u) => setDraft((d) => u(d))} paymentAgents={paymentAgents} customers={customers} onUploadingChange={onUploadingChange} onRemoveLine={handleRemoveLine} wechatSuggestions={wechatSuggestions.filter((w) => draft.wechatId.trim() ? w.toLowerCase().includes(draft.wechatId.trim().toLowerCase()) : false)} customerSuggestions={customerSuggestions} onPreviewImage={(src) => setPreviewImage({ src, alt: "Order line photo preview" })} />
           </div>
-          <OrderFooter total={total} onSaveDraft={() => onSave("draft")} onSaveOrder={() => onSave("saved")} onViewDetails={() => setViewOrder(draft)} saveOrderLabel={orderSaveState === "saving" ? "Saving Order..." : orderSaveState === "syncing" ? "Syncing..." : (editingOrderId ? "Save Changes" : "Save Order")} saveDraftLabel={orderSaveState === "saving" ? "Saving Draft..." : "Save as Draft"} disableSaveDraft={orderSaveState !== "idle"} disableSaveOrder={orderSaveState !== "idle"} paymentAgent={selectedPaymentAgent} settlement={settlement} paidNow={draft.paidToPaymentAgentNow ?? 0} onPaidNowChange={(value) => setDraft((d) => ({ ...d, paidToPaymentAgentNow: Math.max(0, Number(value) || 0) }))} />
+          <OrderFooter total={total} onSaveDraft={() => onSave("draft")} onSaveOrder={() => onSave("saved")} onViewDetails={() => setViewOrder(draft)} saveOrderLabel={orderSaveState === "saving" ? "Saving Order..." : (editingOrderId ? "Save Changes" : "Save Order")} saveDraftLabel={orderSaveState === "saving" ? "Saving Draft..." : "Save as Draft"} disableSaveDraft={orderSaveState !== "idle"} disableSaveOrder={orderSaveState !== "idle"} paymentAgent={selectedPaymentAgent} settlement={settlement} paidNow={draft.paidToPaymentAgentNow ?? 0} onPaidNowChange={(value) => setDraft((d) => ({ ...d, paidToPaymentAgentNow: Math.max(0, Number(value) || 0) }))} />
         </div>
       </div>}
       {showExitConfirm ? <div className="fixed inset-0 z-[65] bg-black/50 grid place-items-center p-4"><div className="card w-full max-w-lg p-4 space-y-3"><div className="text-lg font-semibold">Exit order editor?</div><div className="text-sm text-fg-subtle">Pressing Escape or closing the modal will not discard your work immediately. Choose what to do with the current order.</div><div className="flex flex-wrap justify-end gap-2"><Button variant="secondary" onClick={() => setShowExitConfirm(false)}>Continue editing</Button><Button variant="secondary" onClick={() => resetOrderComposer()}>Exit without saving</Button><Button variant="primary" onClick={() => { setShowExitConfirm(false); void onSave("draft", true); }}>Save as Draft</Button></div></div></div> : null}
@@ -1287,9 +1292,9 @@ setHeaderPaymentQuery(next); setHeaderPaymentOpen(true); setDraft((d)=>({...d,pa
         onConfirm={() => { void confirmRemoveOrder(); }}
       />
       <LoadingOverlay
-        open={orderSaveState !== "idle" || isOrdersLoading || isCustomersLoading || paymentAgentsLoading}
-        title={orderSaveState === "saving" ? "Saving order" : orderSaveState === "syncing" ? "Finishing sync" : "Loading"}
-        message={orderSaveState === "saving" ? "Saving your order now…" : orderSaveState === "syncing" ? "Order is saved. Updating linked data in the background…" : "Fetching the latest data…"}
+        open={orderSaveState === "saving" || isOrdersLoading || isCustomersLoading || paymentAgentsLoading}
+        title={orderSaveState === "saving" ? "Saving order" : "Loading"}
+        message={orderSaveState === "saving" ? "Saving your order now…" : "Fetching the latest data…"}
       />
       <OrderLinesDetailModal order={viewOrder} isOpen={!!viewOrder} onClose={() => setViewOrder(null)} />
     </div>
