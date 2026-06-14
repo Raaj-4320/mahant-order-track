@@ -91,12 +91,12 @@ const rows: CustomerSummaryRow[] = customers.map((customer) => {
             const totalAmount = lineTotalRmb(line);
             return {
               orderId: order.id,
-              orderNumber: order.number || order.orderNumber || "—",
-              wechatId: order.wechatId.trim() || "—",
+              orderNumber: order.number || order.orderNumber || "Not Set",
+              wechatId: order.wechatId.trim() || "Not Set",
               orderDate: order.updatedAt || order.createdAt || order.date || "",
               productImage: getLineImage(line),
               dimImage: getLineDimImage(line),
-              marka: line.marka || "—",
+              marka: line.marka || "Not Set",
               details1: line.detail1 || line.details || "",
               details2: line.detail2 || "",
               details3: line.detail3 || "",
@@ -123,7 +123,7 @@ const rows: CustomerSummaryRow[] = customers.map((customer) => {
         latestOrderDate: latestOrder?.updatedAt || latestOrder?.createdAt || latestOrder?.date || "",
         latestOrderAmount: latestOrder ? orderTotal(latestOrder) : 0,
         latestProductImage: latestLine ? getLineImage(latestLine) : "",
-        latestProductMarka: latestLine?.marka || "—",
+        latestProductMarka: latestLine?.marka || "Not Set",
         totalOrders: matchedOrders.length,
         totalOrdersAmount: matchedOrders.reduce((sum, order) => sum + orderTotal(order), 0),
         allLineRows: orderRows.sort((a, b) => b.orderDate.localeCompare(a.orderDate)),
@@ -176,8 +176,8 @@ const header = [
       "Total Orders Total Amount",
     ];
     const rows = filteredAndSorted.map((row) => [
-      row.customer.displayName || row.customer.name || "—",
-      row.latestProductMarka || "—",
+      row.customer.displayName || row.customer.name || "Not Set",
+      row.latestProductMarka || "Not Set",
       formatAmount(row.latestOrderAmount),
       String(row.totalOrders),
       formatAmount(row.totalOrdersAmount),
@@ -269,7 +269,7 @@ const header = [
                 {filteredAndSorted.map((row) => (
                   <tr key={row.customer.id} className="border-t border-border">
                     <td className="px-4 py-3">
-                      <div className="font-semibold">{row.customer.displayName || row.customer.name || "—"}</div>
+                      <div className="font-semibold">{row.customer.displayName || row.customer.name || "Not Set"}</div>
                       <div className="text-[11.5px] text-fg-subtle">{row.customer.customerCode}</div>
                     </td>
                     <td>
@@ -289,11 +289,11 @@ const header = [
                             />
                           </button>
                         ) : (
-                          <span className="text-[10px] text-fg-subtle">—</span>
+                          <span className="text-[10px] text-fg-subtle">Not Set</span>
                         )}
                       </div>
                     </td>
-                    <td>{row.latestProductMarka || "—"}</td>
+                    <td>{row.latestProductMarka || "N"}</td>
                     <td className="tabular-nums">{formatAmount(row.latestOrderAmount)}</td>
                     <td>{row.totalOrders}</td>
                     <td className="font-semibold tabular-nums">{formatAmount(row.totalOrdersAmount)}</td>
@@ -362,7 +362,7 @@ const header = [
                       return (
                         <tr key={`${row.orderId}-${idx}`} className="border-t border-border">
                           <td className="px-2 py-2">{row.orderNumber}</td>
-                          <td className="px-2 py-2">{row.wechatId || "—"}</td>
+                          <td className="px-2 py-2">{row.wechatId || "Not Set"}</td>
                           <td className="px-2 py-2">
                             <div className="grid h-12 w-12 place-items-center overflow-hidden rounded border border-border bg-bg-subtle">
                               {row.dimImage ? (
@@ -374,7 +374,7 @@ const header = [
                                   />
                                 </button>
                               ) : (
-                                <span className="text-[10px] text-fg-subtle">—</span>
+                                <span className="text-[10px] text-fg-subtle">Not Set</span>
                               )}
                             </div>
                           </td>
@@ -389,20 +389,20 @@ const header = [
                                   />
                                 </button>
                               ) : (
-                                <span className="text-[10px] text-fg-subtle">—</span>
+                                <span className="text-[10px] text-fg-subtle">Not Set</span>
                               )}
                             </div>
                           </td>
-                          <td className="px-2 py-2">{row.marka || "—"}</td>
+                          <td className="px-2 py-2">{row.marka || "No"}</td>
                           <td className="px-2 py-2">
                             {details.length ? (
                               <div className="space-y-1">
-                                <div>{details[0] || "—"}</div>
+                                <div>{details[0] || "Not Set"}</div>
                                 {details[1] ? <div>{details[1]}</div> : null}
                                 {details[2] ? <div>{details[2]}</div> : null}
                               </div>
                             ) : (
-                              joinLineDetails({ details: row.details1 }) || "—"
+                              joinLineDetails({ details: row.details1 }) || "Not Set"
                             )}
                           </td>
                           <td className="px-2 py-2 text-center tabular-nums">{row.ctn}</td>

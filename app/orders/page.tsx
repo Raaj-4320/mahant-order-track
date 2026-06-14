@@ -127,6 +127,15 @@ const summarizeOrderForLog = (o: Order) => ({
 });
 
 const normalizePaymentAgentValue = (value?: string) => (value || "").trim().toLowerCase();
+const normalizeEditableOrderNumber = (value?: string) => {
+  const trimmed = (value || "").trim();
+  if (!trimmed) return "";
+  if (/^.+-\d+$/.test(trimmed)) return trimmed;
+  const match = trimmed.match(/^(.*?)(\d+)$/);
+  if (!match) return trimmed;
+  const [, prefix, digits] = match;
+  return `${prefix}${String(Number(digits))}`;
+};
 
 export default function OrdersPage() {
   type OrdersMode = "history" | "add" | "drafts" | "edit";
@@ -502,6 +511,8 @@ try {
     const meaningfulLines = getMeaningfulOrderLines(draft.lines).map((line) => withDerivedLegacyDetails(seedDetailBoxesFromLegacy(line)));
     const cleanedDraft = {
       ...draft,
+      number: normalizeEditableOrderNumber(draft.number || draft.orderNumber),
+      orderNumber: normalizeEditableOrderNumber(draft.orderNumber || draft.number),
       wechatId: draft.wechatId.trim(),
       lines: meaningfulLines,
       paymentAgentSnapshot: draft.paymentBy.trim() || draft.paymentAgentId ? draft.paymentAgentSnapshot : undefined,
@@ -751,7 +762,8 @@ try {
     if (o.status === "draft" && !ensureFirebaseOrderWriteReady()) return;
     setEditingOrderId(o.id); setRemovedLineIds([]); setOriginalLineIds(new Set(o.lines.map(l=>l.id)));
     const copy = JSON.parse(JSON.stringify(o));
-    setDraft({ ...copy, wechatId: (copy.wechatId || "").trim(), lines: (copy.lines || []).map((line: Order["lines"][number]) => seedDetailBoxesFromLegacy(line)) });
+    const normalizedOrderNumber = normalizeEditableOrderNumber(copy.number || copy.orderNumber);
+    setDraft({ ...copy, number: normalizedOrderNumber, orderNumber: normalizedOrderNumber, wechatId: (copy.wechatId || "").trim(), lines: (copy.lines || []).map((line: Order["lines"][number]) => seedDetailBoxesFromLegacy(line)) });
     setHasAttemptedFinalSave(false);
     setShowDraftIncompleteConfirm(false);
     setShowExitConfirm(false);
@@ -766,7 +778,7 @@ try {
     setOriginalLineIds(new Set());
     try {
       const reserved = await peekNextOrderNumber();
-      const nextDraft = createEmptyDraft(orders, reserved);
+      const nextDraft = createEmptyDraft(orders, normalizeEditableOrderNumber(reserved));
       setDraft(nextDraft);
       setHasAttemptedFinalSave(false);
       setShowDraftIncompleteConfirm(false);
@@ -799,7 +811,7 @@ try {
     const candidate = line as Order["lines"][number] & { productImage?: string; image?: string };
     return candidate.productPhotoUrl || candidate.productImage || candidate.image || candidate.photoUrl || "";
   };
-  const getDisplayWechatId = (order: Order) => order.wechatId?.trim() || "—";
+  const getDisplayWechatId = (order: Order) => order.wechatId?.trim() || "Not Set";
   const getVisibleLineDetails = (line: Order["lines"][number]) => {
     const parts = getLineDetailsParts(line);
     const values = [parts.detail1, parts.detail2, parts.detail3].map((part) => part.trim()).filter(Boolean);
@@ -1118,7 +1130,7 @@ const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr)
                             buttonClassName="flex h-11 w-full items-center justify-between rounded-2xl border border-[#dfe3e8] bg-white px-4 text-[18px] font-semibold text-slate-800 shadow-sm"
                           />
                         ) : (
-                          <span className="inline-flex h-11 w-full items-center justify-between rounded-2xl border border-[#dfe3e8] bg-white px-4 text-[px] font-semibold text-slate-800 shadow-sm">
+                          <span className="inline-flex h-11 w-full items-center justify-between rounded-2xl border border-[#dfe3e8] bg-white px-4 text-[14px] font-semibold text-slate-800 shadow-sm">
                             <span className="inline-flex items-center gap-3">
                               <CalendarDays size={18} className="text-slate-400" />
                               <span>{order.loadingDate ? formatDate(order.loadingDate) : "Set date"}</span>
@@ -1215,7 +1227,7 @@ const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr)
                     <div className="min-w-0 px-1 py-2"><div className="block w-full min-w-0 truncate text-[14px] text-center font-semibold leading-tight" title={customerName}>{customerName}</div></div>
                     <div className="min-w-0 pl-1 pr-3 py-2 text-center">
                       <div className="min-w-0 [&_button]:max-w-full [&_button]:text-[13.5px] [&_button]:leading-tight">
-                        {canEditOperationalFields ? <LoadingDateControl compact debugOrderId={order.id} value={rowValue.loadingDate} onChange={(next) => { setRowEdit(order, { loadingDate: next }, "date_selected"); }} /> : <span className="text-[10.5px] text-fg-muted">{order.loadingDate ? formatDate(order.loadingDate) : "Set date"}</span>}
+                        {canEditOperationalFields ? <LoadingDateControl compact debugOrderId={order.id} value={rowValue.loadingDate} onChange={(next) => { setRowEdit(order, { loadingDate: next }, "date_selected"); }} /> : <span className="text-[15px] text-fg-muted">{order.loadingDate ? formatDate(order.loadingDate) : "Set date"}</span>}
                       </div>
                       {canEditOperationalFields && rowDirty ? <button type="button" title="Save row changes" aria-label="Save row changes" className="mt-1 inline-flex text-[10.5px] font-semibold text-brand transition-colors hover:underline disabled:opacity-60" disabled={rowValue.saving} onClick={() => { void saveRowEdit(order); }}>{rowValue.saving ? "Saving..." : "Save"}</button> : null}
                     </div>
@@ -1243,7 +1255,7 @@ const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr)
 setHeaderPaymentQuery(next); setHeaderPaymentOpen(true); setDraft((d)=>({...d,paymentBy:next,paymentAgentId:"", paymentAgentSnapshot: undefined}));}} placeholder="Search payment agent" />{headerPaymentQuery || draft.paymentAgentId || draft.paymentBy ? <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-fg-subtle transition-colors hover:text-fg" onMouseDown={(e) => { e.preventDefault(); setHeaderPaymentQuery(""); setHeaderPaymentOpen(false); setDraft((d) => ({ ...d, paymentBy: "", paymentAgentId: "", paymentAgentSnapshot: undefined })); }}>Clear</button> : null}{headerPaymentOpen && headerPaymentSuggestions.length>0 ? <div className="absolute z-30 mt-1 max-h-44 w-full overflow-auto rounded-lg border border-border bg-bg-card shadow-card">{headerPaymentSuggestions.map((p)=><button key={p.id} type="button" className="block w-full px-2 py-1.5 text-left text-[12px] hover:bg-bg-subtle" onMouseDown={(e)=>{e.preventDefault(); setHeaderPaymentOpen(false); const label=paymentLabel(p); setHeaderPaymentQuery(label); setDraft((d)=>({...d,paymentBy:p.id,paymentAgentId:p.id, paymentAgentSnapshot: { id: p.id, name: p.name, code: p.agentCode }}));}}>{paymentLabel(p)}</button>)}</div>:null}</div></label>
               <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Date</span><Input type="date" value={draft.date} onChange={(e)=>setDraft((d)=>({...d,date:e.target.value}))} /></label>
               <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Loading Date</span><Input type="date" value={draft.loadingDate || ""} onChange={(e)=>setDraft((d)=>({...d,loadingDate:e.target.value || undefined}))} /></label>
-              <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Order Number</span><Input value={draft.number} onChange={(e)=>setDraft((d)=>({...d,number:e.target.value,orderNumber:e.target.value}))} /></label>
+              <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Order Number</span><Input value={draft.number} onChange={(e)=>{const next=normalizeEditableOrderNumber(e.target.value); setDraft((d)=>({...d,number:next,orderNumber:next}));}} /></label>
               <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>WeChat ID</span><div className="relative"><Input value={draft.wechatId} onFocus={() => setHeaderWechatOpen(true)} onBlur={() => window.setTimeout(() => setHeaderWechatOpen(false), 120)} onChange={(e)=>{const next=e.target.value; setHeaderWechatOpen(true); setDraft((d)=>({...d,wechatId:next}));}} />{headerWechatOpen && headerWechatSuggestions.length>0 ? <div className="absolute z-30 mt-1 max-h-44 w-full overflow-auto rounded-lg border border-border bg-bg-card shadow-card">{headerWechatSuggestions.map((w)=><button key={w} type="button" className="block w-full px-2 py-1.5 text-left text-[12px] hover:bg-bg-subtle" onMouseDown={(e)=>{e.preventDefault(); setHeaderWechatOpen(false); setDraft((d)=>({...d,wechatId:w}));}}>{w}</button>)}</div> : null}</div></label>
             </div>
           </div>

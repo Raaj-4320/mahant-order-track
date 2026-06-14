@@ -76,8 +76,8 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
         inputMode="numeric"
         min={0}
         step="any"
-        value={line.totalCtns}
-        onChange={(e) => onChange({ totalCtns: Number(e.target.value) || 0 })}
+        value={line.totalCtns || ""}
+        onChange={(e) => onChange({ totalCtns: e.target.value === "" ? 0 : Number(e.target.value) || 0 })}
         className="text-center no-spinner"
         onWheel={(e) => (e.currentTarget as HTMLInputElement).blur()}
       />
@@ -88,8 +88,8 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
         inputMode="numeric"
         min={0}
         step="any"
-        value={line.pcsPerCtn}
-        onChange={(e) => onChange({ pcsPerCtn: Number(e.target.value) || 0 })}
+        value={line.pcsPerCtn || ""}
+        onChange={(e) => onChange({ pcsPerCtn: e.target.value === "" ? 0 : Number(e.target.value) || 0 })}
         className="text-center no-spinner"
         onWheel={(e) => (e.currentTarget as HTMLInputElement).blur()}
       />
@@ -104,8 +104,8 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
         inputMode="decimal"
         min={0}
         step="any"
-        value={line.rmbPerPcs}
-        onChange={(e) => onChange({ rmbPerPcs: Number(e.target.value) || 0 })}
+        value={line.rmbPerPcs || ""}
+        onChange={(e) => onChange({ rmbPerPcs: e.target.value === "" ? 0 : Number(e.target.value) || 0 })}
         className="text-center no-spinner"
         onWheel={(e) => (e.currentTarget as HTMLInputElement).blur()}
       />

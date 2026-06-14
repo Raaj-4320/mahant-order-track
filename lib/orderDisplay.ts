@@ -1,6 +1,6 @@
 import type { Order, PaymentAgent } from "@/lib/types";
 
-export const PAYMENT_AGENT_NOT_SET = "Payment agent not set";
+export const PAYMENT_AGENT_NOT_SET = "Not Set";
 
 export function getOrderPaymentAgentDisplay(order: Order, paymentAgents: PaymentAgent[] = []) {
   const resolved =
