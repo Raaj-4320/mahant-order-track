@@ -823,7 +823,7 @@ try {
     });
     return Array.from(groups.entries()).sort((a, b) => b[0].localeCompare(a[0]));
   }, [pagedHistory]);
-const historyGridTemplate = "95px 115px minmax(48px,0.6fr) minmax(48px,0.48fr) 108px minmax(62px,0.66fr) 72px 48px 48px 86px 48px 74px 120px 102px";
+const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr) 62px 70px 88px 84px 110px minmax(76px,0.82fr) 116px minmax(114px,0.82fr)";
   const fmtOrderDate = (order: Order) => {
     const raw = order.date || order.createdAt || order.updatedAt;
     if (!raw) return "—";
@@ -1118,7 +1118,7 @@ const historyGridTemplate = "95px 115px minmax(48px,0.6fr) minmax(48px,0.48fr) 1
                             buttonClassName="flex h-11 w-full items-center justify-between rounded-2xl border border-[#dfe3e8] bg-white px-4 text-[18px] font-semibold text-slate-800 shadow-sm"
                           />
                         ) : (
-                          <span className="inline-flex h-11 w-full items-center justify-between rounded-2xl border border-[#dfe3e8] bg-white px-4 text-[18px] font-semibold text-slate-800 shadow-sm">
+                          <span className="inline-flex h-11 w-full items-center justify-between rounded-2xl border border-[#dfe3e8] bg-white px-4 text-[px] font-semibold text-slate-800 shadow-sm">
                             <span className="inline-flex items-center gap-3">
                               <CalendarDays size={18} className="text-slate-400" />
                               <span>{order.loadingDate ? formatDate(order.loadingDate) : "Set date"}</span>
@@ -1169,19 +1169,17 @@ const historyGridTemplate = "95px 115px minmax(48px,0.6fr) minmax(48px,0.48fr) 1
             <div className="w-full min-w-0 px-0.5 py-1">
               <div className="grid items-center border-b border-border bg-white text-[12px] font-semibold uppercase tracking-[0.01em] text-fg-muted" style={{ gridTemplateColumns: historyGridTemplate }}>
                 <div className="px-1 py-1.5 text-center">Order Number</div>
-                <div className="px-1 py-1.5 text-center">Loading Date</div>
-                <div className="px-1 py-1.5 text-center">Paid By</div>
-                <div className="px-1 py-1.5 text-left">WeChat ID</div>
-                <div className="px-1 py-1.5 text-center"> Photo</div>
-                <div className="px-1 py-1.5 text-left">Marka</div>
-                <div className="px-1 py-1.5 text-left">Details</div>
+                <div className="px-1 py-1.5 text-center">WeChat ID</div>
+                <div className="px-1 py-1.5 text-center">Product Photo</div>
+                <div className="px-1 py-1.5 text-center">Marka</div>
                 <div className="px-1 py-1.5 text-center">CTNS</div>
                 <div className="px-1 py-1.5 text-center leading-[1.05]"><div>PCS/</div><div>CTN</div></div>
-                <div className="px-1 py-1.5 text-center">Total PCS</div>
-                <div className="px-1 py-1.5 text-center">Rate</div>
+                <div className="px-1 py-1.5 text-center">Total Pieces</div>
+                <div className="px-1 py-1.5 text-center">Price/Pc</div>
                 <div className="px-1 py-1.5 text-right">Total Amount</div>
-                <div className="px-1 py-1.5 text-center">Status</div>
-                <div className="px-1 py-1.5 text-center">Actions</div>
+                <div className="px-1 py-1.5 text-center">Customer</div>
+                <div className="px-1 py-1.5 text-center">Loading Date</div>
+                <div className="px-1 py-1.5 text-center">Paid By</div>
               </div>
               <div className="space-y-2 pt-2">
                 {pagedHistory.length === 0 ? <div className="px-4 py-8 text-center text-fg-subtle">No orders yet. Click Add Order to create one.</div> : pagedHistory.map((row) => {
@@ -1190,42 +1188,38 @@ const historyGridTemplate = "95px 115px minmax(48px,0.6fr) minmax(48px,0.48fr) 1
                   const canEditOperationalFields = order.status !== "draft" && order.status !== "archived";
                   const rowValue = getRowValue(order);
                   const rowDirty = rowValue.loadingDate !== order.loadingDate || rowValue.status !== order.status;
-                  const effectiveLoadingDate = rowValue.loadingDate || order.loadingDate;
                   const rowClass = "grid items-center border-b border-border transition-colors last:border-b-0";
                   const productPhoto = line ? getLineProductPhoto(line) : "";
-                  const detailLines = line ? getVisibleLineDetails(line) : [];
-                  const detailTitle = detailLines.length > 0 ? detailLines.join("\n") : "—";
                   const ctns = line ? getLineCtns(line) : getOrderTotalCtns(order);
                   const pcsPerCtn = line ? getLinePcsPerCtn(line) : 0;
                   const totalPcs = line ? getLineTotalPcs(line) : 0;
                   const rate = line ? getLineRate(line) : 0;
                   const amount = line ? getLineAmount(line) : getOrderTotalAmount(order);
                   const marka = line?.marka?.trim() || "—";
+                  const customerName = getCardCustomerValue(line, paymentMeta);
 
                   return <div key={row.key} className={rowClass} style={{ gridTemplateColumns: historyGridTemplate }}>
                     <div className="min-w-0 pl-2 pr-1 py-2">
                       <div className="min-w-0">
                         <div className="truncate text-[17px] font-bold leading-tight" title={order.number || order.orderNumber || "Draft"}>{order.number || order.orderNumber || "Draft"}</div>
-                        <div className="mt-0.5 text-[12px] text-fg-subtle tabular-nums">{fmtOrderDate(order)}</div>
                       </div>
                     </div>
-                    <div className="min-w-0 pl-1 pr-3 py-2">
-                      <div className="min-w-0 [&_button]:max-w-full [&_button]:text-[13.5px] [&_button]:leading-tight">
-                        {canEditOperationalFields ? <LoadingDateControl compact debugOrderId={order.id} value={rowValue.loadingDate} onChange={(next) => { setRowEdit(order, { loadingDate: next }, "date_selected"); }} /> : <span className="inline-flex max-w-full whitespace-nowrap rounded-full border border-border bg-bg-subtle px-1.5 py-0.5 text-[10.5px] text-fg-muted">{order.loadingDate ? formatDate(order.loadingDate) : "Set date"}</span>}
-                      </div>
-                    </div>
-                    <div className="min-w-0 pl-2 pr-1 py-2"><div className={cn("block w-full min-w-0 truncate text-[14px] font-semibold leading-tight", paymentMeta.isMissing && "text-[var(--danger)]")} title={paymentName}>{paymentName}</div></div>
-                    <div className="min-w-0 px-1 py-2"><div className="block w-full min-w-0 truncate text-[14px] font-semibold leading-tight" title={getDisplayWechatId(order)}>{getDisplayWechatId(order)}</div></div>
+                    <div className="min-w-0 px-1 py-2"><div className="block w-full min-w-0  text-[14px] font-semibold leading-tight" title={getDisplayWechatId(order)}>{getDisplayWechatId(order)}</div></div>
                     <div className="min-w-0 px-1 py-2"><div className="flex justify-center">{productPhoto ? <button type="button" onClick={() => setPreviewImage({ src: productPhoto, alt: "Product photo" })} className="grid h-[80px] w-[80px] shrink-0 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle"><img src={getCloudinaryOptimizedUrl(productPhoto, { width: 132, height: 132, crop: "fit" })} alt="product" className="h-full w-full object-contain" loading="lazy" decoding="async" /></button> : <span className="text-[10px] text-fg-subtle">—</span>}</div></div>
-                    <div className="min-w-0 px-1 py-2"><div className="text-[14px] text-[15px] font-semibold leading-tight" title={marka}>{marka}</div></div>
-                    <div className="min-w-0 px-1 py-2"><div className="space-y-px text-[14px] font-medium leading-[1.15] text-fg" title={detailLines.length > 0 ? detailLines.join("\n") : "—"}>{detailLines.length > 0 ? detailLines.map((detail, index) => <div key={`${row.key}-detail-${index}`}>{detail}</div>) : <div>—</div>}</div></div>
+                    <div className="min-w-0 px-1 py-2"><div className="text-[14px] text-[15px] text-center font-semibold leading-tight" title={marka}>{marka}</div></div>
                     <div className="px-1 py-2 text-center text-[14px] font-semibold tabular-nums">{ctns.toLocaleString()}</div>
                     <div className="px-1 py-2 text-center text-[14px] font-semibold tabular-nums">{pcsPerCtn.toLocaleString()}</div>
                     <div className="px-1 py-2 text-center text-[14x] font-semibold tabular-nums">{totalPcs.toLocaleString()}</div>
                     <div className="px-1 py-2 text-center text-[14px] font-semibold tabular-nums">{formatPlainAmount(rate)}</div>
-                    <div className="px-1 py-2 text-right text-[16px] font-bold tabular-nums ">{formatPlainAmount(amount)}</div>
-                    <div className="min-w-0 px-1 py-2 text-center"><div className="mx-auto max-w-full text-[12px] [&_button]:max-w-full">{canEditOperationalFields ? <OrderStatusControl compact neutral debugOrderId={order.id} options={resolveStatusOptions(order, rowValue)} value={rowValue.status} onChange={(next) => { setRowEdit(order, { status: next }, "status_selected"); }} /> : <span className="inline-flex rounded-full border border-border bg-bg-subtle px-1 py-0.5 text-[12px] text-fg">{order.status === "packed" ? "Loaded" : order.status}</span>}</div>{canEditOperationalFields && rowDirty ? <button type="button" title="Save row changes" aria-label="Save row changes" className="mt-1 inline-flex text-[10.5px] font-semibold text-brand transition-colors hover:underline disabled:opacity-60" disabled={rowValue.saving} onClick={() => { void saveRowEdit(order); }}>{rowValue.saving ? "Saving..." : "Save"}</button> : null}</div>
-                    <div className="px-0.5 py-2"><div className="flex justify-center gap-1 whitespace-nowrap"><button type="button" title="View" aria-label="View" className="grid h-[26px] w-[26px] place-items-center rounded-md text-fg transition-colors hover:bg-bg-subtle" onClick={() => setViewOrder(order)}><Eye size={13} /></button><button type="button" title="Edit" aria-label="Edit" className="grid h-[26px] w-[26px] place-items-center rounded-md text-fg transition-colors hover:bg-bg-subtle" onClick={() => startEdit(order)}><SquarePen size={13} /></button><button type="button" title="Delete" aria-label="Delete" className="grid h-[26px] w-[26px] place-items-center rounded-md text-[var(--danger)] transition-colors hover:bg-[var(--danger)]/10" onClick={() => removeOrder(order)}><Trash2 size={13} /></button></div></div>
+                    <div className="px-1 py-2 text-center text-[16px] font-bold tabular-nums ">{formatPlainAmount(amount)}</div>
+                    <div className="min-w-0 px-1 py-2"><div className="block w-full min-w-0 truncate text-[14px] text-center font-semibold leading-tight" title={customerName}>{customerName}</div></div>
+                    <div className="min-w-0 pl-1 pr-3 py-2 text-center">
+                      <div className="min-w-0 [&_button]:max-w-full [&_button]:text-[13.5px] [&_button]:leading-tight">
+                        {canEditOperationalFields ? <LoadingDateControl compact debugOrderId={order.id} value={rowValue.loadingDate} onChange={(next) => { setRowEdit(order, { loadingDate: next }, "date_selected"); }} /> : <span className="text-[10.5px] text-fg-muted">{order.loadingDate ? formatDate(order.loadingDate) : "Set date"}</span>}
+                      </div>
+                      {canEditOperationalFields && rowDirty ? <button type="button" title="Save row changes" aria-label="Save row changes" className="mt-1 inline-flex text-[10.5px] font-semibold text-brand transition-colors hover:underline disabled:opacity-60" disabled={rowValue.saving} onClick={() => { void saveRowEdit(order); }}>{rowValue.saving ? "Saving..." : "Save"}</button> : null}
+                    </div>
+                    <div className="min-w-0 pl-2 pr-1 py-2"><div className={cn("block w-full min-w-0 text-center truncate text-[14px] font-semibold leading-tight", paymentMeta.isMissing && "text-[var(--danger)]")} title={paymentName}>{paymentName}</div></div>
                   </div>;
                 })}
               </div>

@@ -102,7 +102,7 @@ setOpen(false);
           });
         }}
         className={cn(
-          compact ? "inline-flex h-[22px] items-center gap-[2px] whitespace-nowrap rounded-full border border-border bg-bg-card px-1 text-[10.5px] text-fg" : "inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-bg-card px-3 text-[12px] text-fg",
+          compact ? "inline-flex h-[22px] items-center gap-[2px] whitespace-nowrap rounded-full border border-border bg-bg-card px-1 text-[15px] text-fg" : "inline-flex h-8 items-center gap-1.5 rounded-full border border-border bg-bg-card px-3 text-[15px] text-fg",
           disabled ? "cursor-not-allowed opacity-60" : "hover:border-fg-subtle",
           buttonClassName
         )}
