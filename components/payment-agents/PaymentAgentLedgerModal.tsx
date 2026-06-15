@@ -3,13 +3,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
 import { formatAmount } from "@/lib/data";
 import { formatIndianDate } from "@/lib/dateFormat";
 import type { Order, PaymentAgent, PaymentAgentLedgerEntry } from "@/lib/types";
 import { CalendarDays, Download, Plus, Wallet, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { TablePagination } from "@/components/table/TablePagination";
-import { buildPaymentAgentAccountingSummary, buildPaymentAgentPaymentRows, buildPaymentAgentTransactionRows } from "@/services/settlement/paymentAgentAccounting";
+import { buildPaymentAgentAccountingSummary, buildPaymentAgentOrderRows, buildPaymentAgentPaymentRows, buildPaymentAgentTransactionRows } from "@/services/settlement/paymentAgentAccounting";
 
 type AgentSummary = {
   agent: PaymentAgent;
@@ -36,6 +37,7 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, error,
   const [addPaymentOpen, setAddPaymentOpen] = useState(false);
   const [transactionsPage, setTransactionsPage] = useState(1);
   const [paymentsPage, setPaymentsPage] = useState(1);
+  const [ordersPage, setOrdersPage] = useState(1);
   const [paymentForm, setPaymentForm] = useState({
     paymentDate: new Date().toISOString().slice(0, 10),
     amount: "",
@@ -50,6 +52,7 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, error,
   );
   const transactionRows = useMemo(() => (accounting ? buildPaymentAgentTransactionRows(accounting) : []), [accounting]);
   const paymentRows = useMemo(() => (accounting ? buildPaymentAgentPaymentRows(accounting) : []), [accounting]);
+  const orderRows = useMemo(() => (accounting ? buildPaymentAgentOrderRows(accounting) : []), [accounting]);
   const pagedTransactionRows = useMemo(
     () => transactionRows.slice((transactionsPage - 1) * PAGE_SIZE, transactionsPage * PAGE_SIZE),
     [transactionRows, transactionsPage],
@@ -58,11 +61,16 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, error,
     () => paymentRows.slice((paymentsPage - 1) * PAGE_SIZE, paymentsPage * PAGE_SIZE),
     [paymentRows, paymentsPage],
   );
+  const pagedOrderRows = useMemo(
+    () => orderRows.slice((ordersPage - 1) * PAGE_SIZE, ordersPage * PAGE_SIZE),
+    [orderRows, ordersPage],
+  );
 
   useEffect(() => {
     if (!open) return;
     setTransactionsPage(1);
     setPaymentsPage(1);
+    setOrdersPage(1);
   }, [open, summary?.agent.id]);
 
   useEffect(() => {
@@ -72,6 +80,10 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, error,
   useEffect(() => {
     setPaymentsPage((page) => Math.min(page, Math.max(1, Math.ceil(paymentRows.length / PAGE_SIZE))));
   }, [paymentRows.length]);
+
+  useEffect(() => {
+    setOrdersPage((page) => Math.min(page, Math.max(1, Math.ceil(orderRows.length / PAGE_SIZE))));
+  }, [orderRows.length]);
 
   if (!open || !summary || !accounting) return null;
 
@@ -104,7 +116,6 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, error,
     { label: "Credit Left", value: formatAmount(accounting.creditLeft), tone: "text-emerald-700 bg-emerald-50 border-emerald-100", icon: <Wallet size={16} /> },
     { label: "Due / Pending", value: formatAmount(accounting.duePending), tone: "text-rose-700 bg-rose-50 border-rose-100", icon: <CalendarDays size={16} /> },
     { label: "Total Orders", value: accounting.totalOrders.toLocaleString(), tone: "text-sky-700 bg-sky-50 border-sky-100", icon: <CalendarDays size={16} /> },
-    { label: "Payments Made", value: formatAmount(accounting.paymentsMade), tone: "text-sky-700 bg-sky-50 border-sky-100", icon: <Download size={16} /> },
   ];
 
   return (
@@ -147,7 +158,7 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, error,
           <div className="mt-3 grid min-h-0 grid-cols-1 gap-3 xl:grid-cols-[1.35fr_1fr] xl:items-start">
             <section className="min-h-[170px] self-start rounded-2xl border border-border bg-white">
               <div className="border-b border-border px-4 py-3">
-                <div className="text-[16px] font-semibold leading-tight text-fg">Financial Effects</div>
+                <div className="text-[16px] font-semibold leading-tight text-fg">Credit Activity</div>
               </div>
               {transactionRows.length === 0 ? (
                 <div className="px-4 py-8 text-center text-[12px] text-fg-subtle">
@@ -173,7 +184,7 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, error,
                           <td className="px-3 py-2.5 font-semibold leading-tight">{row.orderNumber}</td>
                           <td className="px-3 py-2.5 leading-tight">{row.customer}</td>
                           <td className="px-3 py-2.5 leading-tight">{row.type}</td>
-                          <td className={cn("px-3 py-2.5 text-right font-semibold leading-tight tabular-nums", row.type === "ORDER_DUE" ? "text-rose-600" : row.type === "REVERSAL" ? "text-emerald-700" : "text-slate-900")}>{formatAmount(row.amount)}</td>
+                          <td className={cn("px-3 py-2.5 text-right font-semibold leading-tight tabular-nums", row.type === "Pending Order Amount" ? "text-rose-600" : row.type === "Credit Returned" ? "text-emerald-700" : "text-slate-900")}>{formatAmount(row.amount)}</td>
                           <td className="px-3 py-2.5 leading-tight text-fg-subtle">{row.notes}</td>
                         </tr>
                       ))}
@@ -187,7 +198,7 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, error,
             <section className="min-h-[170px] self-start rounded-2xl border border-border bg-white">
               <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
                 <div>
-                  <div className="text-[16px] font-semibold leading-tight text-fg">Payments Made</div>
+                  <div className="text-[16px] font-semibold leading-tight text-fg">Advance Payments</div>
                   <div className="mt-0.5 text-[11px] leading-tight text-fg-subtle">Money paid or advanced to this payment agent.</div>
                 </div>
                 <Button size="sm" variant="secondary" onClick={() => setAddPaymentOpen(true)}>
@@ -226,6 +237,63 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, error,
               <TablePagination total={paymentRows.length} currentPage={paymentsPage} pageSize={PAGE_SIZE} onPageChange={setPaymentsPage} label="payments" />
             </section>
           </div>
+
+          <section className="mt-3 min-h-[170px] self-start rounded-2xl border border-border bg-white">
+            <div className="border-b border-border px-4 py-3">
+              <div className="text-[16px] font-semibold leading-tight text-fg">Orders</div>
+            </div>
+            {orderRows.length === 0 ? (
+              <div className="px-4 py-8 text-center text-[12px] text-fg-subtle">No orders linked to this payment agent.</div>
+            ) : (
+              <div className="max-h-[34vh] overflow-auto">
+                <table className="w-full min-w-[1080px] text-[12px]">
+                  <thead className="bg-white">
+                    <tr className="border-b border-border text-[10px] uppercase tracking-[0.01em] text-fg-muted">
+                      <th className="px-3 py-2 text-center">Photo</th>
+                      <th className="px-3 py-2 text-left">Order No</th>
+                      <th className="px-3 py-2 text-left">Marka</th>
+                      <th className="px-3 py-2 text-right">CTN</th>
+                      <th className="px-3 py-2 text-right">PCS/CTN</th>
+                      <th className="px-3 py-2 text-right">Total PCS</th>
+                      <th className="px-3 py-2 text-right">Rate</th>
+                      <th className="px-3 py-2 text-right">Amount</th>
+                      <th className="px-3 py-2 text-left">Customer</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pagedOrderRows.map((row) => (
+                      <tr key={row.id} className="border-b border-border transition-colors last:border-b-0 hover:bg-bg-subtle/40">
+                        <td className="px-3 py-2.5">
+                          <div className="mx-auto grid h-12 w-12 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle">
+                            {row.productImage ? (
+                              <img
+                                src={getCloudinaryOptimizedUrl(row.productImage, { width: 96, height: 96, crop: "fit" })}
+                                alt="product"
+                                className="h-full w-full object-contain"
+                                loading="lazy"
+                                decoding="async"
+                              />
+                            ) : (
+                              <span className="text-[10px] text-fg-subtle">—</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2.5 font-semibold">{row.orderNumber}</td>
+                        <td className="px-3 py-2.5">{row.marka}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums">{row.totalCtns.toLocaleString()}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums">{row.pcsPerCtn.toLocaleString()}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums">{row.totalPcs.toLocaleString()}</td>
+                        <td className="px-3 py-2.5 text-right tabular-nums">{formatAmount(row.rate)}</td>
+                        <td className="px-3 py-2.5 text-right font-semibold tabular-nums">{formatAmount(row.amount)}</td>
+                        <td className="px-3 py-2.5">{row.customer}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <TablePagination total={orderRows.length} currentPage={ordersPage} pageSize={PAGE_SIZE} onPageChange={setOrdersPage} label="order rows" />
+          </section>
           {error ? <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">{error}</div> : null}
         </div>
       </div>

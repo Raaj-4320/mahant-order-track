@@ -4,7 +4,12 @@ const clamp = (value: number) => Math.max(0, Number.isFinite(value) ? value : 0)
 const normalize = (value?: string | null) => (value || "").trim().toLowerCase();
 const entryTime = (entry: PaymentAgentLedgerEntry) => entry.paymentDate || entry.updatedAt || entry.createdAt || "";
 
-export type PaymentAgentAccountingTransactionType = "ADVANCE / PAYMENT" | "ORDER_USAGE" | "ORDER_DUE" | "REVERSAL" | "ADJUSTMENT";
+export type PaymentAgentAccountingTransactionType =
+  | "Advance Given"
+  | "Credit Used For Order"
+  | "Pending Order Amount"
+  | "Credit Returned"
+  | "Balance Adjustment";
 
 export type PaymentAgentAccountingSummary = {
   agent: PaymentAgent;
@@ -40,6 +45,21 @@ export type PaymentAgentAccountingPaymentRow = {
   method: string;
   notes: string;
   runningCreditLeft: number;
+};
+
+export type PaymentAgentOrderRow = {
+  id: string;
+  orderId: string;
+  orderNumber: string;
+  orderDate: string;
+  productImage: string;
+  marka: string;
+  totalCtns: number;
+  pcsPerCtn: number;
+  totalPcs: number;
+  rate: number;
+  amount: number;
+  customer: string;
 };
 
 const isEntryActive = (entry: PaymentAgentLedgerEntry) => entry.active !== false && entry.isReversed !== true;
@@ -127,7 +147,10 @@ export const buildPaymentAgentAccountingSummary = (
     .filter((entry) => !settlementKeys.has(entry.sourceOrderId || entry.sourceOrderNumber || entry.id));
 
   const netSettlementEntries = [...activeSettlementEntries, ...fallbackSettlementEntries];
-  const reversalEntries = matchedEntries.filter((entry) => entry.type === "order_settlement_reversal");
+  const reversalEntries = pickLatestByKey(
+    matchedEntries.filter((entry) => entry.type === "order_settlement_reversal" && isEntryActive(entry)),
+    (entry) => entry.reversalOfId || entry.sourceOrderId || entry.sourceOrderNumber || entry.id,
+  );
   const activePaymentEntries = pickLatestByKey(
     matchedEntries.filter((entry) => (entry.type === "agent_payment" || entry.type === "opening_credit") && isEntryActive(entry)),
     (entry) => entry.reversalOfId || entry.id,
@@ -188,7 +211,7 @@ export const buildPaymentAgentTransactionRows = (summary: PaymentAgentAccounting
         date: entryTime(entry),
         orderNumber,
         customer,
-        type: "ORDER_USAGE",
+        type: "Credit Used For Order",
         amount: clamp(entry.creditUsed ?? 0),
         notes: `Credit used for order ${orderNumber}`,
       });
@@ -199,7 +222,7 @@ export const buildPaymentAgentTransactionRows = (summary: PaymentAgentAccounting
         date: entryTime(entry),
         orderNumber,
         customer,
-        type: "ORDER_DUE",
+        type: "Pending Order Amount",
         amount: clamp(entry.remainingPayable ?? 0),
         notes: `Pending amount after credit/payment for order ${orderNumber}`,
       });
@@ -210,7 +233,7 @@ export const buildPaymentAgentTransactionRows = (summary: PaymentAgentAccounting
         date: entryTime(entry),
         orderNumber,
         customer,
-        type: "ADJUSTMENT",
+        type: "Balance Adjustment",
         amount: clamp(entry.newCreditCreated ?? 0),
         notes: `Order created additional advance balance for ${orderNumber}`,
       });
@@ -224,13 +247,38 @@ export const buildPaymentAgentTransactionRows = (summary: PaymentAgentAccounting
       date: entryTime(entry),
       orderNumber: entry.sourceOrderNumber || linkedOrder?.number || linkedOrder?.orderNumber || "—",
       customer: getOrderCustomerSummary(linkedOrder),
-      type: "REVERSAL",
+      type: "Credit Returned",
       amount: clamp(entry.creditUsed ?? entry.amount),
       notes: entry.note?.trim() || "Reversal of previous settlement",
     });
   });
 
   return rows.sort((left, right) => right.date.localeCompare(left.date));
+};
+
+export const buildPaymentAgentOrderRows = (summary: PaymentAgentAccountingSummary): PaymentAgentOrderRow[] => {
+  return summary.matchedOrders
+    .flatMap((order) =>
+      (order.lines || []).map((line, index) => ({
+        id: `${order.id}-${line.id || index}`,
+        orderId: order.id,
+        orderNumber: order.number || order.orderNumber || "—",
+        orderDate: order.date || order.createdAt || order.updatedAt || "",
+        productImage: line.productPhotoUrl || line.photoUrl || "",
+        marka: line.marka?.trim() || "—",
+        totalCtns: Number(line.totalCtns) || 0,
+        pcsPerCtn: Number(line.pcsPerCtn) || 0,
+        totalPcs: (Number(line.totalCtns) || 0) * (Number(line.pcsPerCtn) || 0),
+        rate: Number(line.rmbPerPcs) || 0,
+        amount: (Number(line.totalCtns) || 0) * (Number(line.pcsPerCtn) || 0) * (Number(line.rmbPerPcs) || 0),
+        customer: line.customerSnapshot?.name?.trim() || line.customerName?.trim() || "—",
+      })),
+    )
+    .sort((left, right) => {
+      const dateDiff = (right.orderDate || "").localeCompare(left.orderDate || "");
+      if (dateDiff !== 0) return dateDiff;
+      return right.orderNumber.localeCompare(left.orderNumber, undefined, { numeric: true, sensitivity: "base" });
+    });
 };
 
 type CreditEvent = {
