@@ -2,10 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Download, Eye, HandCoins, Plus, Search, SquarePen, Trash2 } from "lucide-react";
-import { PageShell } from "@/components/PageShell";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { TablePagination } from "@/components/table/TablePagination";
+import { Select } from "@/components/ui/Select";
 import { PaymentAgentLedgerModal } from "@/components/payment-agents/PaymentAgentLedgerModal";
 import { usePaymentAgents } from "@/hooks/usePaymentAgents";
 import { useOrders } from "@/hooks/useOrders";
@@ -15,13 +15,11 @@ import { formatIndianDate } from "@/lib/dateFormat";
 import { logDataFlow, logPageAccess, logUI } from "@/lib/logger";
 import type { PaymentAgent, PaymentAgentLedgerEntry } from "@/lib/types";
 import { ordersDataSource } from "@/lib/runtimeConfig";
-import { getPaymentAgentFinanceSummary } from "@/services/paymentAgentSelectors";
 import { openStatementPdfPrint } from "@/services/statementPdf";
 import { orderLifecycleService } from "@/services/orderLifecycleService";
+import { buildPaymentAgentAccountingSummary } from "@/services/settlement/paymentAgentAccounting";
 
 const ALL_LEDGER_ROWS_KEY = "__all__";
-const normalizePaymentAgentRef = (value?: string | null) => (value || "").trim().toLowerCase();
-
 type LedgerViewRow = {
   id: string;
   date: string;
@@ -34,14 +32,15 @@ type LedgerViewRow = {
 };
 
 export default function PaymentAgentsPage() {
+  const PAGE_SIZE = 100;
   const { data: agents, isLoading: isPaymentAgentsLoading, upsertPaymentAgent, deletePaymentAgent, recordPaymentToAgent, listPaymentAgentLedger, reload: reloadPaymentAgents } = usePaymentAgents();
   const { orders, pushToast } = useStore();
   const { data: firebaseOrders } = useOrders();
   const ordersSource = ordersDataSource();
   const sourceOrders = ordersSource === "firebase" ? firebaseOrders : orders;
-  const baseRows = getPaymentAgentFinanceSummary(agents, sourceOrders);
 
   const [q, setQ] = useState("");
+  const [sortBy, setSortBy] = useState("name");
   const [open, setOpen] = useState(false);
   const [ledgerAgent, setLedgerAgent] = useState<string | null>(null);
   const [payAgentId, setPayAgentId] = useState<string | null>(null);
@@ -52,6 +51,7 @@ export default function PaymentAgentsPage() {
   const [ledgerRows, setLedgerRows] = useState<Record<string, PaymentAgentLedgerEntry[]>>({});
   const [ledgerErrors, setLedgerErrors] = useState<Record<string, string>>({});
   const [form, setForm] = useState({ id: "", name: "", agentCode: "", phone: "", wechatId: "", country: "", openingCredit: "", notes: "", status: "active" as PaymentAgent["status"] });
+  const [currentPage, setCurrentPage] = useState(1);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deleteTyped, setDeleteTyped] = useState("");
   const [deleteCtx, setDeleteCtx] = useState<null | {
@@ -76,75 +76,85 @@ export default function PaymentAgentsPage() {
       .catch(() => {});
   }, [ledgerRows, listPaymentAgentLedger]);
 
-  const isOrderMatchedToAgent = (order: typeof sourceOrders[number], agent: PaymentAgent) => {
-    const agentName = normalizePaymentAgentRef(agent.name);
-    const references = [
-      order.paymentAgentId,
-      order.paymentAgentSnapshot?.id,
-      order.paymentBy,
-      order.paymentAgentSnapshot?.name,
-      (order as any).paymentByName,
-      (order as any).paymentAgentName,
-    ]
-      .filter(Boolean)
-      .map((value) => String(value).trim());
-    return references.includes(agent.id) || references.some((value) => normalizePaymentAgentRef(value) === agentName);
-  };
-
   const rows = useMemo(() => {
     const allLedger = ledgerRows[ALL_LEDGER_ROWS_KEY] || [];
-    return baseRows.map((row) => {
-      const matchedOrders = sourceOrders.filter((order) => order.status !== "archived" && isOrderMatchedToAgent(order, row.agent));
-      const matchedOrderIds = new Set(matchedOrders.map((order) => order.id));
-      const matchedOrderNumbers = new Set(matchedOrders.map((order) => order.number || order.orderNumber).filter(Boolean));
-      const matchedEntries = allLedger.filter((entry) => {
-        const byAgentId = Boolean(entry.agentId && entry.agentId === row.agent.id);
-        const byOrderId = Boolean(entry.sourceOrderId && matchedOrderIds.has(entry.sourceOrderId));
-        const byOrderNumber = Boolean(entry.sourceOrderNumber && matchedOrderNumbers.has(entry.sourceOrderNumber));
-        return byAgentId || byOrderId || byOrderNumber;
-      });
-
-      const paymentsMade = matchedEntries.filter((entry) => entry.type === "agent_payment").reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
-      const usedCredit = matchedEntries.reduce((sum, entry) => sum + Number(entry.creditUsed || 0), 0);
-      const duePending = matchedOrders.reduce((sum, order) => sum + Number((order as any).paymentAgentSettlementSnapshot?.remainingPayable || 0), 0);
+    return agents.map((agent) => {
+      const summary = buildPaymentAgentAccountingSummary(agent, sourceOrders, allLedger);
       const searchText = [
-        row.agent.name,
-        row.agent.wechatId || "",
-        row.agent.phone || "",
-        row.agent.country || "",
-        row.agent.notes || "",
-        formatAmount(row.agent.openingCreditBalance ?? 0),
-        formatAmount(usedCredit),
-        formatAmount(duePending),
-        formatAmount(row.currentCredit),
-        formatAmount(paymentsMade),
-        matchedOrders.map((order) => order.number || order.orderNumber || "").join(" "),
-        matchedOrders.flatMap((order) => order.lines.map((line) => line.customerSnapshot?.name || line.customerName || "")).join(" "),
-        matchedEntries.map((entry) => entry.note || "").join(" "),
-        matchedEntries.map((entry) => entry.paymentMethod || "").join(" "),
+        agent.name,
+        agent.wechatId || "",
+        agent.phone || "",
+        agent.country || "",
+        agent.notes || "",
+        formatAmount(summary.totalAdvanced),
+        formatAmount(summary.totalUsed),
+        formatAmount(summary.duePending),
+        formatAmount(summary.creditLeft),
+        formatAmount(summary.paymentsMade),
+        summary.matchedOrders.map((order) => order.number || order.orderNumber || "").join(" "),
+        summary.matchedOrders.flatMap((order) => order.lines.map((line) => line.customerSnapshot?.name || line.customerName || "")).join(" "),
+        summary.matchedEntries.map((entry) => entry.note || "").join(" "),
+        summary.matchedEntries.map((entry) => entry.paymentMethod || "").join(" "),
       ]
         .join(" ")
         .toLowerCase();
 
       return {
-        ...row,
-        matchedOrders,
-        matchedEntries,
-        totalCredit: row.agent.openingCreditBalance ?? 0,
-        usedCredit,
-        duePending,
-        balanceLeft: row.currentCredit,
-        paymentsMade,
+        ...summary,
         searchText,
       };
     });
-  }, [baseRows, ledgerRows, sourceOrders]);
+  }, [agents, ledgerRows, sourceOrders]);
 
   const filtered = useMemo(() => {
     const query = q.toLowerCase().trim();
     if (!query) return rows;
     return rows.filter((row) => row.searchText.includes(query));
   }, [rows, q]);
+  const filteredAndSorted = useMemo(() => {
+    return [...filtered].sort((left, right) => {
+      if (sortBy === "orders") return right.totalOrders - left.totalOrders;
+      if (sortBy === "credit") return right.totalAdvanced - left.totalAdvanced;
+      if (sortBy === "used") return right.totalUsed - left.totalUsed;
+      if (sortBy === "due") return right.duePending - left.duePending;
+      if (sortBy === "balance") return right.creditLeft - left.creditLeft;
+      if (sortBy === "payments") return right.paymentsMade - left.paymentsMade;
+      return left.agent.name.localeCompare(right.agent.name);
+    });
+  }, [filtered, sortBy]);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pagedRows = useMemo(() => filteredAndSorted.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE), [filteredAndSorted, currentPage]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [q, sortBy]);
+
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(page, totalPages));
+  }, [totalPages]);
+
+  const exportVisible = () => {
+    const header = ["Agent", "WeChat ID", "Phone", "Total Orders", "Total Advanced", "Total Used", "Due / Pending", "Credit Left", "Payments Made"];
+    const csvRows = filteredAndSorted.map((row) => [
+      row.agent.name,
+      row.agent.wechatId || "Not Set",
+      row.agent.phone || "Not Set",
+      String(row.totalOrders),
+      formatAmount(row.totalAdvanced),
+      formatAmount(row.totalUsed),
+      formatAmount(row.duePending),
+      formatAmount(row.creditLeft),
+      formatAmount(row.paymentsMade),
+    ]);
+    const csv = [header, ...csvRows].map((line) => line.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "payment-agents-summary.csv";
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
 
   const paymentAgentsFlowLoggedRef = useRef(false);
   useEffect(() => {
@@ -157,7 +167,7 @@ export default function PaymentAgentsPage() {
       sampleAgents: filtered.slice(0, 5).map((row) => ({
         id: row.agent.id,
         name: row.agent.name,
-        totalOrders: row.matchedOrders.length,
+        totalOrders: row.totalOrders,
         paymentsMade: row.paymentsMade,
         duePending: row.duePending,
       })),
@@ -165,16 +175,8 @@ export default function PaymentAgentsPage() {
   }, [filtered, isPaymentAgentsLoading, rows]);
 
   const buildLedgerTable = (agent: PaymentAgent) => {
-    const matchedOrders = sourceOrders.filter((order) => order.status !== "archived" && isOrderMatchedToAgent(order, agent));
-    const matchedOrderIds = new Set(matchedOrders.map((order) => order.id));
-    const matchedOrderNumbers = new Set(matchedOrders.map((order) => order.number || order.orderNumber).filter(Boolean));
-    return [...(ledgerRows[ALL_LEDGER_ROWS_KEY] || [])]
-      .filter((entry) => {
-        const byAgentId = Boolean(entry.agentId && entry.agentId === agent.id);
-        const byOrderId = Boolean(entry.sourceOrderId && matchedOrderIds.has(entry.sourceOrderId));
-        const byOrderNumber = Boolean(entry.sourceOrderNumber && matchedOrderNumbers.has(entry.sourceOrderNumber));
-        return byAgentId || byOrderId || byOrderNumber;
-      })
+    const summary = buildPaymentAgentAccountingSummary(agent, sourceOrders, ledgerRows[ALL_LEDGER_ROWS_KEY] || []);
+    return [...summary.matchedEntries]
       .sort((a, b) => (a.paymentDate || a.createdAt || "").localeCompare(b.paymentDate || b.createdAt || ""))
       .map<LedgerViewRow>((entry) => ({
         id: entry.id,
@@ -345,75 +347,139 @@ export default function PaymentAgentsPage() {
   };
 
   return (
-    <PageShell title="Payment Agents">
-      <div className="space-y-4 p-6">
-        <div className="card flex flex-wrap items-center gap-2 p-3">
-          <div className="min-w-[280px] flex-1">
-            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search agent, WeChat, customer, order no., payments, notes, due, balance..." leadingIcon={<Search size={14} />} />
-          </div>
-          <Button
-            onClick={() => {
-              setForm({ id: "", name: "", agentCode: "", phone: "", wechatId: "", country: "", openingCredit: "", notes: "", status: "active" });
-              setOpen(true);
-            }}
-            variant="primary"
-          >
-            <Plus size={14} />
-            Add Payment Agent
-          </Button>
-          <Button size="sm" variant="secondary" disabled title="Export is not enabled in this phase.">
-            <Download size={14} />
-            Export
-          </Button>
-        </div>
-
-        <div className="card overflow-hidden">
-          <div className="overflow-x-auto">
-            <div className="w-full min-w-0 px-0.5 py-1">
-              <table className="w-full min-w-[1320px] text-[13px]">
-                <thead className="bg-white">
-                  <tr className="border-b border-border text-[12px] uppercase tracking-[0.01em] text-fg-muted">
-                    <th className="px-4 py-2 text-left">Agent</th>
-                    <th className="px-2 py-2 text-center">Total Orders</th>
-                    <th className="px-2 py-2 text-center">Total Credit</th>
-                    <th className="px-2 py-2 text-center">Used</th>
-                    <th className="px-2 py-2 text-center">Due</th>
-                    <th className="px-2 py-2 text-center">Balance</th>
-                    <th className="px-2 py-2 text-center">Payments</th>
-                    <th className="w-[220px] px-4 py-2 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filtered.map((row) => (
-                    <tr key={row.agent.id} className="border-b border-border transition-colors last:border-b-0 hover:bg-bg-subtle/40">
-                      <td className="px-4 py-3">
-                        <div className="text-[15px] font-bold leading-tight">{row.agent.name}</div>
-                        <div className="mt-1 text-[15px] font-medium text-fg-subtle">{row.agent.wechatId?.trim() || "No WeChat ID"}</div>
-                      </td>
-                      <td className="px-2 py-3 text-center text-[16px] font-bold">{row.matchedOrders.length}</td>
-                      <td className="px-2 py-3 text-center text-[16px] font-bold">{formatAmount(row.totalCredit)}</td>
-                      <td className="px-2 py-3 text-center text-[16px] font-bold">{formatAmount(row.usedCredit)}</td>
-                      <td className="px-2 py-3 text-center text-[16px] font-bold">{formatAmount(row.duePending)}</td>
-                      <td className="px-2 py-3 text-center text-[16px] font-bold">{formatAmount(row.balanceLeft)}</td>
-                      <td className="px-2 py-3 text-center text-[16px] font-bold">{formatAmount(row.paymentsMade)}</td>
-                      <td className="px-4 py-3 text-right align-middle">
-                        <div className="flex flex-wrap justify-end gap-2">
-                          <button type="button" title="Add payment" aria-label="Add payment" className="grid h-9 w-9 place-items-center rounded-lg border border-border bg-bg-card text-fg transition-colors hover:bg-bg-subtle" onClick={() => setPayAgentId(row.agent.id)}><HandCoins size={16} /></button>
-                          <button type="button" title="View ledger" aria-label="View ledger" className="grid h-9 w-9 place-items-center rounded-lg border border-border bg-bg-card text-fg transition-colors hover:bg-bg-subtle" onClick={() => { void toggleLedger(row.agent.id); }}><Eye size={16} /></button>
-                          <button type="button" title="Edit payment agent" aria-label="Edit payment agent" className="grid h-9 w-9 place-items-center rounded-lg border border-border bg-bg-card text-fg transition-colors hover:bg-bg-subtle" onClick={() => startEdit(row.agent)}><SquarePen size={16} /></button>
-                          <button type="button" title="Delete payment agent" aria-label="Delete payment agent" className="grid h-9 w-9 place-items-center rounded-lg border border-border bg-bg-card text-red-600 transition-colors hover:bg-red-50" onClick={() => removePaymentAgent(row.agent, row.currentDuePayable, row.currentCredit, row.totalOrders)}><Trash2 size={16} /></button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+    <div className="flex h-screen min-h-0 flex-col">
+      <main className="flex-1 overflow-y-auto p-4">
+        <div className="space-y-3">
+          <section className="card flex flex-wrap items-center gap-2 p-3">
+            <div className="min-w-[280px] max-w-xl flex-1">
+              <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search agent, WeChat, customer, order no., payments, notes, due, balance..." leadingIcon={<Search size={14} />} />
             </div>
-          </div>
-          <TablePagination total={filtered.length} />
-        </div>
+            <div className="w-[240px]">
+              <Select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                options={[
+                  { value: "name", label: "Sort: Agent Name" },
+                  { value: "orders", label: "Sort: Total Orders High to Low" },
+                  { value: "credit", label: "Sort: Total Advanced High to Low" },
+                  { value: "used", label: "Sort: Used High to Low" },
+                  { value: "due", label: "Sort: Due / Pending High to Low" },
+                  { value: "balance", label: "Sort: Credit Left High to Low" },
+                  { value: "payments", label: "Sort: Payments Made High to Low" },
+                ]}
+              />
+            </div>
+            <Button
+              size="sm"
+              onClick={() => {
+                setForm({ id: "", name: "", agentCode: "", phone: "", wechatId: "", country: "", openingCredit: "", notes: "", status: "active" });
+                setOpen(true);
+              }}
+            >
+              <Plus size={14} />
+              Add Payment Agent
+            </Button>
+            <Button size="sm" variant="secondary" onClick={exportVisible}>
+              <Download size={14} />
+              Export
+            </Button>
+          </section>
 
-        {payAgentId ? (
+          <section className="card overflow-hidden">
+            <div className="overflow-x-auto">
+              <div className="w-full min-w-0 px-0.5 py-1">
+                <table className="w-full min-w-[1160px] text-[13px]">
+                  <thead className="bg-white">
+                    <tr className="border-b border-border text-[11px] uppercase tracking-[0.01em] text-fg-muted">
+                      <th className="px-3 py-2 text-left">Agent</th>
+                      <th className="px-2 py-2 text-center">Orders</th>
+                      <th className="px-2 py-2 text-right">Total Advanced</th>
+                      <th className="px-2 py-2 text-right">Used</th>
+                      <th className="px-2 py-2 text-right">Due / Pending</th>
+                      <th className="px-2 py-2 text-right">Credit Left</th>
+                      <th className="px-2 py-2 text-right">Payments Made</th>
+                      <th className="px-3 py-2 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pagedRows.map((row) => (
+                      <tr key={row.agent.id} className="border-b border-border transition-colors last:border-b-0 hover:bg-bg-subtle/40">
+                        <td className="px-3 py-2.5">
+                          <div className="font-semibold text-fg">{row.agent.name}</div>
+                          <div className="mt-0.5 text-[12px] text-fg-subtle">{row.agent.wechatId?.trim() || row.agent.phone?.trim() || "No WeChat ID"}</div>
+                        </td>
+                        <td className="px-2 py-2.5 text-center font-semibold">{row.totalOrders}</td>
+                        <td className="px-2 py-2.5 text-right font-semibold tabular-nums text-sky-700">{formatAmount(row.totalAdvanced)}</td>
+                        <td className="px-2 py-2.5 text-right font-semibold tabular-nums text-slate-900">{formatAmount(row.totalUsed)}</td>
+                        <td className="px-2 py-2.5 text-right font-semibold tabular-nums text-rose-600">{formatAmount(row.duePending)}</td>
+                        <td className="px-2 py-2.5 text-right font-semibold tabular-nums text-emerald-700">{formatAmount(row.creditLeft)}</td>
+                        <td className="px-2 py-2.5 text-right font-semibold tabular-nums text-sky-700">{formatAmount(row.paymentsMade)}</td>
+                        <td className="px-3 py-2.5">
+                          <div className="flex justify-end gap-1.5">
+                            <button
+                              type="button"
+                              title="Add Payment"
+                              aria-label="Add Payment"
+                              className="grid h-8 w-8 place-items-center rounded-md border border-border bg-bg-card text-fg transition-colors hover:bg-bg-subtle"
+                              onClick={() => setPayAgentId(row.agent.id)}
+                            >
+                              <HandCoins size={15} />
+                            </button>
+                            <button
+                              type="button"
+                              title="View Ledger"
+                              aria-label="View Ledger"
+                              className="grid h-8 w-8 place-items-center rounded-md border border-border bg-bg-card text-fg transition-colors hover:bg-bg-subtle"
+                              onClick={() => {
+                                void toggleLedger(row.agent.id);
+                              }}
+                            >
+                              <Eye size={15} />
+                            </button>
+                            <button
+                              type="button"
+                              title="Edit Payment Agent"
+                              aria-label="Edit Payment Agent"
+                              className="grid h-8 w-8 place-items-center rounded-md border border-border bg-bg-card text-fg transition-colors hover:bg-bg-subtle"
+                              onClick={() => startEdit(row.agent)}
+                            >
+                              <SquarePen size={15} />
+                            </button>
+                            <button
+                              type="button"
+                              title="Delete Payment Agent"
+                              aria-label="Delete Payment Agent"
+                              className="grid h-8 w-8 place-items-center rounded-md border border-border bg-bg-card text-[var(--danger)] transition-colors hover:bg-[var(--danger)]/10"
+                              onClick={() => removePaymentAgent(row.agent, row.duePending, row.creditLeft, row.totalOrders)}
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                    {isPaymentAgentsLoading ? (
+                      <tr>
+                        <td colSpan={8} className="px-4 py-8 text-center text-fg-subtle">
+                          Loading payment agents...
+                        </td>
+                      </tr>
+                    ) : null}
+                    {!isPaymentAgentsLoading && pagedRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={8} className="px-4 py-8 text-center text-fg-subtle">
+                          No payment agents found.
+                        </td>
+                      </tr>
+                    ) : null}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <TablePagination total={filteredAndSorted.length} currentPage={currentPage} pageSize={PAGE_SIZE} onPageChange={setCurrentPage} label="payment agents" />
+          </section>
+
+          {payAgentId ? (
           <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
             <div className="card w-full max-w-xl space-y-3 p-4">
               <div className="text-lg font-semibold">Pay Agent</div>
@@ -429,7 +495,7 @@ export default function PaymentAgentsPage() {
           </div>
         ) : null}
 
-        {open ? (
+          {open ? (
           <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
             <div className="card w-full max-w-2xl space-y-3 p-4">
               <div className="text-lg font-semibold">{form.id ? "Edit Payment Agent" : "Add Payment Agent"}</div>
@@ -451,18 +517,18 @@ export default function PaymentAgentsPage() {
           </div>
         ) : null}
 
-        <PaymentAgentLedgerModal
-          open={Boolean(activeLedgerSummary)}
-          summary={activeLedgerSummary}
-          entries={activeLedgerRows}
-          orders={sourceOrders}
-          error={activeLedgerError}
-          onClose={() => setLedgerAgent(null)}
-          onExport={exportLedgerStatement}
-          onAddPayment={(input) => (activeLedgerSummary ? handleLedgerPayment(activeLedgerSummary.agent.id, input) : Promise.resolve())}
-        />
+          <PaymentAgentLedgerModal
+            open={Boolean(activeLedgerSummary)}
+            summary={activeLedgerSummary}
+            entries={activeLedgerRows}
+            orders={sourceOrders}
+            error={activeLedgerError}
+            onClose={() => setLedgerAgent(null)}
+            onExport={exportLedgerStatement}
+            onAddPayment={(input) => (activeLedgerSummary ? handleLedgerPayment(activeLedgerSummary.agent.id, input) : Promise.resolve())}
+          />
 
-        {deleteModalOpen && deleteCtx ? (
+          {deleteModalOpen && deleteCtx ? (
           <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
             <div className="card w-full max-w-2xl space-y-3 p-4">
               <div className="text-lg font-semibold">{deleteCtx.riskDetected ? "Delete payment agent with payable/credit/history records?" : "Delete Payment Agent?"}</div>
@@ -503,8 +569,9 @@ export default function PaymentAgentsPage() {
               </div>
             </div>
           </div>
-        ) : null}
-      </div>
-    </PageShell>
+          ) : null}
+        </div>
+      </main>
+    </div>
   );
 }

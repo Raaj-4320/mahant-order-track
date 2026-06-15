@@ -38,6 +38,7 @@ const STATUS_OPTIONS_WITH_DATE: Array<{ value: Order["status"]; label: string }>
 const STATUS_OPTIONS_NO_DATE: Array<{ value: Order["status"]; label: string }> = [{ value: "saved", label: "Saved" }];
 
 export default function DashboardPage() {
+  const PAGE_SIZE = 100;
   const { orders, upsertOrder, pushToast } = useStore();
   const { data: remoteOrders, isLoading: ordersLoading, upsertOrder: upsertRemoteOrder, reload: reloadRemoteOrders } = useOrders();
   const { data: customers, isLoading: customersLoading } = useCustomers();
@@ -59,6 +60,7 @@ export default function DashboardPage() {
   const [resetError, setResetError] = useState<string | null>(null);
   const [viewOrderId, setViewOrderId] = useState<string | null>(null);
   const [rowEdits, setRowEdits] = useState<Record<string, RowEditState>>({});
+  const [currentPage, setCurrentPage] = useState(1);
   const { canManageMaintenance } = useBusinessAccess();
   const router = useRouter();
   const filtered = useMemo(() => rows.filter((r) => {
@@ -81,11 +83,19 @@ export default function DashboardPage() {
     ].filter(Boolean).join(" ").toLowerCase();
     return haystack.includes(q);
   }), [rows, query]);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pagedRows = useMemo(() => filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE), [filtered, currentPage]);
   const viewOrder = sourceOrders.find((o) => o.id === viewOrderId) ?? null;
   const canConfirmReset = confirmText === "DELETE EVERYTHING";
   const canSeeDevReset = isDevResetEnabled() && (!isAuthRequiredModeEnabled() || canManageMaintenance);
   const formatPlainAmount = (value: number) => formatAmount(value);
   useEffect(() => { logPageAccess("Dashboard", { component: "app/dashboard/page.tsx", source: ordersSource }); }, []);
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [query]);
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(page, totalPages));
+  }, [totalPages]);
   const businessId = process.env.NEXT_PUBLIC_FIREBASE_BUSINESS_ID ?? "mahant";
 
   useEffect(() => {
@@ -206,7 +216,7 @@ pushToast({ tone: "danger", text: "Failed to save row changes." });
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((r) => (
+                {pagedRows.map((r) => (
                   <tr key={r.id} className="border-t border-border/80 hover:bg-bg-subtle/40 transition-colors">
                     {(() => {
                       const target = sourceOrders.find((o) => o.id === r.id);
@@ -245,11 +255,11 @@ return (
                     })()}
                   </tr>
                 ))}
-                {filtered.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-fg-subtle">No matching orders found.</td></tr>}
+                {pagedRows.length === 0 && <tr><td colSpan={7} className="px-4 py-8 text-center text-fg-subtle">No matching orders found.</td></tr>}
               </tbody>
             </table>
           </div>
-          <TablePagination total={filtered.length} />
+          <TablePagination total={filtered.length} currentPage={currentPage} pageSize={PAGE_SIZE} onPageChange={setCurrentPage} label="orders" />
         </div>
         {canSeeDevReset ? <div className="card p-4 border border-red-500/40">
           <div className="text-sm font-semibold text-red-300 mb-2">Developer Tools</div>
@@ -290,4 +300,3 @@ return (
     </PageShell>
   );
 }
-

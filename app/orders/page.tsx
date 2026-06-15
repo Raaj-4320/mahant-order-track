@@ -41,6 +41,7 @@ import { buildSeriesPrefix, deriveOrderSeriesFields, formatSeriesOrderNumber, ge
 
 const today = () => new Date().toISOString().slice(0, 10);
 const LAST_SELECTED_ORDER_SERIES_KEY = "orders:lastSelectedSeriesId";
+const PAGE_SIZE = 100;
 const createEmptyDraft = (_orders: Order[], reservedOrderNumber = ""): Order => ({
   id: `ord-${Date.now()}`,
   orderNumber: reservedOrderNumber,
@@ -162,7 +163,8 @@ export default function OrdersPage() {
     marka: "",
   });
   const [currentPage, setCurrentPage] = useState(1);
-  const [rowsPerPage, setRowsPerPage] = useState(20);
+  const [rowsPerPage, setRowsPerPage] = useState(PAGE_SIZE);
+  const [draftPage, setDraftPage] = useState(1);
   const [activeUploads, setActiveUploads] = useState(0);
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
   const [removedLineIds, setRemovedLineIds] = useState<string[]>([]);
@@ -407,7 +409,6 @@ export default function OrdersPage() {
     if (!query.trim()) return;
     setSelectedOrderCategory("all");
   }, [query]);
-
 
   const onUploadingChange = (isUploading: boolean) => setActiveUploads((p) => Math.max(0, p + (isUploading ? 1 : -1)));
 
@@ -972,6 +973,8 @@ try {
     logDataFlow("Orders", JSON.stringify({ event: "add_order_fresh_form_opened", orderId: nextDraft.id, orderNumber: nextDraft.number || nextDraft.orderNumber }, null, 2));
   };
   const drafts = useMemo(() => (isFirebaseOrdersMode ? firebaseDraftOrders : orders.filter((o) => o.status === "draft")), [isFirebaseOrdersMode, orders, firebaseDraftOrders]);
+  const draftTotalPages = Math.max(1, Math.ceil(drafts.length / PAGE_SIZE));
+  const pagedDrafts = useMemo(() => drafts.slice((draftPage - 1) * PAGE_SIZE, draftPage * PAGE_SIZE), [drafts, draftPage]);
   const formatPlainAmount = (value: number) => formatAmount(value);
   const getPaymentAgentMeta = (order: Order) => getOrderPaymentAgentDisplay(order, paymentAgents);
   const getLineCtns = (line: Order["lines"][number]) => Number(line.totalCtns) || 0;
@@ -983,6 +986,14 @@ try {
   const getOrderTotalAmount = (order: Order) => (order.lines || []).reduce((sum, line) => sum + getLineAmount(line), 0);
   const getFirstDraftPhoto = (order: Order) => order.lines.find((line) => line.productPhotoUrl || line.photoUrl)?.productPhotoUrl || order.lines.find((line) => line.productPhotoUrl || line.photoUrl)?.photoUrl || "";
   const renderDraftMissing = () => <span className="text-[var(--danger)]">Not present</span>;
+  useEffect(() => {
+    setDraftPage(1);
+  }, [mode]);
+
+  useEffect(() => {
+    setDraftPage((page) => Math.min(page, draftTotalPages));
+  }, [draftTotalPages]);
+
   const getDraftMarkaSummary = (order: Order) => {
     const markas = Array.from(new Set(order.lines.map((line) => (line.marka || "").trim()).filter(Boolean)));
     if (markas.length === 0) return null;
@@ -1153,7 +1164,7 @@ const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr)
                 </tr>
               </thead>
               <tbody>
-                {drafts.length === 0 ? <tr><td colSpan={7} className="px-4 py-8 text-center text-fg-subtle">No draft orders yet.</td></tr> : drafts.map((o) => {
+                {pagedDrafts.length === 0 ? <tr><td colSpan={7} className="px-4 py-8 text-center text-fg-subtle">No draft orders yet.</td></tr> : pagedDrafts.map((o) => {
                   const photo = getFirstDraftPhoto(o);
                   const paymentMeta = getPaymentAgentMeta(o);
                   const marka = getDraftMarkaSummary(o);
@@ -1173,6 +1184,7 @@ const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr)
               </tbody>
             </table>
           </div>
+          <TablePagination total={drafts.length} currentPage={draftPage} pageSize={PAGE_SIZE} onPageChange={setDraftPage} label="draft orders" />
         </section>}
 
         {view === "grid" ? (
@@ -1357,7 +1369,7 @@ const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr)
           {/* <div className="flex items-center justify-between px-4 py-3 border-b border-border"><h3 className="font-semibold">Order History</h3><div className="text-[12px] text-fg-subtle">Showing 1 to {pagedHistory.length} of {history.length} rows</div></div> */}
           <div className="overflow-x-auto">
             <div className="w-full min-w-0 px-0.5 py-1">
-              <div className="grid items-center border-b border-border bg-white text-[12px] font-semibold uppercase tracking-[0.01em] text-fg-muted" style={{ gridTemplateColumns: historyGridTemplate }}>
+              <div className="sticky top-0 z-20 grid items-center border-b border-border bg-white text-[12px] font-semibold uppercase tracking-[0.01em] text-fg-muted shadow-[0_1px_0_rgba(15,23,42,0.06)]" style={{ gridTemplateColumns: historyGridTemplate }}>
                 <div className="px-1 py-1.5 text-center">Order Number</div>
                 <div className="px-1 py-1.5 text-left">WeChat ID</div>
                 <div className="px-1 py-1.5 text-center">Product Photo</div>
@@ -1424,6 +1436,7 @@ const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr)
             </div>
           </div>
         </section>}
+        {mode === "history" ? <TablePagination total={history.length} currentPage={currentPage} pageSize={rowsPerPage} onPageChange={setCurrentPage} label="order rows" /> : null}
       <ImageLightbox src={previewImage?.src} alt={previewImage?.alt} caption={previewImage?.caption} open={Boolean(previewImage?.src)} onClose={() => setPreviewImage(null)} />
       </main>
       {isOrderModalOpen && <div className="fixed inset-0 z-50 bg-black/45 p-3 md:p-6" onClick={requestExitComposer}>

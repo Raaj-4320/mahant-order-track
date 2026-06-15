@@ -48,6 +48,7 @@ const emptyForm: ProductForm = {
 };
 
 export default function ProductsPage() {
+  const PAGE_SIZE = 100;
   useEffect(() => {
     logPageAccess("Products", { component: "app/products/page.tsx", source: process.env.NEXT_PUBLIC_PRODUCTS_DATA_SOURCE ?? "mock" });
   }, []);
@@ -79,6 +80,7 @@ export default function ProductsPage() {
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [pendingDeleteProduct, setPendingDeleteProduct] = useState<Product | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
 
   const categories = Array.from(new Set(rows.map((r) => r.category)));
   const filtered = useMemo(
@@ -198,6 +200,19 @@ export default function ProductsPage() {
       }),
     [rows, orders, paymentAgents, customers, status, category, q],
   );
+  const totalPages = Math.max(1, Math.ceil(productTableRows.length / PAGE_SIZE));
+  const pagedProductTableRows = useMemo(
+    () => productTableRows.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
+    [productTableRows, currentPage],
+  );
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [q, status, category]);
+
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(page, totalPages));
+  }, [totalPages]);
 
   const productsFlowLoggedRef = useRef(false);
   useEffect(() => {
@@ -361,7 +376,7 @@ export default function ProductsPage() {
                 </tr>
               </thead>
               <tbody>
-                {productTableRows.map((row) => (
+                {pagedProductTableRows.map((row) => (
                   <tr key={row.product.id} className="border-b border-border transition-colors last:border-b-0 hover:bg-bg-subtle/40">
                     <td className="px-4 py-3">
                       <div className="grid h-12 w-12 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle text-[20px]">
@@ -394,7 +409,7 @@ export default function ProductsPage() {
                     </td>
                   </tr>
                 ))}
-                {productTableRows.length === 0 ? (
+                {pagedProductTableRows.length === 0 ? (
                   <tr>
                     <td colSpan={12} className="px-4 py-8 text-center text-fg-subtle">
                       {status === "active" && active === 0 && inactive > 0 ? `No active products found. ${inactive} inactive products are hidden by the Active filter.` : "No products found."}
@@ -405,7 +420,7 @@ export default function ProductsPage() {
             </table>
             </div>
           </div>
-          <TablePagination total={productTableRows.length} />
+          <TablePagination total={productTableRows.length} currentPage={currentPage} pageSize={PAGE_SIZE} onPageChange={setCurrentPage} label="products" />
         </div>
 
         {open && (

@@ -160,7 +160,7 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
         <div className="px-2 py-1.5 overflow-x-auto">
           <div className="flex justify-end px-2 pb-1 text-[11px] text-fg-subtle">{draft.lines.length} line{draft.lines.length === 1 ? "" : "s"}</div>
           <div className="min-w-[960px]">
-            <div className={`${LINE_GRID} px-2 py-1.5 text-[13px] font-medium uppercase tracking-wide text-fg-subtle border-b border-border`}>
+            <div className={`${LINE_GRID} border-b border-border px-2 py-1.5 text-[13px] font-medium uppercase tracking-wide text-fg-subtle`}>
               <span className="text-center">Pic + Dim</span>
               <span className="text-center">Product</span>
               <span>MARKA</span>

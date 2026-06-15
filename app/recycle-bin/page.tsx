@@ -10,11 +10,14 @@ import { formatIndianDateTime } from "@/lib/dateFormat";
 import { Search } from "lucide-react";
 import { useStore } from "@/lib/store";
 import { sanitizeUserFacingText } from "@/lib/userFacingText";
+import { TablePagination } from "@/components/table/TablePagination";
 
 export default function RecycleBinPage() {
+  const PAGE_SIZE = 100;
   const [entries, setEntries] = useState<RecycleBinEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
   const { pushToast } = useStore();
 
   const load = async () => {
@@ -47,6 +50,16 @@ export default function RecycleBinPage() {
       ].join(" ").toLowerCase().includes(normalized);
     });
   }, [entries, query]);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pagedEntries = useMemo(() => filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE), [filtered, currentPage]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [query]);
+
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(page, totalPages));
+  }, [totalPages]);
 
   const restore = async (entry: RecycleBinEntry) => {
     try {
@@ -87,7 +100,7 @@ export default function RecycleBinPage() {
                 ) : filtered.length === 0 ? (
                   <tr><td colSpan={6} className="px-4 py-8 text-center text-fg-subtle">No deleted items found.</td></tr>
                 ) : (
-                  filtered.map((entry) => (
+                  pagedEntries.map((entry) => (
                     <tr key={entry.id} className="border-t border-border">
                       <td className="px-4 py-3 font-semibold">{entry.referenceType ? `${entry.itemType} / ${entry.referenceType}` : entry.itemType}</td>
                       <td>{sanitizeUserFacingText(entry.label)}</td>
@@ -103,6 +116,7 @@ export default function RecycleBinPage() {
               </tbody>
             </table>
           </div>
+          <TablePagination total={filtered.length} currentPage={currentPage} pageSize={PAGE_SIZE} onPageChange={setCurrentPage} label="recycle bin records" />
         </div>
       </div>
     </PageShell>
