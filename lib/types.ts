@@ -16,6 +16,7 @@ export type {
   Customer,
   Product,
   PaymentAgent,
+  OrderNumberSeries,
   PaymentAgentLedgerEntry,
   CustomerLedgerEntry,
   OrderLine,

@@ -1,4 +1,4 @@
-import type { Customer, DashboardOrderRow, Order, PaymentAgent, PaymentAgentLedgerEntry, Product, Supplier } from "@/lib/types";
+import type { Customer, DashboardOrderRow, Order, OrderNumberSeries, PaymentAgent, PaymentAgentLedgerEntry, Product, Supplier } from "@/lib/types";
 
 export type DashboardStats = {
   totalOrders: number;
@@ -46,6 +46,11 @@ export interface OrdersService {
   autosaveDraft?(order: Order): Promise<Order>;
   peekNextOrderNumber?(): Promise<string>;
   allocateNextOrderNumber?(): Promise<string>;
+}
+export interface OrderNumberSeriesService {
+  listOrderNumberSeries(orders?: Order[]): Promise<OrderNumberSeries[]>;
+  createOrderNumberSeries(input: { label: string; startNumber: number }, orders?: Order[]): Promise<OrderNumberSeries>;
+  syncOrderNumberSeriesFromOrder(order: Order, orders?: Order[]): Promise<OrderNumberSeries | null>;
 }
 export interface DashboardReadService {
   getDashboardStats(): Promise<DashboardStats>;

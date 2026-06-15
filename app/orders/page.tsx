@@ -6,13 +6,14 @@ import { OrderForm, newLine } from "@/components/orders/OrderForm";
 import { OrderFooter } from "@/components/orders/OrderFooter";
 import { formatAmount, formatDate } from "@/lib/data";
 import { formatIndianDate } from "@/lib/dateFormat";
-import { Order, PaymentAgent, lineTotalPcs, lineTotalRmb, orderTotal } from "@/lib/types";
+import { Order, OrderNumberSeries, PaymentAgent, lineTotalPcs, lineTotalRmb, orderTotal } from "@/lib/types";
 import { syncOrderLinesToProducts, archiveProductsForOrder, archiveProductsForRemovedOrderLines } from "@/services/productCatalogSync";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { calculatePaymentAgentSettlement } from "@/services/settlement/paymentAgentSettlement";
 import { usePaymentAgents } from "@/hooks/usePaymentAgents";
 import { useOrders } from "@/hooks/useOrders";
+import { useOrderNumberSeries } from "@/hooks/useOrderNumberSeries";
 import { useDraftAutosave } from "@/hooks/useDraftAutosave";
 import { hasAnyDraftContent, validateOrderForSave } from "@/services/orderValidation";
 import { OrderLinesDetailModal } from "@/components/orders/OrderLinesDetailModal";
@@ -20,7 +21,6 @@ import { useCustomers } from "@/hooks/useCustomers";
 import { customerLedgerService } from "@/services/customerLedgerService";
 import { resolveCustomersForOrderLines } from "@/services/customers/customerResolution";
 import { logCustomer, logDB, logError, logOrder, logPageAccess, logDataFlow } from "@/lib/logger";
-import { ensureFinalOrderNumber, peekNextOrderNumber } from "@/services/orderNumberService";
 import { BadgePercent, Boxes, CalendarDays, Check, ChevronDown, Eye, Filter, IndianRupee, LayoutGrid, List, MessageCircleMore, Moon, Package2, Search, ShoppingBag, SquarePen, Sun, Trash2, UserRound, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { getOrderPaymentAgentDisplay, resolveOrderPaymentAgent } from "@/lib/orderDisplay";
@@ -37,8 +37,10 @@ import { isOrderEligibleForCreditSettlement } from "@/services/settlement/orderC
 import { getLineDetailsParts, joinLineDetails, seedDetailBoxesFromLegacy, withDerivedLegacyDetails } from "@/lib/orderLineDetails";
 import { orderLifecycleService } from "@/services/orderLifecycleService";
 import { getMeaningfulOrderLines } from "@/services/orderValidation";
+import { buildSeriesPrefix, deriveOrderSeriesFields, formatSeriesOrderNumber, getSeriesSuggestion, normalizeSeriesLabel, orderNumberExists, parseOrderNumber } from "@/lib/orderNumberSeries";
 
 const today = () => new Date().toISOString().slice(0, 10);
+const LAST_SELECTED_ORDER_SERIES_KEY = "orders:lastSelectedSeriesId";
 const createEmptyDraft = (_orders: Order[], reservedOrderNumber = ""): Order => ({
   id: `ord-${Date.now()}`,
   orderNumber: reservedOrderNumber,
@@ -119,11 +121,6 @@ const summarizeOrderForLog = (o: Order) => ({
 });
 
 const normalizePaymentAgentValue = (value?: string) => (value || "").trim().toLowerCase();
-const getOrderNumberSortValue = (order: Order) => {
-  const raw = (order.number || order.orderNumber || "").trim();
-  const match = raw.match(/(\d+)(?!.*\d)/);
-  return match ? Number(match[1]) : Number.NEGATIVE_INFINITY;
-};
 const normalizeEditableOrderNumber = (value?: string) => {
   const trimmed = (value || "").trim();
   if (!trimmed) return "";
@@ -132,6 +129,11 @@ const normalizeEditableOrderNumber = (value?: string) => {
   if (!match) return trimmed;
   const [, prefix, digits] = match;
   return `${prefix}${String(Number(digits))}`;
+};
+
+const getStoredSelectedSeriesId = () => {
+  if (typeof window === "undefined") return "";
+  return window.localStorage.getItem(LAST_SELECTED_ORDER_SERIES_KEY) || "";
 };
 
 export default function OrdersPage() {
@@ -175,6 +177,13 @@ export default function OrdersPage() {
   const isOrderModalOpen = mode === "add" || mode === "edit";
   const [view, setView] = useState<"list" | "grid" | "calendar">("list");
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [selectedOrderCategory, setSelectedOrderCategory] = useState("all");
+  const [selectedSeriesId, setSelectedSeriesId] = useState("");
+  const [seriesPickerOpen, setSeriesPickerOpen] = useState(false);
+  const [showCreateSeriesModal, setShowCreateSeriesModal] = useState(false);
+  const [seriesForm, setSeriesForm] = useState({ label: "", startNumber: "" });
+  const [seriesCreateError, setSeriesCreateError] = useState("");
+  const [seriesCreateBusy, setSeriesCreateBusy] = useState(false);
   const [headerPaymentQuery, setHeaderPaymentQuery] = useState("");
   const [headerPaymentOpen, setHeaderPaymentOpen] = useState(false);
   const [headerWechatOpen, setHeaderWechatOpen] = useState(false);
@@ -186,14 +195,30 @@ export default function OrdersPage() {
   const wechatNormalizationStartedRef = useRef(false);
 
   const pickerRef = useRef<HTMLDivElement | null>(null);
+  const seriesPickerRef = useRef<HTMLDivElement | null>(null);
   const { theme, toggle } = useTheme();
 
   const activeOrders = useMemo(() => (isFirebaseOrdersMode ? firebaseOrders : orders).filter((o) => o.status !== "archived"), [isFirebaseOrdersMode, firebaseOrders, orders]);
+  const { data: orderSeries, isLoading: isOrderSeriesLoading, createSeries: createOrderSeries, syncSeriesFromOrder, reload: reloadOrderSeries } = useOrderNumberSeries(activeOrders);
   const total = useMemo(() => orderTotal(draft), [draft]);
+  const effectiveOrderCategory = query.trim() ? "all" : selectedOrderCategory;
+  const orderCategoryTabs = useMemo(() => {
+    const discovered = new Set<string>();
+    orderSeries.forEach((series) => {
+      const label = series.label?.trim();
+      if (label) discovered.add(label);
+    });
+    activeOrders.forEach((order) => {
+      const parsed = parseOrderNumber(order.number || order.orderNumber);
+      if (parsed?.category) discovered.add(parsed.category);
+    });
+    return ["all", ...Array.from(discovered).sort((left, right) => left.localeCompare(right))];
+  }, [orderSeries, activeOrders]);
   const filteredOrders = useMemo(
     () =>
       activeOrders.filter((order) => {
         const q = query.toLowerCase().trim();
+        const parsedOrderNumber = parseOrderNumber(order.number || order.orderNumber);
         const payment = getOrderPaymentAgentDisplay(order, paymentAgents).value;
         const customerText = order.lines.map((line) => line.customerSnapshot?.name || line.customerName || "").join(" ");
         const markaText = order.lines.map((line) => line.marka || "").join(" ");
@@ -211,6 +236,7 @@ export default function OrdersPage() {
         if (filters.orderNumber.trim() && !(order.number || order.orderNumber || "").toLowerCase().includes(filters.orderNumber.trim().toLowerCase())) return false;
         if (filters.customer.trim() && !customerText.toLowerCase().includes(filters.customer.trim().toLowerCase())) return false;
         if (filters.marka.trim() && !`${markaText} ${detailText}`.toLowerCase().includes(filters.marka.trim().toLowerCase())) return false;
+        if (!q && effectiveOrderCategory !== "all" && parsedOrderNumber?.category !== effectiveOrderCategory) return false;
         if (!q) return true;
         const searchable = [
           order.number || order.orderNumber || "",
@@ -230,16 +256,42 @@ export default function OrdersPage() {
           .toLowerCase();
         return searchable.includes(q);
       }),
-    [activeOrders, filters, query, paymentAgents],
+    [activeOrders, effectiveOrderCategory, filters, query, paymentAgents],
   );
   const sortedOrders = useMemo(() => {
     const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
     return [...filteredOrders].sort((left, right) => {
-      const numericDiff = getOrderNumberSortValue(right) - getOrderNumberSortValue(left);
+      if (effectiveOrderCategory !== "all") {
+        const leftParsed = parseOrderNumber(left.number || left.orderNumber);
+        const rightParsed = parseOrderNumber(right.number || right.orderNumber);
+        const numericDiff = (rightParsed?.numericNumber ?? Number.NEGATIVE_INFINITY) - (leftParsed?.numericNumber ?? Number.NEGATIVE_INFINITY);
+        if (numericDiff !== 0) return numericDiff;
+      }
+      const rightDate = right.date || right.createdAt || right.updatedAt || "";
+      const leftDate = left.date || left.createdAt || left.updatedAt || "";
+      const dateDiff = rightDate.localeCompare(leftDate);
+      if (dateDiff !== 0) return dateDiff;
+      const rightParsed = parseOrderNumber(right.number || right.orderNumber);
+      const leftParsed = parseOrderNumber(left.number || left.orderNumber);
+      const numericDiff = (rightParsed?.numericNumber ?? Number.NEGATIVE_INFINITY) - (leftParsed?.numericNumber ?? Number.NEGATIVE_INFINITY);
       if (numericDiff !== 0) return numericDiff;
       return collator.compare(right.number || right.orderNumber || "", left.number || left.orderNumber || "");
     });
-  }, [filteredOrders]);
+  }, [effectiveOrderCategory, filteredOrders]);
+  const pickerOrders = useMemo(() => {
+    const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+    return [...activeOrders].sort((left, right) => {
+      const rightDate = right.date || right.createdAt || right.updatedAt || "";
+      const leftDate = left.date || left.createdAt || left.updatedAt || "";
+      const dateDiff = rightDate.localeCompare(leftDate);
+      if (dateDiff !== 0) return dateDiff;
+      const rightParsed = parseOrderNumber(right.number || right.orderNumber);
+      const leftParsed = parseOrderNumber(left.number || left.orderNumber);
+      const numericDiff = (rightParsed?.numericNumber ?? Number.NEGATIVE_INFINITY) - (leftParsed?.numericNumber ?? Number.NEGATIVE_INFINITY);
+      if (numericDiff !== 0) return numericDiff;
+      return collator.compare(right.number || right.orderNumber || "", left.number || left.orderNumber || "");
+    });
+  }, [activeOrders]);
   const history = useMemo<FlatHistoryRow[]>(() => sortedOrders.flatMap<FlatHistoryRow>((order) => {
     const paymentMeta = getOrderPaymentAgentDisplay(order, paymentAgents);
     const orderLines = (order.lines || []).filter((line) => meaningfulLine(line));
@@ -279,6 +331,7 @@ export default function OrdersPage() {
     });
   }, [isFirebaseOrdersMode, isOrdersLoading, isCustomersLoading, ordersLoadError, firebaseOrders, orders, pagedHistory.length, filteredOrders, query, customers.length]);
   const editingOrder = editingOrderId ? activeOrders.find((o) => o.id === editingOrderId) ?? null : null;
+  const selectedOrderSeries = useMemo(() => orderSeries.find((series) => series.id === selectedSeriesId) ?? null, [orderSeries, selectedSeriesId]);
   const wechatSuggestions = useMemo(() => Array.from(new Set(activeOrders.map((o) => o.wechatId.trim()).filter(Boolean))).slice(0, 5), [activeOrders]);
   const customerSuggestions = useMemo(() => {
     const fromCustomerRows = customers.map((c) => c.name?.trim()).filter(Boolean) as string[];
@@ -289,6 +342,14 @@ export default function OrdersPage() {
   const selectedPaymentAgent = resolveOrderPaymentAgent(draft, paymentAgents);
   const settlement = useMemo(() => calculatePaymentAgentSettlement({ orderTotal: total, existingCredit: selectedPaymentAgent?.creditBalance ?? 0, paidNow: draft.paidToPaymentAgentNow ?? 0 }), [total, selectedPaymentAgent, draft.paidToPaymentAgentNow]);
   const validation = useMemo(() => validateOrderForSave(draft), [draft]);
+  const seriesPreview = useMemo(() => {
+    const normalizedLabel = normalizeSeriesLabel(seriesForm.label);
+    const startNumber = Number(seriesForm.startNumber);
+    if (!normalizedLabel) return "";
+    if (!Number.isInteger(startNumber) || startNumber <= 0) return `${buildSeriesPrefix(normalizedLabel)}...`;
+    return formatSeriesOrderNumber(buildSeriesPrefix(normalizedLabel), startNumber);
+  }, [seriesForm.label, seriesForm.startNumber]);
+  const seriesSuggestions = useMemo(() => orderSeries.map((series) => ({ ...series, suggestion: getSeriesSuggestion(series) })), [orderSeries]);
   const headerPaymentSuggestions = useMemo(() => {
     const q = headerPaymentQuery.trim().toLowerCase();
     return paymentAgents.filter((p) => !q || p.name.toLowerCase().includes(q) || (p.agentCode || "").toLowerCase().includes(q) || p.id.toLowerCase().includes(q)).slice(0, 4);
@@ -311,8 +372,41 @@ export default function OrdersPage() {
   }, [selectedPaymentAgent, draft.paymentAgentSnapshot?.name, draft.paymentByName, draft.paymentAgentName, draft.paymentBy, headerPaymentOpen]);
 
   useEffect(() => {
+    if (editingOrderId) return;
+    if (selectedSeriesId) return;
+    const storedSeriesId = getStoredSelectedSeriesId();
+    const nextSeriesId = orderSeries.find((series) => series.id === storedSeriesId)?.id || orderSeries.find((series) => series.isDefault)?.id || orderSeries[0]?.id || "";
+    if (nextSeriesId) {
+      setSelectedSeriesId(nextSeriesId);
+    }
+  }, [orderSeries, selectedSeriesId, editingOrderId]);
+
+  useEffect(() => {
+    if (!selectedSeriesId || typeof window === "undefined") return;
+    window.localStorage.setItem(LAST_SELECTED_ORDER_SERIES_KEY, selectedSeriesId);
+  }, [selectedSeriesId]);
+
+  useEffect(() => {
+    if (mode !== "add") return;
+    if ((draft.number || draft.orderNumber || "").trim()) return;
+    if (!selectedOrderSeries) return;
+    const suggestion = getSeriesSuggestion(selectedOrderSeries);
+    setDraft((current) => ({
+      ...current,
+      number: suggestion,
+      orderNumber: suggestion,
+      ...deriveOrderSeriesFields(suggestion),
+    }));
+  }, [mode, draft.number, draft.orderNumber, selectedOrderSeries]);
+
+  useEffect(() => {
     setCurrentPage(1);
-  }, [query, filters, rowsPerPage, mode]);
+  }, [query, filters, rowsPerPage, mode, selectedOrderCategory]);
+
+  useEffect(() => {
+    if (!query.trim()) return;
+    setSelectedOrderCategory("all");
+  }, [query]);
 
 
   const onUploadingChange = (isUploading: boolean) => setActiveUploads((p) => Math.max(0, p + (isUploading ? 1 : -1)));
@@ -324,6 +418,53 @@ export default function OrdersPage() {
       return false;
     }
     return true;
+  };
+
+  const applySeriesToDraft = (series: OrderNumberSeries | null, nextNumberOverride?: number) => {
+    if (!series) return;
+    const nextOrderNumber = formatSeriesOrderNumber(series.prefix, nextNumberOverride ?? series.nextNumber);
+    setSelectedSeriesId(series.id);
+    setDraft((current) => ({
+      ...current,
+      number: nextOrderNumber,
+      orderNumber: nextOrderNumber,
+      ...deriveOrderSeriesFields(nextOrderNumber),
+    }));
+  };
+
+  const handleSeriesChange = (seriesId: string) => {
+    const nextSeries = orderSeries.find((series) => series.id === seriesId) ?? null;
+    if (!nextSeries) return;
+    setSeriesPickerOpen(false);
+    applySeriesToDraft(nextSeries);
+  };
+
+  const handleOrderNumberInputChange = (rawValue: string) => {
+    const trimmed = rawValue.trim();
+    let nextValue = normalizeEditableOrderNumber(trimmed);
+    if (selectedOrderSeries && /^\d+$/.test(trimmed)) {
+      nextValue = formatSeriesOrderNumber(selectedOrderSeries.prefix, Number(trimmed));
+    }
+    const parsed = parseOrderNumber(nextValue);
+    if (parsed) {
+      const matchedSeries = orderSeries.find((series) => series.prefix === parsed.prefix);
+      if (matchedSeries) {
+        setSelectedSeriesId(matchedSeries.id);
+      }
+    }
+    setDraft((current) => ({
+      ...current,
+      number: nextValue,
+      orderNumber: nextValue,
+      ...deriveOrderSeriesFields(nextValue),
+    }));
+  };
+
+  const openCreateSeriesModal = () => {
+    setSeriesPickerOpen(false);
+    setSeriesCreateError("");
+    setSeriesForm({ label: "", startNumber: "" });
+    setShowCreateSeriesModal(true);
   };
 
   const resolveOrCreatePaymentAgentByName = async (rawName: string) => {
@@ -354,6 +495,42 @@ export default function OrdersPage() {
       return created;
     } catch (error) {
       throw error;
+    }
+  };
+
+  const handleCreateSeries = async () => {
+    const normalizedLabel = normalizeSeriesLabel(seriesForm.label);
+    const startNumber = Number(seriesForm.startNumber);
+    if (!normalizedLabel) {
+      setSeriesCreateError("Series label is required.");
+      return;
+    }
+    if (!Number.isInteger(startNumber) || startNumber <= 0) {
+      setSeriesCreateError("Starting number must be a positive integer.");
+      return;
+    }
+    const normalizedPrefix = buildSeriesPrefix(normalizedLabel);
+    const firstOrderNumber = formatSeriesOrderNumber(normalizedPrefix, startNumber);
+    if (orderNumberExists(activeOrders, firstOrderNumber)) {
+      setSeriesCreateError("This order number already exists. Choose another starting number.");
+      return;
+    }
+    if (orderSeries.some((series) => series.prefix === normalizedPrefix)) {
+      setSeriesCreateError("This series already exists.");
+      return;
+    }
+    setSeriesCreateBusy(true);
+    setSeriesCreateError("");
+    try {
+      const created = await createOrderSeries({ label: normalizedLabel, startNumber });
+      setShowCreateSeriesModal(false);
+      setSeriesForm({ label: "", startNumber: "" });
+      applySeriesToDraft(created, created.nextNumber);
+      pushToast({ tone: "success", text: `Series ${created.prefix} created.` });
+    } catch (error) {
+      setSeriesCreateError(error instanceof Error ? error.message : "Could not create series.");
+    } finally {
+      setSeriesCreateBusy(false);
     }
   };
 
@@ -498,6 +675,7 @@ try {
       ...draft,
       number: normalizeEditableOrderNumber(draft.number || draft.orderNumber),
       orderNumber: normalizeEditableOrderNumber(draft.orderNumber || draft.number),
+      ...deriveOrderSeriesFields(normalizeEditableOrderNumber(draft.orderNumber || draft.number)),
       wechatId: draft.wechatId.trim(),
       lines: meaningfulLines,
       paymentAgentSnapshot: draft.paymentBy.trim() || draft.paymentAgentId ? draft.paymentAgentSnapshot : undefined,
@@ -525,6 +703,7 @@ try {
         ...cleanedDraft,
         number: cleanedDraft.number,
         orderNumber: cleanedDraft.orderNumber || cleanedDraft.number,
+        ...deriveOrderSeriesFields(cleanedDraft.orderNumber || cleanedDraft.number),
         status: "draft" as const,
         paymentAgentId: resolvedDraftAgent?.id || "",
         paymentBy: resolvedDraftAgent?.id || cleanedDraft.paymentBy || "",
@@ -595,10 +774,16 @@ try {
       return;
     }
     const requestedOrderNumber = (draft.number || draft.orderNumber || "").trim();
-    const duplicateOrder = activeOrders.find((o) => o.id !== draft.id && (o.number || o.orderNumber || "").trim() === requestedOrderNumber);
-    if (requestedOrderNumber && duplicateOrder) {
+    const fallbackOrderNumber = selectedOrderSeries ? getSeriesSuggestion(selectedOrderSeries) : "";
+    const finalOrderNumber = normalizeEditableOrderNumber(requestedOrderNumber || fallbackOrderNumber);
+    if (!finalOrderNumber) {
       setOrderSaveState("idle");
-      setValidationWarning({ visible: true, items: [`Order Number ${requestedOrderNumber} already exists.`] });
+      setValidationWarning({ visible: true, items: ["Order Number is required."] });
+      return;
+    }
+    if (orderNumberExists(activeOrders, finalOrderNumber, draft.id)) {
+      setOrderSaveState("idle");
+      setValidationWarning({ visible: true, items: [`Order Number ${finalOrderNumber} already exists.`] });
       return;
     }
     let resolvedAgent = paymentAgents.find((agent) => agent.id === (cleanedDraft.paymentAgentId || cleanedDraft.paymentBy) || normalizePaymentAgentValue(agent.name) === normalizePaymentAgentValue(cleanedDraft.paymentBy)) ?? null;
@@ -612,12 +797,13 @@ try {
         return;
       }
     }
-    const finalOrderNumber = requestedOrderNumber || await ensureFinalOrderNumber({ ...cleanedDraft, number: "", orderNumber: "", status: "saved" as const });
     const resolvedPaymentAgentId = resolvedAgent?.id || "";
+    const finalOrderSeriesFields = deriveOrderSeriesFields(finalOrderNumber);
     let savedOrder: Order = {
       ...cleanedDraft,
       number: finalOrderNumber,
       orderNumber: finalOrderNumber,
+      ...finalOrderSeriesFields,
       lines: resolvedLines,
       status: "saved" as const,
       paymentAgentId: resolvedPaymentAgentId,
@@ -655,6 +841,11 @@ try {
       return;
     }
     const mergedOrders = activeOrders.some((o) => o.id === savedOrder.id) ? activeOrders.map((o) => (o.id === savedOrder.id ? savedOrder : o)) : [savedOrder, ...activeOrders];
+    try {
+      await syncSeriesFromOrder(savedOrder, mergedOrders);
+    } catch (error) {
+      logError("order_series_sync_failure", { orderId: savedOrder.id, orderNumber: savedOrder.number, error: error instanceof Error ? error.message : String(error) });
+    }
     logCustomer("skipped_unrelated_customer_upserts", { reason: "normal_save_should_not_rewrite_unrelated_customers", affectedCustomerIds: Array.from(new Set(savedOrder.lines.map((l) => l.customerId).filter(Boolean))) });
     const result: OrderSideEffectResult = { mode: editingOrderId ? "edit" : "create", orderSaved: true, productsSynced: false, productSyncFailures: [], paymentSettlementApplied: !isFirebaseOrdersMode && Boolean(selectedPaymentAgentId), paymentSettlementReversed: false, customerReceivablesApplied: false, customerReceivablesReversed: false, generatedProductsArchived: editingOrderId ? false : true, blocked: false, warnings: [], errors: [] };
     const affectedCustomerIds = Array.from(new Set(savedOrder.lines.map((l) => l.customerId).filter(Boolean)));
@@ -730,7 +921,9 @@ try {
     setEditingOrderId(null);
     setRemovedLineIds([]);
     setOriginalLineIds(new Set());
-    setDraft(createEmptyDraft(orders));
+    const preferredSeries = orderSeries.find((series) => series.id === selectedSeriesId) ?? orderSeries[0] ?? null;
+    const nextDraft = createEmptyDraft(orders, preferredSeries ? getSeriesSuggestion(preferredSeries) : "");
+    setDraft({ ...nextDraft, ...deriveOrderSeriesFields(nextDraft.number || nextDraft.orderNumber) });
     setMode("history");
     setHasAttemptedFinalSave(false);
     setShowDraftIncompleteConfirm(false);
@@ -749,7 +942,9 @@ try {
     setEditingOrderId(o.id); setRemovedLineIds([]); setOriginalLineIds(new Set(o.lines.map(l=>l.id)));
     const copy = JSON.parse(JSON.stringify(o));
     const normalizedOrderNumber = normalizeEditableOrderNumber(copy.number || copy.orderNumber);
-    setDraft({ ...copy, number: normalizedOrderNumber, orderNumber: normalizedOrderNumber, wechatId: (copy.wechatId || "").trim(), lines: (copy.lines || []).map((line: Order["lines"][number]) => seedDetailBoxesFromLegacy(line)) });
+    const matchedSeries = orderSeries.find((series) => series.prefix === (parseOrderNumber(normalizedOrderNumber)?.prefix || "")) ?? null;
+    setSelectedSeriesId(matchedSeries?.id || "");
+    setDraft({ ...copy, number: normalizedOrderNumber, orderNumber: normalizedOrderNumber, ...deriveOrderSeriesFields(normalizedOrderNumber), wechatId: (copy.wechatId || "").trim(), lines: (copy.lines || []).map((line: Order["lines"][number]) => seedDetailBoxesFromLegacy(line)) });
     setHasAttemptedFinalSave(false);
     setShowDraftIncompleteConfirm(false);
     setShowExitConfirm(false);
@@ -762,19 +957,19 @@ try {
     setEditingOrderId(null);
     setRemovedLineIds([]);
     setOriginalLineIds(new Set());
-    try {
-      const reserved = await peekNextOrderNumber();
-      const nextDraft = createEmptyDraft(orders, normalizeEditableOrderNumber(reserved));
-      setDraft(nextDraft);
-      setHasAttemptedFinalSave(false);
-      setShowDraftIncompleteConfirm(false);
-      setShowExitConfirm(false);
-      setValidationWarning({ visible: false, items: [] });
-      setMode("add");
-      logDataFlow("Orders", JSON.stringify({ event: "add_order_fresh_form_opened", orderId: nextDraft.id, orderNumber: nextDraft.number || nextDraft.orderNumber }, null, 2));
-    } catch (e) {
-      pushToast({ tone: "danger", text: e instanceof Error ? e.message : "Could not allocate order number." });
+    const preferredSeries = orderSeries.find((series) => series.id === selectedSeriesId) ?? orderSeries.find((series) => series.isDefault) ?? orderSeries[0] ?? null;
+    if (preferredSeries) {
+      setSelectedSeriesId(preferredSeries.id);
     }
+    const reserved = preferredSeries ? getSeriesSuggestion(preferredSeries) : "";
+    const nextDraft = createEmptyDraft(orders, normalizeEditableOrderNumber(reserved));
+    setDraft({ ...nextDraft, ...deriveOrderSeriesFields(nextDraft.number || nextDraft.orderNumber) });
+    setHasAttemptedFinalSave(false);
+    setShowDraftIncompleteConfirm(false);
+    setShowExitConfirm(false);
+    setValidationWarning({ visible: false, items: [] });
+    setMode("add");
+    logDataFlow("Orders", JSON.stringify({ event: "add_order_fresh_form_opened", orderId: nextDraft.id, orderNumber: nextDraft.number || nextDraft.orderNumber }, null, 2));
   };
   const drafts = useMemo(() => (isFirebaseOrdersMode ? firebaseDraftOrders : orders.filter((o) => o.status === "draft")), [isFirebaseOrdersMode, orders, firebaseDraftOrders]);
   const formatPlainAmount = (value: number) => formatAmount(value);
@@ -797,7 +992,7 @@ try {
     const candidate = line as Order["lines"][number] & { productImage?: string; image?: string };
     return candidate.productPhotoUrl || candidate.productImage || candidate.image || candidate.photoUrl || "";
   };
-  const getDisplayWechatId = (order: Order) => order.wechatId?.trim() || <span className="text-[15px] text-[var(--danger)]">Not Set</span>;
+  const getDisplayWechatId = (order: Order) => order.wechatId?.trim() || "Not Set";
   const getVisibleLineDetails = (line: Order["lines"][number]) => {
     const parts = getLineDetailsParts(line);
     const values = [parts.detail1, parts.detail2, parts.detail3].map((part) => part.trim()).filter(Boolean);
@@ -896,6 +1091,14 @@ const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr)
   }, [pickerOpen]);
 
   useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (seriesPickerRef.current && !seriesPickerRef.current.contains(e.target as Node)) setSeriesPickerOpen(false);
+    };
+    if (seriesPickerOpen) document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [seriesPickerOpen]);
+
+  useEffect(() => {
     if (!isOrderModalOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -912,7 +1115,7 @@ const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr)
         <div className="min-w-[280px] flex-1 max-w-xl"><Input value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="Search order no., payment agent, WeChat, marka, details, customer, amounts, status, dates..." leadingIcon={<Search size={15} />} /></div>
         <div className="relative" ref={pickerRef}>
           <Button size="sm" onClick={() => setPickerOpen((v) => !v)}><List size={14} /><span className="text-fg-muted">Order</span><span className="font-semibold">{(editingOrder?.number || draft.number || history[0]?.order.number || history[0]?.order.orderNumber || "—")}</span><ChevronDown size={13} /></Button>
-          {pickerOpen && <div className="absolute left-0 top-full z-20 mt-2 w-72 rounded-xl border border-border bg-bg-card p-1.5 shadow-card max-h-[320px] overflow-y-auto">{sortedOrders.slice(0,30).map((o) => <button key={o.id} onClick={() => { setPickerOpen(false); startEdit(o); }} className="block w-full rounded-md px-2.5 py-2 text-left text-[12.5px] hover:bg-bg-subtle transition-colors"><div className="flex items-center justify-between"><span className="text-[14px] font-semibold">{o.number || o.orderNumber || "Draft"}</span><span className="text-[11px] text-fg-subtle">{formatDate(o.date)}</span></div><div className="mt-0.5 text-[11.5px] text-fg-muted">{o.lines.length} lines Â· {formatPlainAmount(orderTotal(o))}</div></button>)}</div>}
+          {pickerOpen && <div className="absolute left-0 top-full z-20 mt-2 w-72 rounded-xl border border-border bg-bg-card p-1.5 shadow-card max-h-[320px] overflow-y-auto">{pickerOrders.slice(0,30).map((o) => <button key={o.id} onClick={() => { setPickerOpen(false); startEdit(o); }} className="block w-full rounded-md px-2.5 py-2 text-left text-[12.5px] hover:bg-bg-subtle transition-colors"><div className="flex items-center justify-between"><span className="text-[14px] font-semibold">{o.number || o.orderNumber || "Draft"}</span><span className="text-[11px] text-fg-subtle">{formatDate(o.date)}</span></div><div className="mt-0.5 text-[11.5px] text-fg-muted">{o.lines.length} lines Â· {formatPlainAmount(orderTotal(o))}</div></button>)}</div>}
         </div>
         <div className="relative">
           <Button size="sm" variant="secondary" onClick={() => { setFilterOpen((prev) => !prev); }}><Filter size={14} />Filter</Button>
@@ -939,6 +1142,7 @@ const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr)
       </div>
       {ordersDataSource === "mock" ? <div className="border-b border-amber-300 bg-amber-50 px-5 py-2 text-[12px] font-medium text-amber-900">{ordersSourceSelection.hasFirebaseConfig ? "Mock mode is enabled; order and customer data is local and will not persist to Firebase." : "Firebase is not configured; app is running in mock mode and data will not persist."}</div> : null}
       <main className="min-h-0 flex-1 overflow-y-auto p-4 space-y-4">
+        {mode === "history" ? <section className="card p-2.5"><div className="flex flex-wrap items-center gap-2">{orderCategoryTabs.map((category) => { const isActive = effectiveOrderCategory === category; const label = category === "all" ? "All" : category; return <button key={category} type="button" onClick={() => setSelectedOrderCategory(category)} className={cn("rounded-full border px-3 py-1.5 text-[12px] font-medium transition-colors", isActive ? "border-brand bg-brand text-brand-fg" : "border-border bg-bg-card text-fg hover:bg-bg-subtle")}>{label}</button>; })}</div></section> : null}
         {mode === "drafts" && <section className="card overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-border"><h3 className="font-semibold">Draft Orders</h3><div className="text-[12px] text-fg-subtle">{drafts.length} draft{drafts.length === 1 ? "" : "s"}</div></div>
           <div className="overflow-x-auto">
@@ -1232,12 +1436,12 @@ const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr)
               </div>
               <Button size="sm" variant="secondary" onClick={requestExitComposer} aria-label="Close order editor"><X size={16} /></Button>
             </div>
-            <div className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-[minmax(220px,0.8fr)_minmax(145px,0.55fr)_minmax(145px,0.55fr)_minmax(160px,0.55fr)_minmax(220px,0.8fr)]">
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-[minmax(220px,0.8fr)_minmax(145px,0.55fr)_minmax(145px,0.55fr)_minmax(420px,1.2fr)_minmax(220px,0.8fr)]">
               <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Payment By</span><div className="relative"><Input value={headerPaymentQuery} onFocus={() => setHeaderPaymentOpen(true)} onBlur={() => window.setTimeout(() => setHeaderPaymentOpen(false),120)} onChange={(e)=>{const next=e.target.value;
 setHeaderPaymentQuery(next); setHeaderPaymentOpen(true); setDraft((d)=>({...d,paymentBy:next,paymentAgentId:"", paymentByName: "", paymentAgentName: "", paymentAgentSnapshot: undefined}));}} placeholder="Search payment agent" />{headerPaymentQuery || draft.paymentAgentId || draft.paymentBy ? <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-fg-subtle transition-colors hover:text-fg" onMouseDown={(e) => { e.preventDefault(); setHeaderPaymentQuery(""); setHeaderPaymentOpen(false); setDraft((d) => ({ ...d, paymentBy: "", paymentAgentId: "", paymentByName: "", paymentAgentName: "", paymentAgentSnapshot: undefined })); }}>Clear</button> : null}{headerPaymentOpen && headerPaymentSuggestions.length>0 ? <div className="absolute z-30 mt-1 max-h-44 w-full overflow-auto rounded-lg border border-border bg-bg-card shadow-card">{headerPaymentSuggestions.map((p)=><button key={p.id} type="button" className="block w-full px-2 py-1.5 text-left text-[12px] hover:bg-bg-subtle" onMouseDown={(e)=>{e.preventDefault(); setHeaderPaymentOpen(false); const label=paymentLabel(p); setHeaderPaymentQuery(label); setDraft((d)=>({...d,paymentBy:p.id,paymentAgentId:p.id, paymentByName: p.name, paymentAgentName: p.name, paymentAgentSnapshot: { id: p.id, name: p.name, code: p.agentCode }}));}}>{paymentLabel(p)}</button>)}</div>:null}</div></label>
               <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Date</span><Input type="date" value={draft.date} onChange={(e)=>setDraft((d)=>({...d,date:e.target.value}))} /></label>
               <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Loading Date</span><Input type="date" value={draft.loadingDate || ""} onChange={(e)=>setDraft((d)=>({...d,loadingDate:e.target.value || undefined}))} /></label>
-              <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Order Number</span><Input value={draft.number} onChange={(e)=>{const next=normalizeEditableOrderNumber(e.target.value); setDraft((d)=>({...d,number:next,orderNumber:next}));}} /></label>
+              <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Order Number</span><div className="space-y-2"><div className="grid grid-cols-1 gap-2 xl:grid-cols-[minmax(190px,0.95fr)_minmax(0,1.15fr)_auto]"><div className="relative" ref={seriesPickerRef}><button type="button" className={cn("flex h-10 w-full items-center justify-between rounded-xl border border-border bg-bg-card px-3 text-left text-[12.5px] shadow-sm transition-colors", seriesPickerOpen ? "border-brand ring-2 ring-brand/15" : "hover:border-border-strong hover:bg-bg-subtle/40", (isOrderSeriesLoading || orderSeries.length === 0) && "cursor-not-allowed opacity-70")} onClick={() => { if (!isOrderSeriesLoading && orderSeries.length > 0) setSeriesPickerOpen((open) => !open); }} disabled={isOrderSeriesLoading || orderSeries.length === 0}><div className="min-w-0 truncate font-semibold text-fg">{selectedOrderSeries ? getSeriesSuggestion(selectedOrderSeries) : isOrderSeriesLoading ? "Loading series..." : "No series yet"}</div><ChevronDown size={15} className={cn("ml-3 shrink-0 text-fg-subtle transition-transform", seriesPickerOpen && "rotate-180")} /></button>{seriesPickerOpen ? <div className="absolute left-0 top-full z-40 mt-2 w-[320px] max-w-[calc(100vw-3rem)] overflow-hidden rounded-2xl border border-border bg-bg-card shadow-card"><div className="border-b border-border/80 px-3 py-2"><div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-fg-subtle">Order Series</div></div><div className="max-h-72 overflow-y-auto p-1.5">{seriesSuggestions.map((series) => <button key={series.id} type="button" className={cn("block w-full rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-bg-subtle", selectedOrderSeries?.id === series.id && "bg-bg-subtle")} onClick={() => handleSeriesChange(series.id)}><div className="text-[13px] font-semibold text-fg">{series.suggestion}</div></button>)}<button type="button" className="mt-1 block w-full rounded-xl border border-dashed border-border px-3 py-2.5 text-left transition-colors hover:border-brand hover:bg-bg-subtle" onClick={openCreateSeriesModal}><div className="text-[13px] font-semibold text-fg">+ Add New Series</div></button></div></div> : null}</div><Input className="min-w-0" value={draft.number} onChange={(e)=>handleOrderNumberInputChange(e.target.value)} placeholder={selectedOrderSeries ? getSeriesSuggestion(selectedOrderSeries) : orderSeries.length ? "Type full order number" : "Create a series first"} /><Button type="button" size="sm" variant="secondary" className="h-10 whitespace-nowrap px-4 text-[12.5px]" onClick={openCreateSeriesModal}>Add New Series</Button></div>{orderSeries.length === 0 ? <div className="text-[11px] text-amber-700">No order number series yet. Create one before saving a new order number.</div> : null}</div></label>
               <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>WeChat ID</span><div className="relative"><Input value={draft.wechatId} onFocus={() => setHeaderWechatOpen(true)} onBlur={() => window.setTimeout(() => setHeaderWechatOpen(false), 120)} onChange={(e)=>{const next=e.target.value; setHeaderWechatOpen(true); setDraft((d)=>({...d,wechatId:next}));}} />{headerWechatOpen && headerWechatSuggestions.length>0 ? <div className="absolute z-30 mt-1 max-h-44 w-full overflow-auto rounded-lg border border-border bg-bg-card shadow-card">{headerWechatSuggestions.map((w)=><button key={w} type="button" className="block w-full px-2 py-1.5 text-left text-[12px] hover:bg-bg-subtle" onMouseDown={(e)=>{e.preventDefault(); setHeaderWechatOpen(false); setDraft((d)=>({...d,wechatId:w}));}}>{w}</button>)}</div> : null}</div></label>
             </div>
           </div>
@@ -1257,6 +1461,7 @@ setHeaderPaymentQuery(next); setHeaderPaymentOpen(true); setDraft((d)=>({...d,pa
         </div>
       </div>}
       {showExitConfirm ? <div className="fixed inset-0 z-[65] bg-black/50 grid place-items-center p-4"><div className="card w-full max-w-lg p-4 space-y-3"><div className="text-lg font-semibold">Exit order editor?</div><div className="text-sm text-fg-subtle">Pressing Escape or closing the modal will not discard your work immediately. Choose what to do with the current order.</div><div className="flex flex-wrap justify-end gap-2"><Button variant="secondary" onClick={() => setShowExitConfirm(false)}>Continue editing</Button><Button variant="secondary" onClick={() => resetOrderComposer()}>Exit without saving</Button><Button variant="primary" onClick={() => { setShowExitConfirm(false); void onSave("draft", true); }}>Save as Draft</Button></div></div></div> : null}
+      {showCreateSeriesModal ? <div className="fixed inset-0 z-[75] bg-black/50 grid place-items-center p-4" onClick={() => { if (!seriesCreateBusy) setShowCreateSeriesModal(false); }}><div className="card w-full max-w-md p-4 space-y-4" onClick={(e) => e.stopPropagation()}><div className="space-y-1"><div className="text-lg font-semibold">Add New Series</div><div className="text-sm text-fg-subtle">Create a new order number series and switch this order to it immediately.</div></div><label className="flex flex-col gap-1 text-sm text-fg-muted"><span>Series Label</span><Input value={seriesForm.label} onChange={(e) => { setSeriesCreateError(""); setSeriesForm((prev) => ({ ...prev, label: e.target.value })); }} placeholder="LLL" autoFocus /></label><label className="flex flex-col gap-1 text-sm text-fg-muted"><span>Starting Number</span><Input value={seriesForm.startNumber} onChange={(e) => { setSeriesCreateError(""); setSeriesForm((prev) => ({ ...prev, startNumber: e.target.value.replace(/[^\d]/g, "") })); }} placeholder="501" inputMode="numeric" /></label><div className="rounded-lg border border-border bg-bg-subtle px-3 py-2"><div className="text-[11px] uppercase tracking-wide text-fg-subtle">Preview</div><div className="mt-1 text-base font-semibold text-fg">{seriesPreview || "—"}</div></div>{seriesCreateError ? <div className="text-sm text-[var(--danger)]">{seriesCreateError}</div> : null}<div className="flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setShowCreateSeriesModal(false)} disabled={seriesCreateBusy}>Cancel</Button><Button type="button" variant="primary" onClick={() => { void handleCreateSeries(); }} disabled={seriesCreateBusy}>{seriesCreateBusy ? "Creating..." : "Create Series"}</Button></div></div></div> : null}
       {showDraftIncompleteConfirm && <div className="fixed inset-0 z-[60] bg-black/50 grid place-items-center p-4"><div className="card w-full max-w-lg p-4 space-y-3"><div className="text-lg font-semibold">Save incomplete draft?</div><div className="text-sm text-fg-subtle">This draft has empty required fields. Save it anyway?</div><div className="flex justify-end gap-2"><Button variant="secondary" onClick={() => setShowDraftIncompleteConfirm(false)}>Cancel</Button><Button variant="primary" onClick={() => onSave("draft", true)}>Save Draft Anyway</Button></div></div></div>}
       <ConfirmDialog
         open={Boolean(pendingDeleteOrder)}

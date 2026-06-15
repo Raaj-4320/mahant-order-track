@@ -305,12 +305,14 @@ export const orderFromFirestore = (doc: unknown): Order => {
         });
       })
     : [];
-  return { ...(o as any), id: asStr(o.id), number: asStr(o.number) || asStr(o.orderNumber), orderNumber: asStr(o.orderNumber) || asStr(o.number), date: asStr(o.date), loadingDate: asStr(o.loadingDate) || undefined, wechatId: asStr(o.wechatId), status: (asStr(o.status) as Order["status"]) || "draft", paymentStatus: (asStr(o.paymentStatus) as Order["paymentStatus"]) || "pending", paymentBy: asStr(o.paymentBy), paymentAgentId: asStr(o.paymentAgentId), paidToPaymentAgentNow: asNum(o.paidToPaymentAgentNow) ?? 0, lines: lines as any, createdAt: asStr(o.createdAt, now), updatedAt: asStr(o.updatedAt, now), savedAt: asStr(o.savedAt) || undefined, draftAutosavedAt: asStr(o.draftAutosavedAt) || undefined, lastEditedAt: asStr(o.lastEditedAt) || undefined, lifecycle: lifecycleFromUnknown(o.lifecycle, { type: "order", sourceType: "manual" }), dependencyMap: orderDependencyMapFromUnknown(o.dependencyMap) } as Order;
+  return { ...(o as any), id: asStr(o.id), number: asStr(o.number) || asStr(o.orderNumber), orderNumber: asStr(o.orderNumber) || asStr(o.number), orderPrefix: asStr(o.orderPrefix) || undefined, orderSequenceNumber: asNum(o.orderSequenceNumber) ?? undefined, date: asStr(o.date), loadingDate: asStr(o.loadingDate) || undefined, wechatId: asStr(o.wechatId), status: (asStr(o.status) as Order["status"]) || "draft", paymentStatus: (asStr(o.paymentStatus) as Order["paymentStatus"]) || "pending", paymentBy: asStr(o.paymentBy), paymentAgentId: asStr(o.paymentAgentId), paidToPaymentAgentNow: asNum(o.paidToPaymentAgentNow) ?? 0, lines: lines as any, createdAt: asStr(o.createdAt, now), updatedAt: asStr(o.updatedAt, now), savedAt: asStr(o.savedAt) || undefined, draftAutosavedAt: asStr(o.draftAutosavedAt) || undefined, lastEditedAt: asStr(o.lastEditedAt) || undefined, lifecycle: lifecycleFromUnknown(o.lifecycle, { type: "order", sourceType: "manual" }), dependencyMap: orderDependencyMapFromUnknown(o.dependencyMap) } as Order;
 };
 export const orderToFirestore = (entity: Order): Record<string, unknown> => ({
   ...entity,
   number: entity.number ?? "",
   orderNumber: entity.orderNumber ?? "",
+  orderPrefix: entity.orderPrefix ?? null,
+  orderSequenceNumber: entity.orderSequenceNumber ?? null,
   loadingDate: entity.loadingDate ?? null,
   paymentAgentId: entity.paymentAgentId ?? "",
   paymentBy: entity.paymentBy ?? "",
