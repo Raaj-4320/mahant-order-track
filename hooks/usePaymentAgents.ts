@@ -29,8 +29,8 @@ export function usePaymentAgents() {
     if (selection.source !== "firebase") await service.recalculatePaymentAgentsFromOrders(savedOrders);
     await reload();
   }, [reload, service]);
-  const recordPaymentToAgent = useCallback(async (agentId: string, payment: { amount: number; paymentDate: string; note?: string }) => { await service.recordPaymentToAgent(agentId, payment); await reload(); }, [reload, service]);
-  const listPaymentAgentLedger = useCallback(async (agentId: string) => service.listPaymentAgentLedger(agentId), [service]);
+  const recordPaymentToAgent = useCallback(async (agentId: string, payment: { amount: number; paymentDate: string; note?: string; paymentMethod?: string }) => { await service.recordPaymentToAgent(agentId, payment); await reload(); }, [reload, service]);
+  const listPaymentAgentLedger = useCallback(async (agentId?: string) => service.listPaymentAgentLedger(agentId), [service]);
   const applyOrderSettlement = useCallback(async (order: Order) => { if (service.applyOrderSettlement) await service.applyOrderSettlement(order); await reload(); }, [reload, service]);
   const reverseOrderSettlement = useCallback(async (order: Order) => { if (service.reverseOrderSettlement) await service.reverseOrderSettlement(order); await reload(); }, [reload, service]);
   return { data, isLoading, error, isEmpty: !isLoading && data.length === 0, reload, upsertPaymentAgent, deletePaymentAgent, recalculateFromOrders, recordPaymentToAgent, listPaymentAgentLedger, applyOrderSettlement, reverseOrderSettlement };

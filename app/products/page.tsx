@@ -342,26 +342,27 @@ export default function ProductsPage() {
 
         <div className="card overflow-hidden">
           <div className="overflow-x-auto">
+            <div className="w-full min-w-0 px-0.5 py-1">
             <table className="w-full min-w-[1680px] text-[13px]">
-              <thead className="bg-bg-subtle">
-                <tr className="text-left text-[11.5px] uppercase tracking-wide text-fg-subtle">
-                  <th className="px-4 py-2">Product Photo</th>
-                  <th>Marka</th>
-                  <th>Details</th>
-                  <th>Payment Agent</th>
-                  <th>WeChat ID</th>
-                  <th>Customer</th>
-                  <th>Total Ctn</th>
-                  <th>Qty/Ctn</th>
-                  <th>Total Qty</th>
-                  <th>Rate/Pcs</th>
-                  <th className="px-4">Amount</th>
-                  <th className="px-4 text-right">Action</th>
+              <thead className="bg-white">
+                <tr className="border-b border-border text-[12px] uppercase tracking-[0.01em] text-fg-muted">
+                  <th className="px-4 py-2 text-center">Product Photo</th>
+                  <th className="px-2 py-2 text-center">Marka</th>
+                  <th className="px-2 py-2 text-center">Details</th>
+                  <th className="px-2 py-2 text-center">Payment Agent</th>
+                  <th className="px-2 py-2 text-center">WeChat ID</th>
+                  <th className="px-2 py-2 text-center">Customer</th>
+                  <th className="px-2 py-2 text-center">Total Ctn</th>
+                  <th className="px-2 py-2 text-center">Qty/Ctn</th>
+                  <th className="px-2 py-2 text-center">Total Qty</th>
+                  <th className="px-2 py-2 text-center">Rate/Pcs</th>
+                  <th className="px-4 py-2 text-center">Amount</th>
+                  <th className="px-4 py-2 text-right">Action</th>
                 </tr>
               </thead>
               <tbody>
                 {productTableRows.map((row) => (
-                  <tr key={row.product.id} className="border-t border-border">
+                  <tr key={row.product.id} className="border-b border-border transition-colors last:border-b-0 hover:bg-bg-subtle/40">
                     <td className="px-4 py-3">
                       <div className="grid h-12 w-12 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle text-[20px]">
                         {row.product.photo?.startsWith("http") ? (
@@ -373,19 +374,19 @@ export default function ProductsPage() {
                         )}
                       </div>
                     </td>
-                    <td className="font-semibold">{row.product.marka || "—"}</td>
-                    <td>
+                    <td className="px-2 py-3 text-center font-semibold">{row.product.marka || "—"}</td>
+                    <td className="px-2 py-3">
                       <div className="font-medium">{row.details || "—"}</div>
                       <div className="text-[11.5px] text-fg-subtle">{row.product.sku || row.product.productCode}</div>
                     </td>
-                    <td>{row.paymentAgentName}</td>
-                    <td>{row.wechatId}</td>
-                    <td>{row.customerName}</td>
-                    <td className="tabular-nums">{row.totalCtn.toLocaleString()}</td>
-                    <td className="tabular-nums">{row.qtyPerCtn.toLocaleString()}</td>
-                    <td className="tabular-nums">{row.totalQty.toLocaleString()}</td>
-                    <td className="font-semibold tabular-nums text-[var(--success)]">{formatAmount(row.ratePerPcs)}</td>
-                    <td className="px-4 font-semibold tabular-nums">{formatAmount(row.amount)}</td>
+                    <td className="px-2 py-3 text-center">{row.paymentAgentName}</td>
+                    <td className="px-2 py-3 text-center">{row.wechatId}</td>
+                    <td className="px-2 py-3 text-center">{row.customerName}</td>
+                    <td className="px-2 py-3 text-center tabular-nums">{row.totalCtn.toLocaleString()}</td>
+                    <td className="px-2 py-3 text-center tabular-nums">{row.qtyPerCtn.toLocaleString()}</td>
+                    <td className="px-2 py-3 text-center tabular-nums">{row.totalQty.toLocaleString()}</td>
+                    <td className="px-2 py-3 text-center font-semibold tabular-nums text-[var(--success)]">{formatAmount(row.ratePerPcs)}</td>
+                    <td className="px-4 py-3 text-center font-semibold tabular-nums">{formatAmount(row.amount)}</td>
                     <td className="px-4 py-3 text-right">
                       <Button size="sm" variant="secondary" onClick={() => setPendingDeleteProduct(row.product)}>
                         <Trash2 size={13} />
@@ -402,6 +403,7 @@ export default function ProductsPage() {
                 ) : null}
               </tbody>
             </table>
+            </div>
           </div>
           <TablePagination total={productTableRows.length} />
         </div>

@@ -230,7 +230,20 @@ export const paymentAgentFromFirestore = (doc: unknown): PaymentAgent => {
     lifecycle: lifecycleFromUnknown(p.lifecycle, { type: "paymentAgent", sourceType: "manual" }),
   };
 };
-export const paymentAgentToFirestore = (entity: PaymentAgent): Record<string, unknown> => ({ ...entity, phone: entity.phone ?? null, wechatId: entity.wechatId ?? null, country: entity.country ?? null, city: entity.city ?? null, notes: entity.notes ?? null, openingCreditBalance: entity.openingCreditBalance ?? 0, creditBalance: entity.creditBalance ?? 0, totalOrderAmount: entity.totalOrderAmount ?? 0, totalPaidAmount: entity.totalPaidAmount ?? 0, currentDuePayable: entity.currentDuePayable ?? 0, lifecycle: entity.lifecycle ?? null });
+export const paymentAgentToFirestore = (entity: PaymentAgent): Record<string, unknown> => sanitizeFirestorePayload({
+  ...entity,
+  phone: entity.phone ?? null,
+  wechatId: entity.wechatId ?? null,
+  country: entity.country ?? null,
+  city: entity.city ?? null,
+  notes: entity.notes ?? null,
+  openingCreditBalance: entity.openingCreditBalance ?? 0,
+  creditBalance: entity.creditBalance ?? 0,
+  totalOrderAmount: entity.totalOrderAmount ?? 0,
+  totalPaidAmount: entity.totalPaidAmount ?? 0,
+  currentDuePayable: entity.currentDuePayable ?? 0,
+  lifecycle: entity.lifecycle ?? null,
+}).value as Record<string, unknown>;
 
 export const paymentAgentLedgerEntryFromFirestore = (doc: unknown): PaymentAgentLedgerEntry => {
   const e = (doc ?? {}) as Record<string, unknown>;
@@ -238,10 +251,31 @@ export const paymentAgentLedgerEntryFromFirestore = (doc: unknown): PaymentAgent
   return {
     id: asStr(e.id), agentId: asStr(e.agentId), type: (asStr(e.type) as PaymentAgentLedgerEntry["type"]) || "agent_payment",
     sourceOrderId: asStr(e.sourceOrderId) || undefined, sourceOrderNumber: asStr(e.sourceOrderNumber) || undefined,
-    amount: asNum(e.amount) ?? 0, creditUsed: asNum(e.creditUsed), payableAfterCredit: asNum(e.payableAfterCredit), paidNow: asNum(e.paidNow), remainingPayable: asNum(e.remainingPayable), newCreditCreated: asNum(e.newCreditCreated), dueReduced: asNum(e.dueReduced), creditCreated: asNum(e.creditCreated), resultingCreditBalance: asNum(e.resultingCreditBalance), settlementHash: asStr(e.settlementHash) || undefined, isReversed: typeof e.isReversed === "boolean" ? e.isReversed : undefined, active: typeof e.active === "boolean" ? e.active : undefined, note: asStr(e.note) || undefined, createdAt: asStr(e.createdAt, now), updatedAt: asStr(e.updatedAt) || undefined, paymentDate: asStr(e.paymentDate) || undefined, reversalOfId: asStr(e.reversalOfId) || undefined, lifecycle: lifecycleFromUnknown(e.lifecycle, { type: "paymentAgentLedger", sourceType: "system" })
+    amount: asNum(e.amount) ?? 0, creditUsed: asNum(e.creditUsed), payableAfterCredit: asNum(e.payableAfterCredit), paidNow: asNum(e.paidNow), remainingPayable: asNum(e.remainingPayable), newCreditCreated: asNum(e.newCreditCreated), dueReduced: asNum(e.dueReduced), creditCreated: asNum(e.creditCreated), resultingCreditBalance: asNum(e.resultingCreditBalance), settlementHash: asStr(e.settlementHash) || undefined, isReversed: typeof e.isReversed === "boolean" ? e.isReversed : undefined, active: typeof e.active === "boolean" ? e.active : undefined, note: asStr(e.note) || undefined, paymentMethod: asStr(e.paymentMethod) || undefined, createdAt: asStr(e.createdAt, now), updatedAt: asStr(e.updatedAt) || undefined, paymentDate: asStr(e.paymentDate) || undefined, reversalOfId: asStr(e.reversalOfId) || undefined, lifecycle: lifecycleFromUnknown(e.lifecycle, { type: "paymentAgentLedger", sourceType: "system" })
   };
 };
-export const paymentAgentLedgerEntryToFirestore = (entity: PaymentAgentLedgerEntry): Record<string, unknown> => ({ ...entity, sourceOrderId: entity.sourceOrderId ?? null, sourceOrderNumber: entity.sourceOrderNumber ?? null, creditUsed: entity.creditUsed ?? null, payableAfterCredit: entity.payableAfterCredit ?? null, paidNow: entity.paidNow ?? null, remainingPayable: entity.remainingPayable ?? null, newCreditCreated: entity.newCreditCreated ?? null, dueReduced: entity.dueReduced ?? null, creditCreated: entity.creditCreated ?? null, resultingCreditBalance: entity.resultingCreditBalance ?? null, settlementHash: entity.settlementHash ?? null, isReversed: entity.isReversed ?? null, active: entity.active ?? null, note: entity.note ?? null, updatedAt: entity.updatedAt ?? null, paymentDate: entity.paymentDate ?? null, reversalOfId: entity.reversalOfId ?? null, lifecycle: entity.lifecycle ?? null });
+export const paymentAgentLedgerEntryToFirestore = (entity: PaymentAgentLedgerEntry): Record<string, unknown> => sanitizeFirestorePayload({
+  ...entity,
+  sourceOrderId: entity.sourceOrderId ?? null,
+  sourceOrderNumber: entity.sourceOrderNumber ?? null,
+  creditUsed: entity.creditUsed ?? null,
+  payableAfterCredit: entity.payableAfterCredit ?? null,
+  paidNow: entity.paidNow ?? null,
+  remainingPayable: entity.remainingPayable ?? null,
+  newCreditCreated: entity.newCreditCreated ?? null,
+  dueReduced: entity.dueReduced ?? null,
+  creditCreated: entity.creditCreated ?? null,
+  resultingCreditBalance: entity.resultingCreditBalance ?? null,
+  settlementHash: entity.settlementHash ?? null,
+  isReversed: entity.isReversed ?? null,
+  active: entity.active ?? null,
+  note: entity.note ?? null,
+  paymentMethod: entity.paymentMethod ?? null,
+  updatedAt: entity.updatedAt ?? null,
+  paymentDate: entity.paymentDate ?? null,
+  reversalOfId: entity.reversalOfId ?? null,
+  lifecycle: entity.lifecycle ?? null,
+}).value as Record<string, unknown>;
 export const customerLedgerEntryFromFirestore = (doc: unknown): CustomerLedgerEntry => {
   const e = (doc ?? {}) as Record<string, unknown>;
   const now = new Date().toISOString();

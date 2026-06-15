@@ -1,4 +1,4 @@
-import { addDoc, collection, getDocs, orderBy, query, where } from "firebase/firestore";
+import { addDoc, collection, getDocs, query, where } from "firebase/firestore";
 import { getFirestoreDb } from "@/lib/firebase/client";
 import { paymentAgentLedgerEntryFromFirestore, paymentAgentLedgerEntryToFirestore } from "@/lib/firebase/mappers";
 import { paymentAgentLedgerPath } from "@/lib/firebase/paths";
@@ -11,9 +11,15 @@ export const paymentAgentLedgerFirebaseService = {
   async listPaymentAgentLedgerEntries(agentId?: string): Promise<PaymentAgentLedgerEntry[]> {
     const db = requireDb();
     const base = collection(db, paymentAgentLedgerPath(BUSINESS_ID));
-    const q = agentId ? query(base, where("agentId", "==", agentId), orderBy("createdAt", "desc")) : query(base, orderBy("createdAt", "desc"));
-    const snap = await getDocs(q);
-    return snap.docs.map((d) => paymentAgentLedgerEntryFromFirestore({ id: d.id, ...(d.data() as Record<string, unknown>) }));
+    const sourceQuery = agentId ? query(base, where("agentId", "==", agentId)) : base;
+    const snap = await getDocs(sourceQuery);
+    return snap.docs
+      .map((d) => paymentAgentLedgerEntryFromFirestore({ id: d.id, ...(d.data() as Record<string, unknown>) }))
+      .sort((left, right) => {
+        const leftDate = left.paymentDate || left.createdAt || "";
+        const rightDate = right.paymentDate || right.createdAt || "";
+        return rightDate.localeCompare(leftDate);
+      });
   },
   async createPaymentAgentLedgerEntry(entry: PaymentAgentLedgerEntry): Promise<PaymentAgentLedgerEntry> {
     const db = requireDb();

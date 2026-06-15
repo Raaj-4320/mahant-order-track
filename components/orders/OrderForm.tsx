@@ -63,13 +63,13 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
 
   const addLine = () => setDraft((d) => ({ ...d, lines: [...d.lines, newLine()] }));
 
-  const selectedPaymentAgent = resolveOrderPaymentAgent(draft as Order & { paymentByName?: string; paymentAgentName?: string }, paymentAgents);
+  const selectedPaymentAgent = resolveOrderPaymentAgent(draft, paymentAgents);
   const selectedLabel = selectedPaymentAgent ? paymentLabel(selectedPaymentAgent) : "";
 
   useEffect(() => {
     if (paymentOpen) return;
-    setPaymentQuery(selectedLabel || draft.paymentAgentSnapshot?.name || (draft as any).paymentByName || (draft as any).paymentAgentName || draft.paymentBy || "");
-  }, [selectedLabel, draft.paymentAgentSnapshot?.name, draft.paymentBy, paymentOpen]);
+    setPaymentQuery(selectedLabel || draft.paymentAgentSnapshot?.name || draft.paymentByName || draft.paymentAgentName || draft.paymentBy || "");
+  }, [selectedLabel, draft.paymentAgentSnapshot?.name, draft.paymentByName, draft.paymentAgentName, draft.paymentBy, paymentOpen]);
 
   return (
     <div className="flex flex-col gap-3 px-5 py-4">
@@ -86,7 +86,7 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
                     const next = e.target.value;
                     setPaymentQuery(next);
                     setPaymentOpen(true);
-                    setDraft((d) => ({ ...d, paymentBy: next, paymentAgentId: "", paymentAgentSnapshot: undefined }));
+                    setDraft((d) => ({ ...d, paymentBy: next, paymentAgentId: "", paymentByName: "", paymentAgentName: "", paymentAgentSnapshot: undefined }));
                   }}
                   placeholder={paymentAgents.length ? "Search payment agent" : "No payment agents yet"}
                 />
@@ -98,7 +98,7 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
                       e.preventDefault();
                       setPaymentQuery("");
                       setPaymentOpen(false);
-                      setDraft((d) => ({ ...d, paymentBy: "", paymentAgentId: "", paymentAgentSnapshot: undefined }));
+                      setDraft((d) => ({ ...d, paymentBy: "", paymentAgentId: "", paymentByName: "", paymentAgentName: "", paymentAgentSnapshot: undefined }));
                     }}
                   >
                     Clear
@@ -119,6 +119,8 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
                             ...d,
                             paymentBy: p.id,
                             paymentAgentId: p.id,
+                            paymentByName: p.name,
+                            paymentAgentName: p.name,
                             paymentAgentSnapshot: { id: p.id, name: p.name, code: p.agentCode },
                           }));
                         }}

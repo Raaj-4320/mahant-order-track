@@ -21,7 +21,7 @@ import { customerLedgerService } from "@/services/customerLedgerService";
 import { resolveCustomersForOrderLines } from "@/services/customers/customerResolution";
 import { logCustomer, logDB, logError, logOrder, logPageAccess, logDataFlow } from "@/lib/logger";
 import { ensureFinalOrderNumber, peekNextOrderNumber } from "@/services/orderNumberService";
-import { ArrowUpDown, BadgePercent, Boxes, CalendarDays, Check, ChevronDown, Eye, Filter, IndianRupee, LayoutGrid, List, MessageCircleMore, Moon, Package2, Search, ShoppingBag, SquarePen, Sun, Trash2, UserRound, X } from "lucide-react";
+import { BadgePercent, Boxes, CalendarDays, Check, ChevronDown, Eye, Filter, IndianRupee, LayoutGrid, List, MessageCircleMore, Moon, Package2, Search, ShoppingBag, SquarePen, Sun, Trash2, UserRound, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { getOrderPaymentAgentDisplay, resolveOrderPaymentAgent } from "@/lib/orderDisplay";
 import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
@@ -93,14 +93,6 @@ type OrdersFilterState = {
   marka: string;
 };
 
-type OrdersSortOption =
-  | "orderDateDesc"
-  | "orderDateAsc"
-  | "loadingDate"
-  | "orderNumber"
-  | "amountDesc"
-  | "amountAsc"
-  | "status";
 const STATUS_OPTIONS_WITH_DATE: Array<{ value: Order["status"]; label: string }> = [
   { value: "packed", label: "Loaded" },
   { value: "received", label: "Received" },
@@ -127,6 +119,11 @@ const summarizeOrderForLog = (o: Order) => ({
 });
 
 const normalizePaymentAgentValue = (value?: string) => (value || "").trim().toLowerCase();
+const getOrderNumberSortValue = (order: Order) => {
+  const raw = (order.number || order.orderNumber || "").trim();
+  const match = raw.match(/(\d+)(?!.*\d)/);
+  return match ? Number(match[1]) : Number.NEGATIVE_INFINITY;
+};
 const normalizeEditableOrderNumber = (value?: string) => {
   const trimmed = (value || "").trim();
   if (!trimmed) return "";
@@ -152,8 +149,6 @@ export default function OrdersPage() {
   const { data: customers, isLoading: isCustomersLoading, reload: reloadCustomers } = useCustomers();
   const [query, setQuery] = useState("");
   const [filterOpen, setFilterOpen] = useState(false);
-  const [sortOpen, setSortOpen] = useState(false);
-  const [sortBy, setSortBy] = useState<OrdersSortOption>("orderDateDesc");
   const [filters, setFilters] = useState<OrdersFilterState>({
     status: "all",
     loadingDate: "all",
@@ -240,25 +235,11 @@ export default function OrdersPage() {
   const sortedOrders = useMemo(() => {
     const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
     return [...filteredOrders].sort((left, right) => {
-      switch (sortBy) {
-        case "orderDateAsc":
-          return (left.date || "").localeCompare(right.date || "");
-        case "loadingDate":
-          return (left.loadingDate || "9999-99-99").localeCompare(right.loadingDate || "9999-99-99");
-        case "orderNumber":
-          return collator.compare(left.number || left.orderNumber || "", right.number || right.orderNumber || "");
-        case "amountDesc":
-          return orderTotal(right) - orderTotal(left);
-        case "amountAsc":
-          return orderTotal(left) - orderTotal(right);
-        case "status":
-          return collator.compare(left.status, right.status);
-        case "orderDateDesc":
-        default:
-          return (right.date || "").localeCompare(left.date || "");
-      }
+      const numericDiff = getOrderNumberSortValue(right) - getOrderNumberSortValue(left);
+      if (numericDiff !== 0) return numericDiff;
+      return collator.compare(right.number || right.orderNumber || "", left.number || left.orderNumber || "");
     });
-  }, [filteredOrders, sortBy]);
+  }, [filteredOrders]);
   const history = useMemo<FlatHistoryRow[]>(() => sortedOrders.flatMap<FlatHistoryRow>((order) => {
     const paymentMeta = getOrderPaymentAgentDisplay(order, paymentAgents);
     const orderLines = (order.lines || []).filter((line) => meaningfulLine(line));
@@ -305,7 +286,7 @@ export default function OrdersPage() {
     return Array.from(new Set([...fromCustomerRows, ...fromOrders])).slice(0, 20);
   }, [customers, activeOrders]);
   const selectedPaymentAgentId = draft.paymentAgentId || draft.paymentBy;
-  const selectedPaymentAgent = resolveOrderPaymentAgent(draft as Order & { paymentByName?: string; paymentAgentName?: string }, paymentAgents);
+  const selectedPaymentAgent = resolveOrderPaymentAgent(draft, paymentAgents);
   const settlement = useMemo(() => calculatePaymentAgentSettlement({ orderTotal: total, existingCredit: selectedPaymentAgent?.creditBalance ?? 0, paidNow: draft.paidToPaymentAgentNow ?? 0 }), [total, selectedPaymentAgent, draft.paidToPaymentAgentNow]);
   const validation = useMemo(() => validateOrderForSave(draft), [draft]);
   const headerPaymentSuggestions = useMemo(() => {
@@ -325,13 +306,13 @@ export default function OrdersPage() {
     setHeaderPaymentQuery(
       selectedPaymentAgent
         ? paymentLabel(selectedPaymentAgent)
-        : draft.paymentAgentSnapshot?.name || (draft as any).paymentByName || (draft as any).paymentAgentName || draft.paymentBy || ""
+        : draft.paymentAgentSnapshot?.name || draft.paymentByName || draft.paymentAgentName || draft.paymentBy || ""
     );
-  }, [selectedPaymentAgent, draft.paymentAgentSnapshot?.name, draft.paymentBy, headerPaymentOpen]);
+  }, [selectedPaymentAgent, draft.paymentAgentSnapshot?.name, draft.paymentByName, draft.paymentAgentName, draft.paymentBy, headerPaymentOpen]);
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [query, filters, sortBy, rowsPerPage, mode]);
+  }, [query, filters, rowsPerPage, mode]);
 
 
   const onUploadingChange = (isUploading: boolean) => setActiveUploads((p) => Math.max(0, p + (isUploading ? 1 : -1)));
@@ -633,7 +614,7 @@ try {
     }
     const finalOrderNumber = requestedOrderNumber || await ensureFinalOrderNumber({ ...cleanedDraft, number: "", orderNumber: "", status: "saved" as const });
     const resolvedPaymentAgentId = resolvedAgent?.id || "";
-    let savedOrder: Order & { paymentByName?: string; paymentAgentName?: string } = {
+    let savedOrder: Order = {
       ...cleanedDraft,
       number: finalOrderNumber,
       orderNumber: finalOrderNumber,
@@ -816,7 +797,7 @@ try {
     const candidate = line as Order["lines"][number] & { productImage?: string; image?: string };
     return candidate.productPhotoUrl || candidate.productImage || candidate.image || candidate.photoUrl || "";
   };
-  const getDisplayWechatId = (order: Order) => order.wechatId?.trim() || "Not Set";
+  const getDisplayWechatId = (order: Order) => order.wechatId?.trim() || <span className="text-[15px] text-[var(--danger)]">Not Set</span>;
   const getVisibleLineDetails = (line: Order["lines"][number]) => {
     const parts = getLineDetailsParts(line);
     const values = [parts.detail1, parts.detail2, parts.detail3].map((part) => part.trim()).filter(Boolean);
@@ -840,7 +821,7 @@ try {
     });
     return Array.from(groups.entries()).sort((a, b) => b[0].localeCompare(a[0]));
   }, [pagedHistory]);
-const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr) 62px 70px 88px 84px 110px minmax(76px,0.82fr) 116px minmax(114px,0.82fr)";
+const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr) 62px 70px 88px 84px 110px minmax(76px,0.82fr) 116px minmax(114px,0.82fr) 136px";
   const fmtOrderDate = (order: Order) => {
     const raw = order.date || order.createdAt || order.updatedAt;
     if (!raw) return "—";
@@ -931,10 +912,10 @@ const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr)
         <div className="min-w-[280px] flex-1 max-w-xl"><Input value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="Search order no., payment agent, WeChat, marka, details, customer, amounts, status, dates..." leadingIcon={<Search size={15} />} /></div>
         <div className="relative" ref={pickerRef}>
           <Button size="sm" onClick={() => setPickerOpen((v) => !v)}><List size={14} /><span className="text-fg-muted">Order</span><span className="font-semibold">{(editingOrder?.number || draft.number || history[0]?.order.number || history[0]?.order.orderNumber || "—")}</span><ChevronDown size={13} /></Button>
-          {pickerOpen && <div className="absolute left-0 top-full z-20 mt-2 w-72 rounded-xl border border-border bg-bg-card p-1.5 shadow-card max-h-[320px] overflow-y-auto">{activeOrders.slice(0,30).map((o) => <button key={o.id} onClick={() => { setPickerOpen(false); startEdit(o); }} className="block w-full rounded-md px-2.5 py-2 text-left text-[12.5px] hover:bg-bg-subtle transition-colors"><div className="flex items-center justify-between"><span className="text-[14px] font-semibold">{o.number || o.orderNumber || "Draft"}</span><span className="text-[11px] text-fg-subtle">{formatDate(o.date)}</span></div><div className="mt-0.5 text-[11.5px] text-fg-muted">{o.lines.length} lines Â· {formatPlainAmount(orderTotal(o))}</div></button>)}</div>}
+          {pickerOpen && <div className="absolute left-0 top-full z-20 mt-2 w-72 rounded-xl border border-border bg-bg-card p-1.5 shadow-card max-h-[320px] overflow-y-auto">{sortedOrders.slice(0,30).map((o) => <button key={o.id} onClick={() => { setPickerOpen(false); startEdit(o); }} className="block w-full rounded-md px-2.5 py-2 text-left text-[12.5px] hover:bg-bg-subtle transition-colors"><div className="flex items-center justify-between"><span className="text-[14px] font-semibold">{o.number || o.orderNumber || "Draft"}</span><span className="text-[11px] text-fg-subtle">{formatDate(o.date)}</span></div><div className="mt-0.5 text-[11.5px] text-fg-muted">{o.lines.length} lines Â· {formatPlainAmount(orderTotal(o))}</div></button>)}</div>}
         </div>
         <div className="relative">
-          <Button size="sm" variant="secondary" onClick={() => { setFilterOpen((prev) => !prev); setSortOpen(false); }}><Filter size={14} />Filter</Button>
+          <Button size="sm" variant="secondary" onClick={() => { setFilterOpen((prev) => !prev); }}><Filter size={14} />Filter</Button>
           {filterOpen ? <div className="absolute left-0 top-full z-20 mt-2 w-[320px] rounded-xl border border-border bg-bg-card p-3 shadow-card space-y-3">
             <div className="grid grid-cols-2 gap-2">
               <label className="text-[11px] text-fg-subtle">Status<select className="input mt-1 h-8 w-full text-[12px]" value={filters.status} onChange={(e) => setFilters((prev) => ({ ...prev, status: e.target.value as OrdersFilterState["status"] }))}><option value="all">All</option><option value="draft">Draft</option><option value="saved">Saved</option><option value="packed">Loaded</option><option value="received">Received</option><option value="delayed">Delayed</option><option value="cancelled">Cancelled</option></select></label>
@@ -950,18 +931,6 @@ const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr)
               <Button size="sm" variant="secondary" onClick={() => setFilters({ status: "all", loadingDate: "all", paymentAgent: "all", dateFrom: "", dateTo: "", orderNumber: "", customer: "", marka: "" })}>Reset</Button>
             </div>
           </div> : null}
-        </div>
-        <div className="relative">
-          <Button size="sm" variant="secondary" onClick={() => { setSortOpen((prev) => !prev); setFilterOpen(false); }}><ArrowUpDown size={14} />Sort</Button>
-          {sortOpen ? <div className="absolute left-0 top-full z-20 mt-2 w-[240px] rounded-xl border border-border bg-bg-card p-2 shadow-card">{[
-            ["orderDateDesc", "Newest order date"],
-            ["orderDateAsc", "Oldest order date"],
-            ["loadingDate", "Loading date"],
-            ["orderNumber", "Order number"],
-            ["amountDesc", "Total amount high to low"],
-            ["amountAsc", "Total amount low to high"],
-            ["status", "Status"],
-          ].map(([value, label]) => <button key={value} type="button" className={cn("block w-full rounded-md px-3 py-2 text-left text-[12px] transition-colors hover:bg-bg-subtle", sortBy === value && "bg-bg-subtle font-medium")} onClick={() => { setSortBy(value as OrdersSortOption); setSortOpen(false); }}>{label}</button>)}</div> : null}
         </div>
         <div className="flex items-center rounded-lg border border-border bg-bg-card p-0.5">{([{ v: "list", I: List }, { v: "grid", I: LayoutGrid }, { v: "calendar", I: CalendarDays }] as const).map(({ v, I }) => <button key={v} onClick={() => setView(v)} className={cn("grid h-6 w-7 place-items-center rounded-md text-fg-muted transition-colors", view===v && "bg-brand text-brand-fg")}><I size={13} /></button>)}</div>
         <Button size="sm" variant="primary" onClick={startAdd}>Add Order</Button>
@@ -1186,7 +1155,7 @@ const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr)
             <div className="w-full min-w-0 px-0.5 py-1">
               <div className="grid items-center border-b border-border bg-white text-[12px] font-semibold uppercase tracking-[0.01em] text-fg-muted" style={{ gridTemplateColumns: historyGridTemplate }}>
                 <div className="px-1 py-1.5 text-center">Order Number</div>
-                <div className="px-1 py-1.5 text-center">WeChat ID</div>
+                <div className="px-1 py-1.5 text-left">WeChat ID</div>
                 <div className="px-1 py-1.5 text-center">Product Photo</div>
                 <div className="px-1 py-1.5 text-center">Marka</div>
                 <div className="px-1 py-1.5 text-center">CTNS</div>
@@ -1197,6 +1166,7 @@ const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr)
                 <div className="px-1 py-1.5 text-center">Customer</div>
                 <div className="px-1 py-1.5 text-center">Loading Date</div>
                 <div className="px-1 py-1.5 text-center">Paid By</div>
+                <div className="px-1 py-1.5 text-center">Actions</div>
               </div>
               <div className="space-y-2 pt-2">
                 {pagedHistory.length === 0 ? <div className="px-4 py-8 text-center text-fg-subtle">No orders yet. Click Add Order to create one.</div> : pagedHistory.map((row) => {
@@ -1227,7 +1197,7 @@ const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr)
                     <div className="px-1 py-2 text-center text-[14px] font-semibold tabular-nums">{ctns.toLocaleString()}</div>
                     <div className="px-1 py-2 text-center text-[14px] font-semibold tabular-nums">{pcsPerCtn.toLocaleString()}</div>
                     <div className="px-1 py-2 text-center text-[14x] font-semibold tabular-nums">{totalPcs.toLocaleString()}</div>
-                    <div className="px-1 py-2 text-center text-[14px] font-semibold tabular-nums">{formatPlainAmount(rate)}</div>
+                    <div className="px-1 py-2 text-center text-[16px] font-semibold tabular-nums">{formatPlainAmount(rate)}</div>
                     <div className="px-1 py-2 text-center text-[16px] font-bold tabular-nums ">{formatPlainAmount(amount)}</div>
                     <div className="min-w-0 px-1 py-2"><div className="block w-full min-w-0 truncate text-[14px] text-center font-semibold leading-tight" title={customerName}>{customerName}</div></div>
                     <div className="min-w-0 pl-1 pr-3 py-2 text-center">
@@ -1237,6 +1207,13 @@ const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr)
                       {canEditOperationalFields && rowDirty ? <button type="button" title="Save row changes" aria-label="Save row changes" className="mt-1 inline-flex text-[10.5px] font-semibold text-brand transition-colors hover:underline disabled:opacity-60" disabled={rowValue.saving} onClick={() => { void saveRowEdit(order); }}>{rowValue.saving ? "Saving..." : "Save"}</button> : null}
                     </div>
                     <div className="min-w-0 pl-2 pr-1 py-2"><div className={cn("block w-full min-w-0 text-center truncate text-[14px] font-semibold leading-tight", paymentMeta.isMissing && "text-[var(--danger)]")} title={paymentName}>{paymentName}</div></div>
+                    <div className="px-1 py-2">
+                      <div className="flex justify-center gap-1 whitespace-nowrap">
+                        <button type="button" title="View" aria-label="View" className="grid h-[28px] w-[28px] place-items-center rounded-md text-fg transition-colors hover:bg-bg-subtle" onClick={() => setViewOrder(order)}><Eye size={14} /></button>
+                        <button type="button" title="Edit" aria-label="Edit" className="grid h-[28px] w-[28px] place-items-center rounded-md text-fg transition-colors hover:bg-bg-subtle" onClick={() => startEdit(order)}><SquarePen size={14} /></button>
+                        <button type="button" title="Delete" aria-label="Delete" className="grid h-[28px] w-[28px] place-items-center rounded-md text-[var(--danger)] transition-colors hover:bg-[var(--danger)]/10" onClick={() => removeOrder(order)}><Trash2 size={14} /></button>
+                      </div>
+                    </div>
                   </div>;
                 })}
               </div>
@@ -1257,7 +1234,7 @@ const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr)
             </div>
             <div className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-[minmax(220px,0.8fr)_minmax(145px,0.55fr)_minmax(145px,0.55fr)_minmax(160px,0.55fr)_minmax(220px,0.8fr)]">
               <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Payment By</span><div className="relative"><Input value={headerPaymentQuery} onFocus={() => setHeaderPaymentOpen(true)} onBlur={() => window.setTimeout(() => setHeaderPaymentOpen(false),120)} onChange={(e)=>{const next=e.target.value;
-setHeaderPaymentQuery(next); setHeaderPaymentOpen(true); setDraft((d)=>({...d,paymentBy:next,paymentAgentId:"", paymentAgentSnapshot: undefined}));}} placeholder="Search payment agent" />{headerPaymentQuery || draft.paymentAgentId || draft.paymentBy ? <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-fg-subtle transition-colors hover:text-fg" onMouseDown={(e) => { e.preventDefault(); setHeaderPaymentQuery(""); setHeaderPaymentOpen(false); setDraft((d) => ({ ...d, paymentBy: "", paymentAgentId: "", paymentAgentSnapshot: undefined })); }}>Clear</button> : null}{headerPaymentOpen && headerPaymentSuggestions.length>0 ? <div className="absolute z-30 mt-1 max-h-44 w-full overflow-auto rounded-lg border border-border bg-bg-card shadow-card">{headerPaymentSuggestions.map((p)=><button key={p.id} type="button" className="block w-full px-2 py-1.5 text-left text-[12px] hover:bg-bg-subtle" onMouseDown={(e)=>{e.preventDefault(); setHeaderPaymentOpen(false); const label=paymentLabel(p); setHeaderPaymentQuery(label); setDraft((d)=>({...d,paymentBy:p.id,paymentAgentId:p.id, paymentAgentSnapshot: { id: p.id, name: p.name, code: p.agentCode }}));}}>{paymentLabel(p)}</button>)}</div>:null}</div></label>
+setHeaderPaymentQuery(next); setHeaderPaymentOpen(true); setDraft((d)=>({...d,paymentBy:next,paymentAgentId:"", paymentByName: "", paymentAgentName: "", paymentAgentSnapshot: undefined}));}} placeholder="Search payment agent" />{headerPaymentQuery || draft.paymentAgentId || draft.paymentBy ? <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-fg-subtle transition-colors hover:text-fg" onMouseDown={(e) => { e.preventDefault(); setHeaderPaymentQuery(""); setHeaderPaymentOpen(false); setDraft((d) => ({ ...d, paymentBy: "", paymentAgentId: "", paymentByName: "", paymentAgentName: "", paymentAgentSnapshot: undefined })); }}>Clear</button> : null}{headerPaymentOpen && headerPaymentSuggestions.length>0 ? <div className="absolute z-30 mt-1 max-h-44 w-full overflow-auto rounded-lg border border-border bg-bg-card shadow-card">{headerPaymentSuggestions.map((p)=><button key={p.id} type="button" className="block w-full px-2 py-1.5 text-left text-[12px] hover:bg-bg-subtle" onMouseDown={(e)=>{e.preventDefault(); setHeaderPaymentOpen(false); const label=paymentLabel(p); setHeaderPaymentQuery(label); setDraft((d)=>({...d,paymentBy:p.id,paymentAgentId:p.id, paymentByName: p.name, paymentAgentName: p.name, paymentAgentSnapshot: { id: p.id, name: p.name, code: p.agentCode }}));}}>{paymentLabel(p)}</button>)}</div>:null}</div></label>
               <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Date</span><Input type="date" value={draft.date} onChange={(e)=>setDraft((d)=>({...d,date:e.target.value}))} /></label>
               <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Loading Date</span><Input type="date" value={draft.loadingDate || ""} onChange={(e)=>setDraft((d)=>({...d,loadingDate:e.target.value || undefined}))} /></label>
               <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Order Number</span><Input value={draft.number} onChange={(e)=>{const next=normalizeEditableOrderNumber(e.target.value); setDraft((d)=>({...d,number:next,orderNumber:next}));}} /></label>

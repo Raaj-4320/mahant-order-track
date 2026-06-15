@@ -39,10 +39,10 @@ export const paymentAgentsMockService: PaymentAgentsService = {
     const dueReduced = Math.min(due, amount);
     const creditCreated = Math.max(0, amount - dueReduced);
     paymentAgentsState[idx] = { ...paymentAgentsState[idx], currentDuePayable: due - dueReduced, creditBalance: Math.max(0, (paymentAgentsState[idx].creditBalance ?? 0) + creditCreated), totalPaidAmount: Math.max(0, (paymentAgentsState[idx].totalPaidAmount ?? 0) + amount), updatedAt: new Date().toISOString() };
-    paymentAgentLedgerState = [{ id: `led-${Date.now()}`, agentId, type: "agent_payment", amount, dueReduced, creditCreated, note: payment.note, createdAt: payment.paymentDate || new Date().toISOString() }, ...paymentAgentLedgerState];
+    paymentAgentLedgerState = [{ id: `led-${Date.now()}`, agentId, type: "agent_payment", amount, dueReduced, creditCreated, note: payment.note, paymentMethod: payment.paymentMethod, createdAt: payment.paymentDate || new Date().toISOString(), paymentDate: payment.paymentDate || new Date().toISOString() }, ...paymentAgentLedgerState];
     return deepClone(paymentAgentsState[idx]);
   },
-  async listPaymentAgentLedger(agentId) { return deepClone(paymentAgentLedgerState.filter((x) => x.agentId === agentId)); },
+  async listPaymentAgentLedger(agentId) { return deepClone(agentId ? paymentAgentLedgerState.filter((x) => x.agentId === agentId) : paymentAgentLedgerState); },
   async deletePaymentAgent(id) {
     const idx = paymentAgentsState.findIndex((x) => x.id === id);
     if (idx < 0) throw new Error("Payment agent not found.");

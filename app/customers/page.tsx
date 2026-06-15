@@ -253,26 +253,27 @@ const header = [
 
         <div className="card overflow-hidden">
           <div className="overflow-x-auto">
+            <div className="w-full min-w-0 px-0.5 py-1">
             <table className="w-full min-w-[1140px] text-[13px]">
-              <thead className="bg-bg-subtle">
-                <tr className="text-left text-[13x] uppercase tracking-wide text-fg-subtle">
-                  <th className="px-4 py-2">Customer Name</th>
-                  <th>Last Order Product</th>
-                  <th>Last Order Product Marka</th>
-                  <th>Last Order Amount</th>
-                  <th>Total Orders</th>
-                  <th>Total Purchase Amount</th>
-                  <th className="px-4 text-right">Actions</th>
+              <thead className="bg-white">
+                <tr className="border-b border-border text-[12px] uppercase tracking-[0.01em] text-fg-muted">
+                  <th className="px-4 py-2 text-left">Customer Name</th>
+                  <th className="px-2 py-2 text-center">Last Order Product</th>
+                  <th className="px-2 py-2 text-center">Last Order Product Marka</th>
+                  <th className="px-2 py-2 text-center">Last Order Amount</th>
+                  <th className="px-2 py-2 text-center">Total Orders</th>
+                  <th className="px-2 py-2 text-center">Total Purchase Amount</th>
+                  <th className="px-4 py-2 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredAndSorted.map((row) => (
-                  <tr key={row.customer.id} className="border-t border-border">
+                  <tr key={row.customer.id} className="border-b border-border transition-colors last:border-b-0 hover:bg-bg-subtle/40">
                     <td className="px-4 py-3">
-                      <div className="font-semibold">{row.customer.displayName || row.customer.name || "Not Set"}</div>
+                      <div className="font-semibold text-fg-subtle">{row.customer.displayName || row.customer.name || "Not Set"}</div>
                       <div className="text-[11.5px] text-fg-subtle">{row.customer.customerCode}</div>
                     </td>
-                    <td>
+                    <td className="px-2 py-3">
                       <div className="grid h-14 w-14 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle">
                         {row.latestProductImage ? (
                           <button
@@ -293,10 +294,10 @@ const header = [
                         )}
                       </div>
                     </td>
-                    <td>{row.latestProductMarka || "N"}</td>
-                    <td className="tabular-nums">{formatAmount(row.latestOrderAmount)}</td>
-                    <td>{row.totalOrders}</td>
-                    <td className="font-semibold tabular-nums">{formatAmount(row.totalOrdersAmount)}</td>
+                    <td className="px-2 py-3 text-center">{row.latestProductMarka || "N"}</td>
+                    <td className="px-2 py-3 text-center tabular-nums">{formatAmount(row.latestOrderAmount)}</td>
+                    <td className="px-2 py-3 text-center">{row.totalOrders}</td>
+                    <td className="px-2 py-3 text-center font-semibold tabular-nums">{formatAmount(row.totalOrdersAmount)}</td>
                     <td className="px-4">
                       <div className="flex justify-end">
                         <Button size="sm" variant="secondary" onClick={() => { setViewCustomerId(row.customer.id); }}>
@@ -325,6 +326,7 @@ const header = [
                 ) : null}
               </tbody>
             </table>
+            </div>
           </div>
           <TablePagination total={filteredAndSorted.length} />
         </div>
@@ -362,7 +364,7 @@ const header = [
                       return (
                         <tr key={`${row.orderId}-${idx}`} className="border-t border-border">
                           <td className="px-2 py-2">{row.orderNumber}</td>
-                          <td className="px-2 py-2">{row.wechatId || "Not Set"}</td>
+                          <td className="px-2 py-2 text-fg-subtle">{row.wechatId || "Not Set"}</td>
                           <td className="px-2 py-2">
                             <div className="grid h-12 w-12 place-items-center overflow-hidden rounded border border-border bg-bg-subtle">
                               {row.dimImage ? (
@@ -389,7 +391,7 @@ const header = [
                                   />
                                 </button>
                               ) : (
-                                <span className="text-[10px] text-fg-subtle">Not Set</span>
+                                <span className="text-[10px] text-[var(--danger)]">Not Set</span>
                               )}
                             </div>
                           </td>
@@ -441,4 +443,3 @@ const header = [
     </PageShell>
   );
 }
-

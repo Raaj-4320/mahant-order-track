@@ -49,11 +49,11 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
       const creditCreated = Math.max(0, amount - dueReduced);
       const updated: PaymentAgent = { ...current, currentDuePayable: due - dueReduced, creditBalance: Math.max(0, (current.creditBalance ?? 0) + creditCreated), totalPaidAmount: Math.max(0, (current.totalPaidAmount ?? 0) + amount), updatedAt: now };
       tx.set(agentRef, paymentAgentToFirestore(updated), { merge: true });
-      tx.set(ledgerRef, paymentAgentLedgerEntryToFirestore({ id: ledgerRef.id, agentId, type: "agent_payment", amount, dueReduced, creditCreated, note: payment.note, paymentDate: payment.paymentDate || now, createdAt: now }));
+      tx.set(ledgerRef, paymentAgentLedgerEntryToFirestore({ id: ledgerRef.id, agentId, type: "agent_payment", amount, dueReduced, creditCreated, note: payment.note, paymentMethod: payment.paymentMethod, paymentDate: payment.paymentDate || now, createdAt: now }));
       return updated;
     });
   },
-  async listPaymentAgentLedger(agentId: string) {
+  async listPaymentAgentLedger(agentId?: string) {
     const { paymentAgentLedgerFirebaseService } = await import("@/services/firebase/paymentAgentLedgerFirebaseService");
     return paymentAgentLedgerFirebaseService.listPaymentAgentLedgerEntries(agentId);
   },
