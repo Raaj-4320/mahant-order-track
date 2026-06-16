@@ -27,7 +27,7 @@ export type {
 } from "@/types/domain";
 
 import type { Order, OrderLine } from "@/types/domain";
-import { addNumbers, multiplyNumbers } from "@/lib/numbers";
+import { addNumbers, floorMoney, multiplyNumbers, toSafeNumber } from "@/lib/numbers";
 
 export const lineTotalPcs = (l: OrderLine) =>
   multiplyNumbers(l.totalCtns, l.pcsPerCtn);
@@ -35,5 +35,11 @@ export const lineTotalPcs = (l: OrderLine) =>
 export const lineTotalRmb = (l: OrderLine) =>
   multiplyNumbers(lineTotalPcs(l), l.rmbPerPcs);
 
-export const orderTotal = (o: Order) =>
+export const orderLinesTotal = (o: Order) =>
   addNumbers(o.lines.map((l) => lineTotalRmb(l)));
+
+export const orderShippingPrice = (o: Order) =>
+  floorMoney(toSafeNumber(o.shippingPrice));
+
+export const orderTotal = (o: Order) =>
+  floorMoney(orderLinesTotal(o) + orderShippingPrice(o));

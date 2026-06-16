@@ -80,7 +80,6 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
     const now = new Date().toISOString();
     const agentRef = doc(db, paymentAgentPath(BUSINESS_ID, agentId));
     const settlementRef = doc(db, paymentAgentLedgerPath(BUSINESS_ID), `order-settlement-${order.id}`);
-    const reversalRef = doc(collection(db, paymentAgentLedgerPath(BUSINESS_ID)));
     return runTransaction(db, async (tx) => {
       const agentSnap = await tx.get(agentRef);
       if (!agentSnap.exists()) throw new Error("Payment agent not found for order settlement.");
@@ -116,8 +115,9 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
             updatedAt: now,
           };
         }
+        const reversalRef = doc(db, paymentAgentLedgerPath(BUSINESS_ID), `order-settlement-reversal-${existing.id}`);
         const reversal = buildOrderSettlementReversalEntry(order, existing);
-        tx.set(reversalRef, paymentAgentLedgerEntryToFirestore({ ...reversal, id: reversalRef.id, createdAt: now, updatedAt: now }));
+        tx.set(reversalRef, paymentAgentLedgerEntryToFirestore({ ...reversal, id: reversalRef.id, createdAt: now, updatedAt: now }), { merge: true });
         tx.set(doc(db, paymentAgentLedgerPath(BUSINESS_ID), existing.id), { active: false, isReversed: true, updatedAt: now }, { merge: true });
       }
       updated = {
@@ -157,9 +157,9 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
         updatedAt: now,
       };
       tx.set(agentRef, paymentAgentToFirestore(updated), { merge: true });
-      const reversalRef = doc(collection(db, paymentAgentLedgerPath(BUSINESS_ID)));
+      const reversalRef = doc(db, paymentAgentLedgerPath(BUSINESS_ID), `order-settlement-reversal-${existing.id}`);
       const reversal = buildOrderSettlementReversalEntry(order, existing as any);
-      tx.set(reversalRef, paymentAgentLedgerEntryToFirestore({ ...reversal, id: reversalRef.id, createdAt: now, updatedAt: now }));
+      tx.set(reversalRef, paymentAgentLedgerEntryToFirestore({ ...reversal, id: reversalRef.id, createdAt: now, updatedAt: now }), { merge: true });
       tx.set(doc(db, paymentAgentLedgerPath(BUSINESS_ID), existing.id), { active: false, isReversed: true, updatedAt: now }, { merge: true });
     });
   },

@@ -15,7 +15,8 @@ import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
 import { formatAmount, formatDate } from "@/lib/data";
 import { joinLineDetails } from "@/lib/orderLineDetails";
 import { getOrderPaymentAgentDisplay } from "@/lib/orderDisplay";
-import { lineTotalPcs, lineTotalRmb, type Customer, type Order } from "@/lib/types";
+import { lineTotalPcs, type Customer, type Order } from "@/lib/types";
+import { getOrderCustomerReceivableAmount } from "@/services/settlement/customerReceivableLedger";
 import { useStore } from "@/lib/store";
 import { ordersDataSource } from "@/lib/runtimeConfig";
 import { orderLifecycleService } from "@/services/orderLifecycleService";
@@ -105,7 +106,7 @@ export default function CustomersPage() {
             .filter((line) => sameCustomer(line, customer))
             .map((line) => {
               const totalPieces = lineTotalPcs(line);
-              const totalAmount = lineTotalRmb(line);
+              const totalAmount = getOrderCustomerReceivableAmount(order, line);
               return {
                 customerId: customer.id,
                 orderId: order.id,

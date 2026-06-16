@@ -1,4 +1,5 @@
 const DEFAULT_PRECISION = 6;
+const MONEY_PRECISION = 2;
 
 export const toSafeNumber = (value: number | string | undefined | null) => {
   const parsed = typeof value === "string" ? Number(value) : Number(value ?? 0);
@@ -36,3 +37,15 @@ export const formatDisplayNumber = (
     maximumFractionDigits: options?.maxFractionDigits ?? DEFAULT_PRECISION,
   });
 };
+
+export const floorMoney = (value: number | string | undefined | null, precision = MONEY_PRECISION) => {
+  const safe = roundNumber(value, DEFAULT_PRECISION);
+  const factor = 10 ** precision;
+  return Math.floor((safe + Number.EPSILON) * factor) / factor;
+};
+
+export const formatMoney = (value: number | string | undefined | null) =>
+  floorMoney(value).toLocaleString("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: MONEY_PRECISION,
+  });

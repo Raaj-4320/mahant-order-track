@@ -2,7 +2,7 @@
 
 import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
 import { formatAmount } from "@/lib/data";
-import { Order, lineTotalPcs, lineTotalRmb, orderTotal } from "@/lib/types";
+import { Order, lineTotalPcs, lineTotalRmb, orderShippingPrice, orderTotal } from "@/lib/types";
 import { Button } from "@/components/ui/Button";
 import { ImageLightbox } from "@/components/ui/ImageLightbox";
 import { Copy, X } from "lucide-react";
@@ -45,6 +45,7 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
 
   const orderNo = order.number || order.orderNumber || "—";
   const displayWechatId = order.wechatId?.trim() || "—";
+  const shippingPrice = orderShippingPrice(order);
   const hasDimWeightColumn = order.lines.some((line) => Boolean(getLineDimensionPhoto(line) || line.picDim?.trim()));
   const leadingFooterColSpan = hasDimWeightColumn ? 6 : 5;
   const emptyStateColSpan = hasDimWeightColumn ? 10 : 9;
@@ -407,6 +408,20 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
               <tfoot>
                 <tr className="bg-bg-subtle">
                   <td colSpan={leadingFooterColSpan} className="border-t-2 border-border px-2 py-3" />
+                  <td colSpan={2} className="border-t-2 border-border px-1.5 py-2 text-right align-middle">
+                    <div className="inline-flex bg-bg-card px-2 py-1 text-right text-[15px] font-bold uppercase leading-tight tracking-wide text-rose-600 whitespace-nowrap">
+                      SHIPPING PRICE
+                    </div>
+                  </td>
+                  <td className="border-t-2 border-border px-1.5 py-2 text-center align-middle">
+                    <div className="mx-auto inline-flex rounded border border-rose-200 bg-rose-50 px-3 py-1 text-[18px] font-bold text-rose-600 tabular-nums whitespace-nowrap">
+                      {formatPlainAmount(shippingPrice)}
+                    </div>
+                  </td>
+                  <td className="border-t-2 border-border px-1.5 py-2 text-center align-middle" data-export-hidden="true" />
+                </tr>
+                <tr className="bg-bg-subtle">
+                  <td colSpan={leadingFooterColSpan} className="border-t border-border px-2 py-3" />
                   <td colSpan={2} className="border-t-2 border-border px-1.5 py-3 text-right align-middle">
                     <div className="inline-flex bg-bg-card px-2 py-1 text-right text-[16px] font-bold uppercase leading-tight tracking-wide text-danger whitespace-nowrap">
                       TOTAL AMOUNT

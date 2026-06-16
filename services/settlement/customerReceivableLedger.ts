@@ -1,17 +1,41 @@
 import { createHash } from "crypto";
 import type { CustomerLedgerEntry, Order, OrderLine } from "@/lib/types";
-import { lineTotalRmb } from "@/lib/types";
+import { lineTotalRmb, orderShippingPrice } from "@/lib/types";
+import { floorMoney } from "@/lib/numbers";
 import type { Customer } from "@/lib/types";
 
 export const lineAmount = (line: OrderLine) => lineTotalRmb(line);
 
+export function getOrderCustomerReceivableAmount(order: Order, line: OrderLine) {
+  const lines = order.lines.filter((item) => item.customerId && item.id && (item.totalCtns || item.pcsPerCtn || item.rmbPerPcs));
+  const shipping = orderShippingPrice(order);
+  const baseAmount = lineAmount(line);
+  if (shipping <= 0 || lines.length === 0) return baseAmount;
+
+  const totalBase = lines.reduce((sum, item) => sum + lineAmount(item), 0);
+  if (totalBase <= 0) return baseAmount;
+
+  let allocatedShipping = 0;
+  const targetIndex = lines.findIndex((item) => item.id === line.id);
+  if (targetIndex === -1) return baseAmount;
+
+  if (targetIndex === lines.length - 1) {
+    const priorAllocated = lines.slice(0, -1).reduce((sum, item) => sum + floorMoney((lineAmount(item) / totalBase) * shipping), 0);
+    allocatedShipping = Math.max(0, floorMoney(shipping - priorAllocated));
+  } else {
+    allocatedShipping = floorMoney((baseAmount / totalBase) * shipping);
+  }
+
+  return floorMoney(baseAmount + allocatedShipping);
+}
+
 export function createCustomerReceivableHash(order: Order, line: OrderLine, customerId: string) {
-  const raw = `${order.id}|${line.id}|${customerId}|${lineAmount(line).toFixed(2)}|${line.customerId || ""}`;
+  const raw = `${order.id}|${line.id}|${customerId}|${getOrderCustomerReceivableAmount(order, line).toFixed(2)}|${line.customerId || ""}|${orderShippingPrice(order).toFixed(2)}`;
   return createHash("sha256").update(raw).digest("hex").slice(0, 24);
 }
 
 export function buildOrderReceivableEntry(order: Order, line: OrderLine, customerId: string): CustomerLedgerEntry {
-  const amount = lineAmount(line);
+  const amount = getOrderCustomerReceivableAmount(order, line);
   const now = new Date().toISOString();
   return { id: `customer-receivable-${order.id}-${line.id}`, customerId, type: "order_receivable", sourceOrderId: order.id, sourceOrderNumber: order.number || order.orderNumber, sourceLineId: line.id, amount, debit: amount, credit: 0, settlementHash: createCustomerReceivableHash(order, line, customerId), active: true, isReversed: false, createdAt: now, updatedAt: now };
 }

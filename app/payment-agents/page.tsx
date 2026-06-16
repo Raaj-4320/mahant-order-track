@@ -17,7 +17,7 @@ import type { PaymentAgent, PaymentAgentLedgerEntry } from "@/lib/types";
 import { ordersDataSource } from "@/lib/runtimeConfig";
 import { openStatementPdfPrint } from "@/services/statementPdf";
 import { orderLifecycleService } from "@/services/orderLifecycleService";
-import { buildPaymentAgentAccountingSummary } from "@/services/settlement/paymentAgentAccounting";
+import { buildPaymentAgentAccountingSummary, buildPaymentAgentOrderRows, buildPaymentAgentPaymentRows, buildPaymentAgentTransactionRows } from "@/services/settlement/paymentAgentAccounting";
 
 const ALL_LEDGER_ROWS_KEY = "__all__";
 type LedgerViewRow = {
@@ -397,7 +397,7 @@ export default function PaymentAgentsPage() {
                       <th className="px-2 py-2 text-right">Used</th>
                       <th className="px-2 py-2 text-right">Due / Pending</th>
                       <th className="px-2 py-2 text-right">Credit Left</th>
-                      <th className="px-2 py-2 text-right">Payments Made</th>
+                      <th className="px-2 py-2 text-right">Advance Payments</th>
                       <th className="px-3 py-2 text-right">Actions</th>
                     </tr>
                   </thead>

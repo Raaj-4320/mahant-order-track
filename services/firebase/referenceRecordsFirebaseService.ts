@@ -1,6 +1,6 @@
 import { collection, doc, getDoc, getDocs, query, setDoc, where } from "firebase/firestore";
 import { getFirestoreDb, requireFirebaseBusinessId } from "@/lib/firebase/client";
-import { referenceRecordFromFirestore, referenceRecordToFirestore } from "@/lib/firebase/mappers";
+import { referenceRecordFromFirestore, referenceRecordToFirestore, sanitizeFirestorePayload } from "@/lib/firebase/mappers";
 import { referenceRecordPath, referenceRecordsPath } from "@/lib/firebase/paths";
 import type { LifecycleMetadata, ReferenceRecord, ReferenceRecordType } from "@/lib/types";
 
@@ -13,24 +13,6 @@ const requireDb = () => {
 const businessId = () => requireFirebaseBusinessId();
 
 const normalizeReferenceValue = (value: string) => value.trim().toLowerCase();
-
-const stripUndefinedDeep = (value: unknown): unknown => {
-  if (value === undefined) return undefined;
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => stripUndefinedDeep(item))
-      .filter((item) => item !== undefined);
-  }
-  if (value && typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-      const next = stripUndefinedDeep(child);
-      if (next !== undefined) out[key] = next;
-    }
-    return out;
-  }
-  return value;
-};
 
 const makeReferenceId = (type: ReferenceRecordType, value: string) => {
   const normalized = normalizeReferenceValue(value).replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -97,13 +79,13 @@ export const referenceRecordsFirebaseService = {
       createdAt: existing?.createdAt || now,
       updatedAt: now,
     };
-    await setDoc(doc(db, referenceRecordPath(businessId(), id)), stripUndefinedDeep(referenceRecordToFirestore(record)) as Record<string, unknown>, { merge: true });
+    await setDoc(doc(db, referenceRecordPath(businessId(), id)), sanitizeFirestorePayload(referenceRecordToFirestore(record)).value as Record<string, unknown>, { merge: true });
     return { record, created: !existing };
   },
 
   async upsertReferenceRecord(record: ReferenceRecord) {
     const db = requireDb();
-    await setDoc(doc(db, referenceRecordPath(businessId(), record.id)), stripUndefinedDeep(referenceRecordToFirestore(record)) as Record<string, unknown>, { merge: true });
+    await setDoc(doc(db, referenceRecordPath(businessId(), record.id)), sanitizeFirestorePayload(referenceRecordToFirestore(record)).value as Record<string, unknown>, { merge: true });
     return record;
   },
 };

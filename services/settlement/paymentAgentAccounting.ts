@@ -36,6 +36,7 @@ export type PaymentAgentAccountingTransactionRow = {
   type: PaymentAgentAccountingTransactionType;
   amount: number;
   notes: string;
+  runningCreditLeft: number;
 };
 
 export type PaymentAgentAccountingPaymentRow = {
@@ -54,12 +55,14 @@ export type PaymentAgentOrderRow = {
   orderDate: string;
   productImage: string;
   marka: string;
+  details: string;
   totalCtns: number;
   pcsPerCtn: number;
   totalPcs: number;
   rate: number;
   amount: number;
   customer: string;
+  loadingDate: string;
 };
 
 const isEntryActive = (entry: PaymentAgentLedgerEntry) => entry.active !== false && entry.isReversed !== true;
@@ -199,7 +202,8 @@ export const buildPaymentAgentAccountingSummary = (
 
 export const buildPaymentAgentTransactionRows = (summary: PaymentAgentAccountingSummary): PaymentAgentAccountingTransactionRow[] => {
   const orderById = new Map(summary.matchedOrders.map((order) => [order.id, order]));
-  const rows: PaymentAgentAccountingTransactionRow[] = [];
+  const rows: Array<PaymentAgentAccountingTransactionRow & { creditDelta: number }> = [];
+  const openingAdvanced = Math.max(clamp(summary.agent.openingCreditBalance ?? 0), 0);
 
   summary.activeSettlementEntries.forEach((entry) => {
     const linkedOrder = orderById.get(entry.sourceOrderId || "") || null;
@@ -214,6 +218,8 @@ export const buildPaymentAgentTransactionRows = (summary: PaymentAgentAccounting
         type: "Credit Used For Order",
         amount: clamp(entry.creditUsed ?? 0),
         notes: `Credit used for order ${orderNumber}`,
+        runningCreditLeft: 0,
+        creditDelta: -clamp(entry.creditUsed ?? 0),
       });
     }
     if (clamp(entry.remainingPayable ?? 0) > 0) {
@@ -225,6 +231,8 @@ export const buildPaymentAgentTransactionRows = (summary: PaymentAgentAccounting
         type: "Pending Order Amount",
         amount: clamp(entry.remainingPayable ?? 0),
         notes: `Pending amount after credit/payment for order ${orderNumber}`,
+        runningCreditLeft: 0,
+        creditDelta: 0,
       });
     }
     if (clamp(entry.newCreditCreated ?? 0) > 0) {
@@ -236,6 +244,8 @@ export const buildPaymentAgentTransactionRows = (summary: PaymentAgentAccounting
         type: "Balance Adjustment",
         amount: clamp(entry.newCreditCreated ?? 0),
         notes: `Order created additional advance balance for ${orderNumber}`,
+        runningCreditLeft: 0,
+        creditDelta: clamp(entry.newCreditCreated ?? 0),
       });
     }
   });
@@ -250,10 +260,21 @@ export const buildPaymentAgentTransactionRows = (summary: PaymentAgentAccounting
       type: "Credit Returned",
       amount: clamp(entry.creditUsed ?? entry.amount),
       notes: entry.note?.trim() || "Reversal of previous settlement",
+      runningCreditLeft: 0,
+      creditDelta: clamp(entry.creditUsed ?? 0) - clamp(entry.newCreditCreated ?? 0),
     });
   });
 
-  return rows.sort((left, right) => right.date.localeCompare(left.date));
+  const ordered = [...rows].sort((left, right) => left.date.localeCompare(right.date) || left.id.localeCompare(right.id));
+  let runningCredit = openingAdvanced;
+  ordered.forEach((row) => {
+    runningCredit = Math.max(0, runningCredit + row.creditDelta);
+    row.runningCreditLeft = runningCredit;
+  });
+
+  return ordered
+    .sort((left, right) => right.date.localeCompare(left.date) || right.id.localeCompare(left.id))
+    .map(({ creditDelta: _creditDelta, ...row }) => row);
 };
 
 export const buildPaymentAgentOrderRows = (summary: PaymentAgentAccountingSummary): PaymentAgentOrderRow[] => {
@@ -266,12 +287,14 @@ export const buildPaymentAgentOrderRows = (summary: PaymentAgentAccountingSummar
         orderDate: order.date || order.createdAt || order.updatedAt || "",
         productImage: line.productPhotoUrl || line.photoUrl || "",
         marka: line.marka?.trim() || "—",
+        details: [line.detail1, line.detail2, line.detail3].filter(Boolean).join(" ").trim() || line.details?.trim() || "—",
         totalCtns: Number(line.totalCtns) || 0,
         pcsPerCtn: Number(line.pcsPerCtn) || 0,
         totalPcs: (Number(line.totalCtns) || 0) * (Number(line.pcsPerCtn) || 0),
         rate: Number(line.rmbPerPcs) || 0,
         amount: (Number(line.totalCtns) || 0) * (Number(line.pcsPerCtn) || 0) * (Number(line.rmbPerPcs) || 0),
         customer: line.customerSnapshot?.name?.trim() || line.customerName?.trim() || "—",
+        loadingDate: order.loadingDate || "",
       })),
     )
     .sort((left, right) => {

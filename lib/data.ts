@@ -1,6 +1,6 @@
 import { Customer, Order, PaymentAgent, Product, Supplier } from "./types";
 import { formatIndianDate } from "./dateFormat";
-import { formatDisplayNumber } from "./numbers";
+import { formatMoney } from "./numbers";
 
 const now = "2026-05-01T00:00:00.000Z";
 
@@ -43,7 +43,7 @@ export const initialOrders: Order[] = [
 ];
 
 export function formatAmount(value: number | string | undefined | null): string {
-  return formatDisplayNumber(value, { maxFractionDigits: 6 });
+  return formatMoney(value);
 }
 export const formatCNY = formatAmount;
 export const formatDate = (iso: string) => formatIndianDate(iso);

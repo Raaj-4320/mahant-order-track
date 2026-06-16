@@ -4,7 +4,7 @@ import { customerPath, customersPath } from "@/lib/firebase/paths";
 import type { Customer } from "@/lib/types";
 import type { CustomersService } from "@/services/contracts";
 import { customerLedgerPath } from "@/lib/firebase/paths";
-import { customerLedgerEntryToFirestore } from "@/lib/firebase/mappers";
+import { customerFromFirestore, customerLedgerEntryToFirestore, customerToFirestore } from "@/lib/firebase/mappers";
 import { buildCustomerPaymentEntry } from "@/services/settlement/customerReceivableLedger";
 import { normalizeCustomerName } from "@/services/customers/customerIdentity";
 import { getCustomerCurrentReceivable, getCustomerStoreCredit, getCustomerTotalReceived, getCustomerTotalReceivable } from "@/services/customers/customerFinance";
@@ -19,14 +19,14 @@ export const customersFirebaseService: CustomersService = {
   async listCustomers() {
     const db = requireDb();
     const snap = await getDocs(collection(db, customersPath(businessId())));
-    const rows = snap.docs.map((d) => ({ ...(d.data() as Customer), id: d.id } as Customer));
+    const rows = snap.docs.map((d) => customerFromFirestore({ id: d.id, ...(d.data() as Record<string, unknown>) }));
     return rows;
   },
   async getCustomerById(id) {
     const db = requireDb();
     const snap = await getDoc(doc(db, customerPath(businessId(), id)));
     if (!snap.exists()) return null;
-    return { ...(snap.data() as Customer), id: snap.id } as Customer;
+    return customerFromFirestore({ id: snap.id, ...(snap.data() as Record<string, unknown>) });
   },
   async upsertCustomer(customer) {
     const bizId = businessId();
@@ -36,7 +36,7 @@ logCustomer("upsert_customer_start", { incomingId: customer.id, name: customer.n
     const id = customer.id || makeId();
     const next: Customer = { ...customer, id, normalizedName: normalizeCustomerName(customer.name || customer.displayName || ""), createdAt: customer.createdAt || now, updatedAt: now };
     try {
-      await setDoc(doc(db, customerPath(bizId, id)), next, { merge: true });
+      await setDoc(doc(db, customerPath(bizId, id)), customerToFirestore(next), { merge: true });
 } catch (e) {
 throw e;
     }
@@ -69,7 +69,7 @@ throw e;
 
       logCustomer("customer_payment_update_summary", { customerId, before: { currentReceivable, totalReceivableGenerated, totalReceived: getCustomerTotalReceived(customer), storeCreditBalance }, after: { currentReceivable: newCurrentReceivable, totalReceivableGenerated, totalReceived, storeCreditBalance: newStoreCreditBalance } });
       const next: Customer = { ...customer, updatedAt: new Date().toISOString(), totalReceivableGenerated, totalReceived, storeCreditBalance: newStoreCreditBalance, currentReceivable: newCurrentReceivable, outstandingAmount: newCurrentReceivable, totalSpent: totalReceivableGenerated };
-      tx.set(ref, next, { merge: true });
+      tx.set(ref, customerToFirestore(next), { merge: true });
       return next;
     });
 

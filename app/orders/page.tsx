@@ -6,7 +6,7 @@ import { OrderForm, newLine } from "@/components/orders/OrderForm";
 import { OrderFooter } from "@/components/orders/OrderFooter";
 import { formatAmount, formatDate } from "@/lib/data";
 import { formatIndianDate } from "@/lib/dateFormat";
-import { Order, OrderNumberSeries, PaymentAgent, lineTotalPcs, lineTotalRmb, orderTotal } from "@/lib/types";
+import { Order, OrderNumberSeries, PaymentAgent, lineTotalPcs, lineTotalRmb, orderLinesTotal, orderShippingPrice, orderTotal } from "@/lib/types";
 import { syncOrderLinesToProducts, archiveProductsForOrder, archiveProductsForRemovedOrderLines } from "@/services/productCatalogSync";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -54,6 +54,7 @@ const createEmptyDraft = (_orders: Order[], reservedOrderNumber = ""): Order => 
   status: "draft",
   paymentStatus: "pending",
   paidToPaymentAgentNow: 0,
+  shippingPrice: 0,
   lines: [{ ...newLine(), details: "", marka: "", totalCtns: 0, pcsPerCtn: 0, rmbPerPcs: 0, productPhotoUrl: "", photoUrl: "" }],
 });
 
@@ -83,6 +84,7 @@ type FlatHistoryRow = {
   key: string;
   order: Order;
   line: Order["lines"][number] | null;
+  extraLines: Order["lines"][number][];
   paymentMeta: ReturnType<typeof getOrderPaymentAgentDisplay>;
 };
 type OrdersFilterState = {
@@ -122,6 +124,8 @@ const summarizeOrderForLog = (o: Order) => ({
 });
 
 const normalizePaymentAgentValue = (value?: string) => (value || "").trim().toLowerCase();
+const hasLinkedPaymentAgent = (order: Pick<Order, "paymentBy" | "paymentAgentId">) =>
+  Boolean(order.paymentBy.trim() || order.paymentAgentId.trim());
 const normalizeEditableOrderNumber = (value?: string) => {
   const trimmed = (value || "").trim();
   if (!trimmed) return "";
@@ -194,6 +198,7 @@ export default function OrdersPage() {
   const [orderSaveState, setOrderSaveState] = useState<"idle" | "saving">("idle");
   const [pendingDeleteOrder, setPendingDeleteOrder] = useState<Order | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [expandedOrderIds, setExpandedOrderIds] = useState<Record<string, boolean>>({});
   const wechatNormalizationStartedRef = useRef(false);
 
   const pickerRef = useRef<HTMLDivElement | null>(null);
@@ -202,6 +207,7 @@ export default function OrdersPage() {
 
   const activeOrders = useMemo(() => (isFirebaseOrdersMode ? firebaseOrders : orders).filter((o) => o.status !== "archived"), [isFirebaseOrdersMode, firebaseOrders, orders]);
   const { data: orderSeries, isLoading: isOrderSeriesLoading, createSeries: createOrderSeries, syncSeriesFromOrder, reload: reloadOrderSeries } = useOrderNumberSeries(activeOrders);
+  const lineTotal = useMemo(() => orderLinesTotal(draft), [draft]);
   const total = useMemo(() => orderTotal(draft), [draft]);
   const effectiveOrderCategory = query.trim() ? "all" : selectedOrderCategory;
   const orderCategoryTabs = useMemo(() => {
@@ -297,8 +303,9 @@ export default function OrdersPage() {
   const history = useMemo<FlatHistoryRow[]>(() => sortedOrders.flatMap<FlatHistoryRow>((order) => {
     const paymentMeta = getOrderPaymentAgentDisplay(order, paymentAgents);
     const orderLines = (order.lines || []).filter((line) => meaningfulLine(line));
-    if (orderLines.length === 0) return [{ key: `${order.id}::fallback`, order, line: null, paymentMeta }];
-    return orderLines.map((line, index) => ({ key: `${order.id}::${line.id || index}`, order, line, paymentMeta }));
+    if (orderLines.length === 0) return [{ key: `${order.id}::fallback`, order, line: null, extraLines: [], paymentMeta }];
+    const [firstLine, ...extraLines] = orderLines;
+    return [{ key: `${order.id}::${firstLine.id || "first"}`, order, line: firstLine, extraLines, paymentMeta }];
   }), [sortedOrders, paymentAgents]);
   const totalPages = Math.max(1, Math.ceil(history.length / rowsPerPage));
   const pagedHistory = useMemo(() => history.slice((currentPage - 1) * rowsPerPage, currentPage * rowsPerPage), [history, currentPage, rowsPerPage]);
@@ -672,14 +679,18 @@ try {
     setOrderSaveState("saving");
 
     const meaningfulLines = getMeaningfulOrderLines(draft.lines).map((line) => withDerivedLegacyDetails(seedDetailBoxesFromLegacy(line)));
+    const paymentAgentCleared = !hasLinkedPaymentAgent(draft);
     const cleanedDraft = {
       ...draft,
       number: normalizeEditableOrderNumber(draft.number || draft.orderNumber),
       orderNumber: normalizeEditableOrderNumber(draft.orderNumber || draft.number),
       ...deriveOrderSeriesFields(normalizeEditableOrderNumber(draft.orderNumber || draft.number)),
       wechatId: draft.wechatId.trim(),
+      shippingPrice: Math.max(0, Number(draft.shippingPrice) || 0),
       lines: meaningfulLines,
-      paymentAgentSnapshot: draft.paymentBy.trim() || draft.paymentAgentId ? draft.paymentAgentSnapshot : undefined,
+      paymentByName: paymentAgentCleared ? "" : draft.paymentByName || "",
+      paymentAgentName: paymentAgentCleared ? "" : draft.paymentAgentName || "",
+      paymentAgentSnapshot: paymentAgentCleared ? { id: "", name: "", code: "" } : draft.paymentAgentSnapshot,
     };
 
     if (status === "draft") {
@@ -708,11 +719,11 @@ try {
         status: "draft" as const,
         paymentAgentId: resolvedDraftAgent?.id || "",
         paymentBy: resolvedDraftAgent?.id || cleanedDraft.paymentBy || "",
-        paymentAgentSnapshot: resolvedDraftAgent
-          ? { id: resolvedDraftAgent.id, name: resolvedDraftAgent.name, code: resolvedDraftAgent.agentCode }
-          : cleanedDraft.paymentBy.trim()
-            ? cleanedDraft.paymentAgentSnapshot
-            : undefined,
+      paymentAgentSnapshot: resolvedDraftAgent
+        ? { id: resolvedDraftAgent.id, name: resolvedDraftAgent.name, code: resolvedDraftAgent.agentCode }
+        : cleanedDraft.paymentBy.trim()
+          ? cleanedDraft.paymentAgentSnapshot
+          : { id: "", name: "", code: "" },
       };
       try {
         if (isFirebaseOrdersMode) {
@@ -807,6 +818,9 @@ try {
       ...finalOrderSeriesFields,
       lines: resolvedLines,
       status: "saved" as const,
+      subtotal: orderLinesTotal({ ...cleanedDraft, lines: resolvedLines }),
+      grandTotal: orderTotal({ ...cleanedDraft, lines: resolvedLines }),
+      dueAmount: orderTotal({ ...cleanedDraft, lines: resolvedLines }),
       paymentAgentId: resolvedPaymentAgentId,
       paymentBy: resolvedPaymentAgentId || cleanedDraft.paymentBy,
       paymentByName: resolvedAgent?.name || cleanedDraft.paymentBy || "",
@@ -815,13 +829,13 @@ try {
         ? { id: resolvedAgent.id, name: resolvedAgent.name, code: resolvedAgent.agentCode }
         : cleanedDraft.paymentBy.trim()
           ? cleanedDraft.paymentAgentSnapshot
-          : undefined,
+          : { id: "", name: "", code: "" },
       paymentAgentSettlementSnapshot: {
         ...settlement,
         orderTotal: settlement.orderTotal,
         existingCredit: settlement.existingCredit,
         paymentAgentId: resolvedPaymentAgentId,
-        paymentAgentName: resolvedAgent?.name || selectedPaymentAgent?.name,
+        paymentAgentName: resolvedAgent?.name || "",
         updatedAt: now,
         createdAt: draft.paymentAgentSettlementSnapshot?.createdAt || now,
       },
@@ -903,8 +917,8 @@ try {
 
       if (result.warnings.length > 0) {
         if (result.productSyncFailures.length) pushToast({ tone: "info", text: `Order saved, but product sync failed for ${result.productSyncFailures.length} line.` });
-        else if (!result.customerReceivablesApplied) pushToast({ tone: "info", text: "Order saved, but customer receivable update failed." });
-        else if (!result.paymentSettlementApplied) pushToast({ tone: "info", text: "Order saved, but payment-agent settlement failed." });
+        else if (!result.customerReceivablesApplied) pushToast({ tone: "info", text: `Order saved, but ${result.warnings.find((warning) => warning.startsWith("Customer receivable update failed")) || "customer receivable update failed."}` });
+        else if (!result.paymentSettlementApplied) pushToast({ tone: "info", text: `Order saved, but ${result.warnings.find((warning) => warning.startsWith("Payment-agent settlement failed")) || "payment-agent settlement failed."}` });
         else pushToast({ tone: "info", text: `Order saved with warnings: ${result.warnings[0]}` });
       } else {
         pushToast({ tone: "success", text: "Order saved." });
@@ -922,6 +936,7 @@ try {
     setEditingOrderId(null);
     setRemovedLineIds([]);
     setOriginalLineIds(new Set());
+    setExpandedOrderIds({});
     const preferredSeries = orderSeries.find((series) => series.id === selectedSeriesId) ?? orderSeries[0] ?? null;
     const nextDraft = createEmptyDraft(orders, preferredSeries ? getSeriesSuggestion(preferredSeries) : "");
     setDraft({ ...nextDraft, ...deriveOrderSeriesFields(nextDraft.number || nextDraft.orderNumber) });
@@ -941,6 +956,7 @@ try {
   const startEdit = async (o: Order) => {
     if (o.status === "draft" && !ensureFirebaseOrderWriteReady()) return;
     setEditingOrderId(o.id); setRemovedLineIds([]); setOriginalLineIds(new Set(o.lines.map(l=>l.id)));
+    setExpandedOrderIds({});
     const copy = JSON.parse(JSON.stringify(o));
     const normalizedOrderNumber = normalizeEditableOrderNumber(copy.number || copy.orderNumber);
     const matchedSeries = orderSeries.find((series) => series.prefix === (parseOrderNumber(normalizedOrderNumber)?.prefix || "")) ?? null;
@@ -958,6 +974,7 @@ try {
     setEditingOrderId(null);
     setRemovedLineIds([]);
     setOriginalLineIds(new Set());
+    setExpandedOrderIds({});
     const preferredSeries = orderSeries.find((series) => series.id === selectedSeriesId) ?? orderSeries.find((series) => series.isDefault) ?? orderSeries[0] ?? null;
     if (preferredSeries) {
       setSelectedSeriesId(preferredSeries.id);
@@ -983,7 +1000,9 @@ try {
   const getLineRate = (line: Order["lines"][number]) => Number(line.rmbPerPcs) || 0;
   const getLineAmount = (line: Order["lines"][number]) => lineTotalRmb(line);
   const getOrderTotalCtns = (order: Order) => (order.lines || []).reduce((sum, line) => sum + getLineCtns(line), 0);
-  const getOrderTotalAmount = (order: Order) => (order.lines || []).reduce((sum, line) => sum + getLineAmount(line), 0);
+  const getOrderLinesAmount = (order: Order) => orderLinesTotal(order);
+  const getOrderTotalAmount = (order: Order) => orderTotal(order);
+  const getOrderShippingAmount = (order: Order) => orderShippingPrice(order);
   const getFirstDraftPhoto = (order: Order) => order.lines.find((line) => line.productPhotoUrl || line.photoUrl)?.productPhotoUrl || order.lines.find((line) => line.productPhotoUrl || line.photoUrl)?.photoUrl || "";
   const renderDraftMissing = () => <span className="text-[var(--danger)]">Not present</span>;
   useEffect(() => {
@@ -1018,6 +1037,25 @@ try {
   const getHistoryRowTone = (loadingDate?: string) => {
     return "bg-[var(--bg-card)]";
   };
+  const isLineMatchedByQuery = (line: Order["lines"][number]) => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) return false;
+    const searchable = [
+      line.marka || "",
+      joinLineDetails(line),
+      line.customerName || "",
+      line.customerSnapshot?.name || "",
+      formatAmount(getLineAmount(line)),
+      formatAmount(getLineTotalPcs(line)),
+      formatAmount(getLineRate(line)),
+    ]
+      .join(" ")
+      .toLowerCase();
+    return searchable.includes(normalizedQuery);
+  };
+  const isOrderExpanded = (row: FlatHistoryRow) =>
+    Boolean(expandedOrderIds[row.order.id]) ||
+    (query.trim().length > 0 && row.extraLines.some((line) => isLineMatchedByQuery(line)));
   const historyCalendarGroups = useMemo(() => {
     const groups = new Map<string, FlatHistoryRow[]>();
     pagedHistory.forEach((row) => {
@@ -1201,7 +1239,8 @@ const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr)
               const ctns = line ? getLineCtns(line) : getOrderTotalCtns(order);
               const pcsPerCtn = line ? getLinePcsPerCtn(line) : 0;
               const rate = line ? getLineRate(line) : 0;
-              const amount = line ? getLineAmount(line) : getOrderTotalAmount(order);
+              const amount = getOrderTotalAmount(order);
+              const expanded = isOrderExpanded(row);
               return <div
                 key={row.key}
                 className="w-full border-b border-border bg-[var(--bg-card)] last:border-b-0"
@@ -1283,10 +1322,21 @@ const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr)
                   <div className="min-w-0 flex-1">
                     <div className="text-[28px] font-extrabold leading-tight text-slate-950">{line?.marka?.trim() || "—"}</div>
                     {detailLines.length ? <div className="mt-3 text-[19px] font-medium leading-relaxed text-slate-600">{detailLines.join(" · ")}</div> : null}
+                    {row.extraLines.length > 0 ? <button type="button" className="mt-3 text-[13px] font-semibold text-brand transition-colors hover:underline" onClick={() => setExpandedOrderIds((prev) => ({ ...prev, [order.id]: !expanded }))}>{expanded ? "Show Less" : `See More (+${row.extraLines.length})`}</button> : null}
                     <div className="mt-5 text-[19px] leading-relaxed">
                       <span className="font-medium text-slate-500">WeChat: </span>
                       <span className="font-semibold text-emerald-700">{getDisplayWechatId(order)}</span>
                     </div>
+                  </div>
+                </div>
+                <div className={cn("overflow-hidden border-b border-[#e8ebef] transition-all duration-200", expanded && row.extraLines.length > 0 ? "max-h-[640px] px-7 py-4 opacity-100" : "max-h-0 px-7 py-0 opacity-0")}>
+                  <div className="space-y-2">
+                    {row.extraLines.map((extraLine, index) => <div key={`${order.id}-grid-extra-${extraLine.id || index}`} className={cn("grid grid-cols-[88px_minmax(0,1fr)_110px_110px] items-center gap-3 rounded-xl border border-border/70 bg-white/85 px-3 py-3", isLineMatchedByQuery(extraLine) && "border-brand/40 bg-brand/5")}>
+                      <div className="text-[12px] font-semibold text-fg-subtle">Sub Line {index + 2}</div>
+                      <div className="min-w-0"><div className="truncate text-[15px] font-semibold">{extraLine.marka?.trim() || "—"}</div><div className="truncate text-[12px] text-fg-subtle">{getVisibleLineDetails(extraLine).join(" · ") || "—"}</div></div>
+                      <div className="text-center text-[14px] font-semibold tabular-nums">{formatPlainAmount(getLineAmount(extraLine))}</div>
+                      <div className="text-center text-[13px] font-semibold">{getCardCustomerValue(extraLine, paymentMeta)}</div>
+                    </div>)}
                   </div>
                 </div>
                 <div className="px-7 py-5">
@@ -1354,7 +1404,7 @@ const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr)
                 </div>
                 <div className="text-right">
                   <div className="text-[12px] text-fg-subtle">{getPaymentAgentMeta(row.order).value}</div>
-                  <div className="text-[15px] font-bold text-[var(--success)]">{formatPlainAmount(row.line ? getLineAmount(row.line) : getOrderTotalAmount(row.order))}</div>
+                  <div className="text-[15px] font-bold text-[var(--success)]">{formatPlainAmount(getOrderTotalAmount(row.order))}</div>
                 </div>
                 <div className="flex items-center gap-1">
                   <button type="button" className="grid h-7 w-7 place-items-center rounded-md text-fg transition-colors hover:bg-bg-subtle" onClick={() => setViewOrder(row.order)}><Eye size={14} /></button>
@@ -1386,48 +1436,86 @@ const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr)
               </div>
               <div className="space-y-2 pt-2">
                 {pagedHistory.length === 0 ? <div className="px-4 py-8 text-center text-fg-subtle">No orders yet. Click Add Order to create one.</div> : pagedHistory.map((row) => {
-                  const { order, line, paymentMeta } = row;
+                  const { order, line, extraLines, paymentMeta } = row;
                   const paymentName = paymentMeta.value;
                   const canEditOperationalFields = order.status !== "draft" && order.status !== "archived";
                   const rowValue = getRowValue(order);
                   const rowDirty = rowValue.loadingDate !== order.loadingDate || rowValue.status !== order.status;
+                  const expanded = isOrderExpanded(row);
                   const rowClass = "grid items-center border-b border-border transition-colors last:border-b-0";
                   const productPhoto = line ? getLineProductPhoto(line) : "";
-                  const ctns = line ? getLineCtns(line) : getOrderTotalCtns(order);
+                  const ctns = line ? getLineCtns(line) : 0;
                   const pcsPerCtn = line ? getLinePcsPerCtn(line) : 0;
                   const totalPcs = line ? getLineTotalPcs(line) : 0;
                   const rate = line ? getLineRate(line) : 0;
-                  const amount = line ? getLineAmount(line) : getOrderTotalAmount(order);
+                  const amount = getOrderTotalAmount(order);
                   const marka = line?.marka?.trim() || "—";
                   const customerName = getCardCustomerValue(line, paymentMeta);
 
-                  return <div key={row.key} className={rowClass} style={{ gridTemplateColumns: historyGridTemplate }}>
-                    <div className="min-w-0 pl-2 pr-1 py-2">
-                      <div className="min-w-0">
-                        <div className="truncate text-[17px] font-bold leading-tight" title={order.number || order.orderNumber || "Draft"}>{order.number || order.orderNumber || "Draft"}</div>
+                  return <div key={row.key} className="rounded-lg border border-border/70 bg-bg-card">
+                    <div className={rowClass} style={{ gridTemplateColumns: historyGridTemplate }}>
+                      <div className="min-w-0 pl-2 pr-1 py-2">
+                        <div className="min-w-0">
+                          <div className="truncate text-[17px] font-bold leading-tight" title={order.number || order.orderNumber || "Draft"}>{order.number || order.orderNumber || "Draft"}</div>
+                        </div>
+                      </div>
+                      <div className="min-w-0 px-1 py-2"><div className="block w-full min-w-0 text-[14px] font-semibold leading-tight" title={getDisplayWechatId(order)}>{getDisplayWechatId(order)}</div></div>
+                      <div className="min-w-0 px-1 py-2"><div className="flex justify-center">{productPhoto ? <button type="button" onClick={() => setPreviewImage({ src: productPhoto, alt: "Product photo" })} className="grid h-[80px] w-[80px] shrink-0 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle"><img src={getCloudinaryOptimizedUrl(productPhoto, { width: 132, height: 132, crop: "fit" })} alt="product" className="h-full w-full object-contain" loading="lazy" decoding="async" /></button> : <span className="text-[10px] text-fg-subtle">—</span>}</div></div>
+                      <div className="min-w-0 px-1 py-2 text-center">
+                        <div className="text-[15px] font-semibold leading-tight" title={marka}>{marka}</div>
+                        {extraLines.length > 0 ? (
+                          <button
+                            type="button"
+                            className="mt-1 text-[11px] font-semibold text-brand transition-colors hover:underline"
+                            onClick={() => setExpandedOrderIds((prev) => ({ ...prev, [order.id]: !expanded }))}
+                          >
+                            {expanded ? "Show Less" : `See More (+${extraLines.length})`}
+                          </button>
+                        ) : null}
+                      </div>
+                      <div className="px-1 py-2 text-center text-[14px] font-semibold tabular-nums">{ctns.toLocaleString()}</div>
+                      <div className="px-1 py-2 text-center text-[14px] font-semibold tabular-nums">{pcsPerCtn.toLocaleString()}</div>
+                      <div className="px-1 py-2 text-center text-[14px] font-semibold tabular-nums">{totalPcs.toLocaleString()}</div>
+                      <div className="px-1 py-2 text-center text-[16px] font-semibold tabular-nums">{formatPlainAmount(rate)}</div>
+                      <div className="px-1 py-2 text-center text-[16px] font-bold tabular-nums">{formatPlainAmount(amount)}</div>
+                      <div className="min-w-0 px-1 py-2"><div className="block w-full min-w-0 truncate text-[14px] text-center font-semibold leading-tight" title={customerName}>{customerName}</div></div>
+                      <div className="min-w-0 pl-1 pr-3 py-2 text-center">
+                        <div className="min-w-0 [&_button]:max-w-full [&_button]:text-[13.5px] [&_button]:leading-tight">
+                          {canEditOperationalFields ? <LoadingDateControl compact debugOrderId={order.id} value={rowValue.loadingDate} onChange={(next) => { setRowEdit(order, { loadingDate: next }, "date_selected"); }} /> : <span className="text-[15px] text-fg-muted">{order.loadingDate ? formatDate(order.loadingDate) : "Set date"}</span>}
+                        </div>
+                        {canEditOperationalFields && rowDirty ? <button type="button" title="Save row changes" aria-label="Save row changes" className="mt-1 inline-flex text-[10.5px] font-semibold text-brand transition-colors hover:underline disabled:opacity-60" disabled={rowValue.saving} onClick={() => { void saveRowEdit(order); }}>{rowValue.saving ? "Saving..." : "Save"}</button> : null}
+                      </div>
+                      <div className="min-w-0 pl-2 pr-1 py-2"><div className={cn("block w-full min-w-0 text-center truncate text-[14px] font-semibold leading-tight", paymentMeta.isMissing && "text-[var(--danger)]")} title={paymentName}>{paymentName}</div></div>
+                      <div className="px-1 py-2">
+                        <div className="flex justify-center gap-1 whitespace-nowrap">
+                          <button type="button" title="View" aria-label="View" className="grid h-[28px] w-[28px] place-items-center rounded-md text-fg transition-colors hover:bg-bg-subtle" onClick={() => setViewOrder(order)}><Eye size={14} /></button>
+                          <button type="button" title="Edit" aria-label="Edit" className="grid h-[28px] w-[28px] place-items-center rounded-md text-fg transition-colors hover:bg-bg-subtle" onClick={() => startEdit(order)}><SquarePen size={14} /></button>
+                          <button type="button" title="Delete" aria-label="Delete" className="grid h-[28px] w-[28px] place-items-center rounded-md text-[var(--danger)] transition-colors hover:bg-[var(--danger)]/10" onClick={() => removeOrder(order)}><Trash2 size={14} /></button>
+                        </div>
                       </div>
                     </div>
-                    <div className="min-w-0 px-1 py-2"><div className="block w-full min-w-0  text-[14px] font-semibold leading-tight" title={getDisplayWechatId(order)}>{getDisplayWechatId(order)}</div></div>
-                    <div className="min-w-0 px-1 py-2"><div className="flex justify-center">{productPhoto ? <button type="button" onClick={() => setPreviewImage({ src: productPhoto, alt: "Product photo" })} className="grid h-[80px] w-[80px] shrink-0 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle"><img src={getCloudinaryOptimizedUrl(productPhoto, { width: 132, height: 132, crop: "fit" })} alt="product" className="h-full w-full object-contain" loading="lazy" decoding="async" /></button> : <span className="text-[10px] text-fg-subtle">—</span>}</div></div>
-                    <div className="min-w-0 px-1 py-2"><div className="text-[14px] text-[15px] text-center font-semibold leading-tight" title={marka}>{marka}</div></div>
-                    <div className="px-1 py-2 text-center text-[14px] font-semibold tabular-nums">{ctns.toLocaleString()}</div>
-                    <div className="px-1 py-2 text-center text-[14px] font-semibold tabular-nums">{pcsPerCtn.toLocaleString()}</div>
-                    <div className="px-1 py-2 text-center text-[14x] font-semibold tabular-nums">{totalPcs.toLocaleString()}</div>
-                    <div className="px-1 py-2 text-center text-[16px] font-semibold tabular-nums">{formatPlainAmount(rate)}</div>
-                    <div className="px-1 py-2 text-center text-[16px] font-bold tabular-nums ">{formatPlainAmount(amount)}</div>
-                    <div className="min-w-0 px-1 py-2"><div className="block w-full min-w-0 truncate text-[14px] text-center font-semibold leading-tight" title={customerName}>{customerName}</div></div>
-                    <div className="min-w-0 pl-1 pr-3 py-2 text-center">
-                      <div className="min-w-0 [&_button]:max-w-full [&_button]:text-[13.5px] [&_button]:leading-tight">
-                        {canEditOperationalFields ? <LoadingDateControl compact debugOrderId={order.id} value={rowValue.loadingDate} onChange={(next) => { setRowEdit(order, { loadingDate: next }, "date_selected"); }} /> : <span className="text-[15px] text-fg-muted">{order.loadingDate ? formatDate(order.loadingDate) : "Set date"}</span>}
-                      </div>
-                      {canEditOperationalFields && rowDirty ? <button type="button" title="Save row changes" aria-label="Save row changes" className="mt-1 inline-flex text-[10.5px] font-semibold text-brand transition-colors hover:underline disabled:opacity-60" disabled={rowValue.saving} onClick={() => { void saveRowEdit(order); }}>{rowValue.saving ? "Saving..." : "Save"}</button> : null}
-                    </div>
-                    <div className="min-w-0 pl-2 pr-1 py-2"><div className={cn("block w-full min-w-0 text-center truncate text-[14px] font-semibold leading-tight", paymentMeta.isMissing && "text-[var(--danger)]")} title={paymentName}>{paymentName}</div></div>
-                    <div className="px-1 py-2">
-                      <div className="flex justify-center gap-1 whitespace-nowrap">
-                        <button type="button" title="View" aria-label="View" className="grid h-[28px] w-[28px] place-items-center rounded-md text-fg transition-colors hover:bg-bg-subtle" onClick={() => setViewOrder(order)}><Eye size={14} /></button>
-                        <button type="button" title="Edit" aria-label="Edit" className="grid h-[28px] w-[28px] place-items-center rounded-md text-fg transition-colors hover:bg-bg-subtle" onClick={() => startEdit(order)}><SquarePen size={14} /></button>
-                        <button type="button" title="Delete" aria-label="Delete" className="grid h-[28px] w-[28px] place-items-center rounded-md text-[var(--danger)] transition-colors hover:bg-[var(--danger)]/10" onClick={() => removeOrder(order)}><Trash2 size={14} /></button>
+                    <div className={cn("overflow-hidden border-t border-border bg-bg-subtle/35 transition-all duration-200", expanded ? "max-h-[1200px] px-2 py-2 opacity-100" : "max-h-0 px-2 py-0 opacity-0")}>
+                      <div className="space-y-1.5">
+                        {extraLines.map((extraLine, index) => {
+                          const extraPhoto = getLineProductPhoto(extraLine);
+                          const extraCustomer = getCardCustomerValue(extraLine, paymentMeta);
+                          const matched = isLineMatchedByQuery(extraLine);
+                          return <div key={`${order.id}-extra-${extraLine.id || index}`} className={cn("grid items-center rounded-md border border-border/60 bg-white/85", matched && "border-brand/40 bg-brand/5")} style={{ gridTemplateColumns: historyGridTemplate }}>
+                            <div className="pl-2 pr-1 py-2 text-[11px] font-semibold text-fg-subtle">Sub Line {index + 2}</div>
+                            <div className="px-1 py-2 text-[12px] text-fg-subtle">{getDisplayWechatId(order)}</div>
+                            <div className="px-1 py-2 flex justify-center">{extraPhoto ? <button type="button" onClick={() => setPreviewImage({ src: extraPhoto, alt: "Product photo" })} className="grid h-[56px] w-[56px] place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle"><img src={getCloudinaryOptimizedUrl(extraPhoto, { width: 96, height: 96, crop: "fit" })} alt="product" className="h-full w-full object-contain" loading="lazy" decoding="async" /></button> : <span className="text-[10px] text-fg-subtle">—</span>}</div>
+                            <div className="px-1 py-2 text-center text-[13px] font-semibold">{extraLine.marka?.trim() || "—"}</div>
+                            <div className="px-1 py-2 text-center text-[13px] font-semibold tabular-nums">{getLineCtns(extraLine).toLocaleString()}</div>
+                            <div className="px-1 py-2 text-center text-[13px] font-semibold tabular-nums">{getLinePcsPerCtn(extraLine).toLocaleString()}</div>
+                            <div className="px-1 py-2 text-center text-[13px] font-semibold tabular-nums">{getLineTotalPcs(extraLine).toLocaleString()}</div>
+                            <div className="px-1 py-2 text-center text-[13px] font-semibold tabular-nums">{formatPlainAmount(getLineRate(extraLine))}</div>
+                            <div className="px-1 py-2 text-center text-[13px] font-semibold tabular-nums">{formatPlainAmount(getLineAmount(extraLine))}</div>
+                            <div className="px-1 py-2 text-center text-[13px] font-semibold truncate" title={extraCustomer}>{extraCustomer}</div>
+                            <div className="px-1 py-2 text-center text-[12px] text-fg-subtle">{order.loadingDate ? formatDate(order.loadingDate) : "Set date"}</div>
+                            <div className="px-1 py-2 text-center text-[12px] font-semibold truncate" title={paymentName}>{paymentName}</div>
+                            <div className="px-1 py-2 text-center text-[11px] text-fg-subtle">{getVisibleLineDetails(extraLine).join(" · ") || "—"}</div>
+                          </div>;
+                        })}
                       </div>
                     </div>
                   </div>;
@@ -1436,10 +1524,10 @@ const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr)
             </div>
           </div>
         </section>}
-        {mode === "history" ? <TablePagination total={history.length} currentPage={currentPage} pageSize={rowsPerPage} onPageChange={setCurrentPage} label="order rows" /> : null}
+        {mode === "history" ? <TablePagination total={history.length} currentPage={currentPage} pageSize={rowsPerPage} onPageChange={setCurrentPage} label="orders" /> : null}
       <ImageLightbox src={previewImage?.src} alt={previewImage?.alt} caption={previewImage?.caption} open={Boolean(previewImage?.src)} onClose={() => setPreviewImage(null)} />
       </main>
-      {isOrderModalOpen && <div className="fixed inset-0 z-50 bg-black/45 p-3 md:p-6" onClick={requestExitComposer}>
+      {isOrderModalOpen && <div className="fixed inset-0 z-50 bg-black/45 p-3 md:p-6">
         <div className="relative mx-auto w-full max-w-[1400px] h-[90vh] rounded-2xl border border-border bg-bg-card shadow-card flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
           <div className="border-b border-border px-4 py-3 space-y-2">
             <div className="flex items-center justify-between gap-3">
@@ -1470,10 +1558,10 @@ setHeaderPaymentQuery(next); setHeaderPaymentOpen(true); setDraft((d)=>({...d,pa
           <div className="min-h-0 flex-1 overflow-y-auto">
             <OrderForm showOrderInfo={false} draft={draft} setDraft={(u) => setDraft((d) => u(d))} paymentAgents={paymentAgents} customers={customers} onUploadingChange={onUploadingChange} onRemoveLine={handleRemoveLine} wechatSuggestions={wechatSuggestions.filter((w) => draft.wechatId.trim() ? w.toLowerCase().includes(draft.wechatId.trim().toLowerCase()) : false)} customerSuggestions={customerSuggestions} onPreviewImage={(src) => setPreviewImage({ src, alt: "Order line photo preview" })} />
           </div>
-          <OrderFooter total={total} onSaveDraft={() => onSave("draft")} onSaveOrder={() => onSave("saved")} onViewDetails={() => setViewOrder(draft)} saveOrderLabel={orderSaveState === "saving" ? "Saving Order..." : (editingOrderId ? "Save Changes" : "Save Order")} saveDraftLabel={orderSaveState === "saving" ? "Saving Draft..." : "Save as Draft"} disableSaveDraft={orderSaveState !== "idle"} disableSaveOrder={orderSaveState !== "idle"} paymentAgent={selectedPaymentAgent} settlement={settlement} paidNow={draft.paidToPaymentAgentNow ?? 0} onPaidNowChange={(value) => setDraft((d) => ({ ...d, paidToPaymentAgentNow: Math.max(0, Number(value) || 0) }))} />
+          <OrderFooter lineTotal={lineTotal} shippingPrice={getOrderShippingAmount(draft)} total={total} onSaveDraft={() => onSave("draft")} onSaveOrder={() => onSave("saved")} onViewDetails={() => setViewOrder(draft)} saveOrderLabel={orderSaveState === "saving" ? "Saving Order..." : (editingOrderId ? "Save Changes" : "Save Order")} saveDraftLabel={orderSaveState === "saving" ? "Saving Draft..." : "Save as Draft"} disableSaveDraft={orderSaveState !== "idle"} disableSaveOrder={orderSaveState !== "idle"} paymentAgent={selectedPaymentAgent} settlement={settlement} paidNow={draft.paidToPaymentAgentNow ?? 0} onPaidNowChange={(value) => setDraft((d) => ({ ...d, paidToPaymentAgentNow: Math.max(0, Number(value) || 0) }))} onShippingPriceChange={(value) => setDraft((d) => ({ ...d, shippingPrice: value }))} />
         </div>
       </div>}
-      {showExitConfirm ? <div className="fixed inset-0 z-[65] bg-black/50 grid place-items-center p-4"><div className="card w-full max-w-lg p-4 space-y-3"><div className="text-lg font-semibold">Exit order editor?</div><div className="text-sm text-fg-subtle">Pressing Escape or closing the modal will not discard your work immediately. Choose what to do with the current order.</div><div className="flex flex-wrap justify-end gap-2"><Button variant="secondary" onClick={() => setShowExitConfirm(false)}>Continue editing</Button><Button variant="secondary" onClick={() => resetOrderComposer()}>Exit without saving</Button><Button variant="primary" onClick={() => { setShowExitConfirm(false); void onSave("draft", true); }}>Save as Draft</Button></div></div></div> : null}
+      {showExitConfirm ? <div className="fixed inset-0 z-[65] bg-black/50 grid place-items-center p-4"><div className="card w-full max-w-lg p-4 space-y-3"><div className="text-lg font-semibold">{editingOrderId ? "Save changes before closing?" : "Save order before closing?"}</div><div className="text-sm text-fg-subtle">{editingOrderId ? "You made changes to this order. Save them now or discard them." : "Save this order as a draft before closing, or discard it."}</div><div className="flex flex-wrap justify-end gap-2"><Button variant="secondary" onClick={() => { setShowExitConfirm(false); resetOrderComposer(); }}>{editingOrderId ? "Discard Changes" : "Discard Order"}</Button><Button variant="primary" onClick={() => { setShowExitConfirm(false); void onSave(editingOrderId ? "saved" : "draft", true); }}>{editingOrderId ? "Save Changes" : "Save Draft"}</Button></div></div></div> : null}
       {showCreateSeriesModal ? <div className="fixed inset-0 z-[75] bg-black/50 grid place-items-center p-4" onClick={() => { if (!seriesCreateBusy) setShowCreateSeriesModal(false); }}><div className="card w-full max-w-md p-4 space-y-4" onClick={(e) => e.stopPropagation()}><div className="space-y-1"><div className="text-lg font-semibold">Add New Series</div><div className="text-sm text-fg-subtle">Create a new order number series and switch this order to it immediately.</div></div><label className="flex flex-col gap-1 text-sm text-fg-muted"><span>Series Label</span><Input value={seriesForm.label} onChange={(e) => { setSeriesCreateError(""); setSeriesForm((prev) => ({ ...prev, label: e.target.value })); }} placeholder="LLL" autoFocus /></label><label className="flex flex-col gap-1 text-sm text-fg-muted"><span>Starting Number</span><Input value={seriesForm.startNumber} onChange={(e) => { setSeriesCreateError(""); setSeriesForm((prev) => ({ ...prev, startNumber: e.target.value.replace(/[^\d]/g, "") })); }} placeholder="501" inputMode="numeric" /></label><div className="rounded-lg border border-border bg-bg-subtle px-3 py-2"><div className="text-[11px] uppercase tracking-wide text-fg-subtle">Preview</div><div className="mt-1 text-base font-semibold text-fg">{seriesPreview || "—"}</div></div>{seriesCreateError ? <div className="text-sm text-[var(--danger)]">{seriesCreateError}</div> : null}<div className="flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setShowCreateSeriesModal(false)} disabled={seriesCreateBusy}>Cancel</Button><Button type="button" variant="primary" onClick={() => { void handleCreateSeries(); }} disabled={seriesCreateBusy}>{seriesCreateBusy ? "Creating..." : "Create Series"}</Button></div></div></div> : null}
       {showDraftIncompleteConfirm && <div className="fixed inset-0 z-[60] bg-black/50 grid place-items-center p-4"><div className="card w-full max-w-lg p-4 space-y-3"><div className="text-lg font-semibold">Save incomplete draft?</div><div className="text-sm text-fg-subtle">This draft has empty required fields. Save it anyway?</div><div className="flex justify-end gap-2"><Button variant="secondary" onClick={() => setShowDraftIncompleteConfirm(false)}>Cancel</Button><Button variant="primary" onClick={() => onSave("draft", true)}>Save Draft Anyway</Button></div></div></div>}
       <ConfirmDialog

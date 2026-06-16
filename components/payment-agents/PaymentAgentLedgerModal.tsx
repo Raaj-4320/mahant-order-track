@@ -65,6 +65,14 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, error,
     () => orderRows.slice((ordersPage - 1) * PAGE_SIZE, ordersPage * PAGE_SIZE),
     [orderRows, ordersPage],
   );
+  const groupedPagedOrderRows = useMemo(
+    () =>
+      pagedOrderRows.map((row, index) => ({
+        ...row,
+        showOrderNumber: index === 0 || pagedOrderRows[index - 1]?.orderNumber !== row.orderNumber,
+      })),
+    [pagedOrderRows],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -174,6 +182,7 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, error,
                         <th className="px-3 py-2 text-left">Customer</th>
                         <th className="px-3 py-2 text-left">Type</th>
                         <th className="px-3 py-2 text-right">Amount</th>
+                        <th className="px-3 py-2 text-right">Credit Left</th>
                         <th className="px-3 py-2 text-left">Notes</th>
                       </tr>
                     </thead>
@@ -185,6 +194,7 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, error,
                           <td className="px-3 py-2.5 leading-tight">{row.customer}</td>
                           <td className="px-3 py-2.5 leading-tight">{row.type}</td>
                           <td className={cn("px-3 py-2.5 text-right font-semibold leading-tight tabular-nums", row.type === "Pending Order Amount" ? "text-rose-600" : row.type === "Credit Returned" ? "text-emerald-700" : "text-slate-900")}>{formatAmount(row.amount)}</td>
+                          <td className="px-3 py-2.5 text-right font-semibold leading-tight tabular-nums text-emerald-700">{formatAmount(row.runningCreditLeft)}</td>
                           <td className="px-3 py-2.5 leading-tight text-fg-subtle">{row.notes}</td>
                         </tr>
                       ))}
@@ -246,22 +256,24 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, error,
               <div className="px-4 py-8 text-center text-[12px] text-fg-subtle">No orders linked to this payment agent.</div>
             ) : (
               <div className="max-h-[34vh] overflow-auto">
-                <table className="w-full min-w-[1080px] text-[12px]">
+                <table className="w-full min-w-[1260px] text-[12px]">
                   <thead className="bg-white">
                     <tr className="border-b border-border text-[10px] uppercase tracking-[0.01em] text-fg-muted">
                       <th className="px-3 py-2 text-center">Photo</th>
                       <th className="px-3 py-2 text-left">Order No</th>
+                      <th className="px-3 py-2 text-left">Customer</th>
                       <th className="px-3 py-2 text-left">Marka</th>
+                      <th className="px-3 py-2 text-left">Details</th>
                       <th className="px-3 py-2 text-right">CTN</th>
                       <th className="px-3 py-2 text-right">PCS/CTN</th>
                       <th className="px-3 py-2 text-right">Total PCS</th>
                       <th className="px-3 py-2 text-right">Rate</th>
                       <th className="px-3 py-2 text-right">Amount</th>
-                      <th className="px-3 py-2 text-left">Customer</th>
+                      <th className="px-3 py-2 text-left">Loading Date</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {pagedOrderRows.map((row) => (
+                    {groupedPagedOrderRows.map((row) => (
                       <tr key={row.id} className="border-b border-border transition-colors last:border-b-0 hover:bg-bg-subtle/40">
                         <td className="px-3 py-2.5">
                           <div className="mx-auto grid h-12 w-12 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle">
@@ -278,14 +290,16 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, error,
                             )}
                           </div>
                         </td>
-                        <td className="px-3 py-2.5 font-semibold">{row.orderNumber}</td>
+                        <td className="px-3 py-2.5 font-semibold">{row.showOrderNumber ? row.orderNumber : ""}</td>
+                        <td className="px-3 py-2.5">{row.customer}</td>
                         <td className="px-3 py-2.5">{row.marka}</td>
+                        <td className="px-3 py-2.5">{row.details}</td>
                         <td className="px-3 py-2.5 text-right tabular-nums">{row.totalCtns.toLocaleString()}</td>
                         <td className="px-3 py-2.5 text-right tabular-nums">{row.pcsPerCtn.toLocaleString()}</td>
                         <td className="px-3 py-2.5 text-right tabular-nums">{row.totalPcs.toLocaleString()}</td>
                         <td className="px-3 py-2.5 text-right tabular-nums">{formatAmount(row.rate)}</td>
                         <td className="px-3 py-2.5 text-right font-semibold tabular-nums">{formatAmount(row.amount)}</td>
-                        <td className="px-3 py-2.5">{row.customer}</td>
+                        <td className="px-3 py-2.5">{row.loadingDate ? formatDateLabel(row.loadingDate) : "—"}</td>
                       </tr>
                     ))}
                   </tbody>
