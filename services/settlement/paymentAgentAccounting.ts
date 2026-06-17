@@ -1,4 +1,5 @@
 import { orderTotal, type Order, type PaymentAgent, type PaymentAgentLedgerEntry } from "@/lib/types";
+import { getResolvedLineCustomerName } from "@/services/customers/customerResolution";
 
 const clamp = (value: number) => Math.max(0, Number.isFinite(value) ? value : 0);
 const normalize = (value?: string | null) => (value || "").trim().toLowerCase();
@@ -103,7 +104,7 @@ const createFallbackSettlementEntry = (order: Order, agent: PaymentAgent): Payme
 
 const getOrderCustomerSummary = (order?: Order | null) => {
   if (!order) return "—";
-  const names = Array.from(new Set((order.lines || []).map((line) => line.customerSnapshot?.name?.trim() || line.customerName?.trim() || "").filter(Boolean)));
+  const names = Array.from(new Set((order.lines || []).map((line) => getResolvedLineCustomerName(line)).filter(Boolean)));
   return names.length > 0 ? names.join(", ") : "—";
 };
 
@@ -293,7 +294,7 @@ export const buildPaymentAgentOrderRows = (summary: PaymentAgentAccountingSummar
         totalPcs: (Number(line.totalCtns) || 0) * (Number(line.pcsPerCtn) || 0),
         rate: Number(line.rmbPerPcs) || 0,
         amount: (Number(line.totalCtns) || 0) * (Number(line.pcsPerCtn) || 0) * (Number(line.rmbPerPcs) || 0),
-        customer: line.customerSnapshot?.name?.trim() || line.customerName?.trim() || "—",
+        customer: getResolvedLineCustomerName(line) || "—",
         loadingDate: order.loadingDate || "",
       })),
     )

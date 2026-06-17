@@ -7,6 +7,7 @@ import { orderTotal } from "@/lib/types";
 import { cn } from "@/lib/cn";
 import { formatWholeMoney } from "@/lib/numbers";
 import type { Order, OrderLine } from "@/lib/types";
+import { getResolvedLineCustomerName } from "@/services/customers/customerResolution";
 
 export function OrdersSidebar() {
   const { orders, selectedOrderId, selectOrder } = useStore();
@@ -18,7 +19,7 @@ export function OrdersSidebar() {
     return `${names[0]} & ${names.length - 1} more`;
   };
   const resolveCustomerName = (line: OrderLine) =>
-    line.customerSnapshot?.name?.trim() || line.customerName?.trim() || line.customerId?.trim() || "Deleted customer";
+    getResolvedLineCustomerName(line) || line.customerId?.trim() || "Deleted customer";
   const resolveSupplierName = (line: OrderLine) =>
     line.supplierSnapshot?.name?.trim() || line.supplierName?.trim() || line.supplierId?.trim() || "Unknown supplier";
   const getOrderCustomerNames = (order: Order) => summarize(order.lines.map(resolveCustomerName));

@@ -17,6 +17,7 @@ import { formatWholeMoney } from "@/lib/numbers";
 import { joinLineDetails } from "@/lib/orderLineDetails";
 import { getOrderPaymentAgentDisplay } from "@/lib/orderDisplay";
 import { lineTotalPcs, type Customer, type Order } from "@/lib/types";
+import { getResolvedLineCustomerName } from "@/services/customers/customerResolution";
 import { getOrderCustomerReceivableAmount } from "@/services/settlement/customerReceivableLedger";
 import { useStore } from "@/lib/store";
 import { ordersDataSource } from "@/lib/runtimeConfig";
@@ -69,7 +70,7 @@ const getOrderTimelineValue = (order: Order) => order.date || order.createdAt ||
 
 const sameCustomer = (line: Order["lines"][number], customer: Customer) => {
   const customerName = (customer.displayName || customer.name || "").trim().toLowerCase();
-  const lineCustomerName = (line.customerName || line.customerSnapshot?.name || "").trim().toLowerCase();
+  const lineCustomerName = getResolvedLineCustomerName(line).trim().toLowerCase();
   return line.customerId === customer.id || (Boolean(customerName) && lineCustomerName === customerName);
 };
 

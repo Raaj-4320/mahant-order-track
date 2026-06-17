@@ -26,6 +26,7 @@ import { getOrderPaymentAgentDisplay } from "@/lib/orderDisplay";
 import { joinLineDetails } from "@/lib/orderLineDetails";
 import { ordersDataSource } from "@/lib/runtimeConfig";
 import { orderLifecycleService } from "@/services/orderLifecycleService";
+import { getResolvedLineCustomerName } from "@/services/customers/customerResolution";
 
 type ProductForm = Omit<Product, "createdAt" | "updatedAt"> & { createdAt?: string; updatedAt?: string };
 
@@ -157,8 +158,7 @@ export default function ProductsPage() {
 
         const paymentAgentName = matchedOrder ? getOrderPaymentAgentDisplay(matchedOrder, paymentAgents).value : "—";
         const customerName =
-          matchedLine?.customerName?.trim() ||
-          matchedLine?.customerSnapshot?.name?.trim() ||
+          (matchedLine ? getResolvedLineCustomerName(matchedLine) : "") ||
           customers.find((c) => c.id === matchedLine?.customerId)?.name ||
           "—";
         const totalCtn = Number(matchedLine?.totalCtns) || 0;

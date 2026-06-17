@@ -2,6 +2,7 @@ import type { Customer, DashboardOrderRow, Order, PaymentAgent, Product, Supplie
 import { getOrderPaymentAgentDisplay } from "@/lib/orderDisplay";
 import { orderTotal } from "@/lib/types";
 import type { DashboardStats } from "./contracts";
+import { getResolvedLineCustomerName } from "@/services/customers/customerResolution";
 
 const DASHBOARD_INCLUDED_STATUSES = ["saved", "packed", "received", "completed", "cancelled", "delayed"] as const;
 export const isDashboardOrder = (order: Order) => (DASHBOARD_INCLUDED_STATUSES as readonly string[]).includes(order.status);
@@ -27,7 +28,7 @@ export function getDashboardRows(orders: Order[], _suppliers: Supplier[], custom
     id: o.id,
     orderNumber: o.orderNumber || o.number,
     supplierSummary: "",
-    customerSummary: uniqNames(o.lines.map((l) => l.customerId), customers).join(", ") || Array.from(new Set(o.lines.map((l) => (l.customerName || l.customerSnapshot?.name || "").trim()).filter(Boolean))).join(", ") || "Deleted customer",
+    customerSummary: uniqNames(o.lines.map((l) => l.customerId), customers).join(", ") || Array.from(new Set(o.lines.map((l) => getResolvedLineCustomerName(l)).filter(Boolean))).join(", ") || "Deleted customer",
     totalUniqueItems: new Set(o.lines.map((l) => l.productId)).size,
     orderTotal: orderTotal(o),
     paidBy: getOrderPaymentAgentDisplay(o, paymentAgents).value,

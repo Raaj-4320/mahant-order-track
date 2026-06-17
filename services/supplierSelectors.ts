@@ -1,4 +1,5 @@
 import { lineTotalPcs, lineTotalRmb, type Order } from "@/lib/types";
+import { getResolvedLineCustomerName } from "@/services/customers/customerResolution";
 
 const SUPPLIER_SOURCE_STATUSES = ["saved", "loading", "shipped", "received", "completed", "cancelled", "delayed"] as const;
 export const isSupplierSourceOrder = (order: Order) =>
@@ -22,7 +23,7 @@ export function getWechatSupplierGroups(orders: Order[]) {
         amount: lineTotalRmb(l),
         totalPcs: lineTotalPcs(l),
         totalCtns: Number(l.totalCtns) || 0,
-        customerName: l.customerName || l.customerSnapshot?.name || "",
+        customerName: getResolvedLineCustomerName(l),
       }))
       .filter((l) => l.supplierName);
     if (!lines.length) continue;
@@ -63,7 +64,7 @@ export function getUniqueSupplierGroups(orders: Order[]) {
     row.entries.push({
       orderId: o.id, orderNumber: o.number || o.orderNumber, wechatId: norm(o.wechatId || ""), date: o.date, loadingDate: o.loadingDate,
       lineId: l.id, amount: lineTotalRmb(l), marka: l.marka, details: l.details,
-      totalCtns: Number(l.totalCtns) || 0, totalPcs: lineTotalPcs(l), customerName: l.customerName || l.customerSnapshot?.name || "",
+      totalCtns: Number(l.totalCtns) || 0, totalPcs: lineTotalPcs(l), customerName: getResolvedLineCustomerName(l),
     });
     groups.set(k, row);
   }

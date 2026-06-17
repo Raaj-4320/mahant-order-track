@@ -1,8 +1,13 @@
 import type { Customer, OrderLine } from "@/lib/types";
 import { createCustomerIdFromName, normalizeCustomerName } from "@/services/customers/customerIdentity";
-import { getCustomersService } from "@/services/customersService";
-import { logCustomer, logDB, logError } from "@/lib/logger";
-import { customersDataSourceSelection } from "@/lib/runtimeConfig";
+import { logCustomer } from "@/lib/logger";
+
+export function getResolvedLineCustomerName(line: Pick<OrderLine, "customerId" | "customerName" | "customerSnapshot">): string {
+  const snapshotName = line.customerSnapshot?.name?.trim() || "";
+  if (snapshotName) return snapshotName;
+  if (!line.customerId?.trim()) return "";
+  return line.customerName?.trim() || "";
+}
 
 export function findCustomerByTypedName(customers: Customer[], typedName: string): Customer | null {
   const normalized = normalizeCustomerName(typedName);
@@ -19,9 +24,7 @@ export function applyTypedCustomerToLine(line: OrderLine, typedName: string, cus
 }
 
 export async function resolveCustomersForOrderLines(lines: OrderLine[], customers: Customer[], nowIso: string): Promise<OrderLine[]> {
-  const selection = customersDataSourceSelection();
 logCustomer("resolve_order_customers_start", { lineCount: lines.length, knownCustomers: customers.length });
-  const customersService = getCustomersService();
   const existing = new Map<string, Customer>();
   [...customers]
     .sort((a, b) => a.id.localeCompare(b.id))
@@ -35,7 +38,7 @@ logCustomer("resolve_order_customers_start", { lineCount: lines.length, knownCus
     const typed = (line.customerName || line.customerSnapshot?.name || "").trim();
     if (!typed) {
       logCustomer("ensure_customer_skipped", { lineId: line.id, reason: "blank_name" });
-      resolved.push({ ...line, customerId: "" });
+      resolved.push({ ...line, customerId: "", customerName: "", customerSnapshot: undefined });
       continue;
     }
     const normalized = normalizeCustomerName(typed);
@@ -45,38 +48,8 @@ logCustomer("resolve_order_customers_start", { lineCount: lines.length, knownCus
       resolved.push({ ...line, customerId: hit.id, customerName: hit.name, customerSnapshot: { id: hit.id, name: hit.name, code: hit.customerCode } });
       continue;
     }
-    logCustomer("ensure_customer_create_start", { lineId: line.id, typed, normalized });
-    let created: Customer | undefined;
-    try {
-      created = await customersService.upsertCustomer?.({
-        id: createCustomerIdFromName(typed),
-        customerCode: `CUS-${Math.floor(Math.random() * 9000 + 1000)}`,
-        name: typed,
-        displayName: typed,
-        normalizedName: normalized,
-        source: "order-line",
-        status: "active",
-        totalOrders: 0,
-        totalSpent: 0,
-        outstandingAmount: 0,
-        totalReceived: 0,
-        storeCreditBalance: 0,
-        totalReceivableGenerated: 0,
-        currentReceivable: 0,
-        createdAt: nowIso,
-        updatedAt: nowIso,
-      } as Customer);
-    } catch (e) {
-throw e;
-    }
-    if (created) {
-      logDB("upsert_customer_success", { lineId: line.id, customerId: created.id, normalized });
-      existing.set(normalized, created);
-      resolved.push({ ...line, customerId: created.id, customerName: created.name, customerSnapshot: { id: created.id, name: created.name, code: created.customerCode } });
-      continue;
-    }
-    logError("ensure_customer_create_failure", { lineId: line.id, typed, normalized });
-    resolved.push(line);
+    logCustomer("ensure_customer_skipped", { lineId: line.id, reason: "unmatched_name_requires_explicit_selection", typed, normalized, nowIso, generatedIdPreview: createCustomerIdFromName(typed) });
+    resolved.push({ ...line, customerId: "", customerName: "", customerSnapshot: undefined });
   }
 logCustomer("resolve_order_customers_success", { resolvedCount: resolved.length });
   return resolved;

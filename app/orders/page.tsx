@@ -20,7 +20,7 @@ import { hasAnyDraftContent, validateOrderForSave } from "@/services/orderValida
 import { OrderLinesDetailModal } from "@/components/orders/OrderLinesDetailModal";
 import { useCustomers } from "@/hooks/useCustomers";
 import { customerLedgerService } from "@/services/customerLedgerService";
-import { resolveCustomersForOrderLines } from "@/services/customers/customerResolution";
+import { getResolvedLineCustomerName, resolveCustomersForOrderLines } from "@/services/customers/customerResolution";
 import { logCustomer, logDB, logError, logOrder, logPageAccess, logDataFlow } from "@/lib/logger";
 import { BadgePercent, Boxes, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Eye, Filter, IndianRupee, LayoutGrid, List, MessageCircleMore, Moon, Package2, Search, ShoppingBag, SquarePen, Sun, Trash2, UserRound, X } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -166,7 +166,7 @@ const summarizeOrderForLog = (o: Order) => ({
   paymentAgentId: o.paymentAgentId,
   lineCount: o.lines.length,
   totalAmount: orderTotal(o),
-  customerNames: Array.from(new Set(o.lines.map((l) => l.customerName || l.customerSnapshot?.name || "").filter(Boolean))).slice(0, 10),
+  customerNames: Array.from(new Set(o.lines.map((l) => getResolvedLineCustomerName(l)).filter(Boolean))).slice(0, 10),
   supplierNames: Array.from(new Set(o.lines.map((l) => l.supplierName || l.supplierSnapshot?.name || "").filter(Boolean))).slice(0, 10),
   generatedLineIds: o.lines.map((l) => l.id),
   linePhotoFlags: o.lines.map((l) => ({ lineId: l.id, hasProductPhoto: Boolean(l.productPhotoUrl), hasDimensionPhoto: Boolean(l.photoUrl) })),
@@ -279,7 +279,7 @@ export default function OrdersPage() {
         const q = query.toLowerCase().trim();
         const parsedOrderNumber = parseOrderNumber(order.number || order.orderNumber);
         const payment = getOrderPaymentAgentDisplay(order, paymentAgents).value;
-        const customerText = order.lines.map((line) => line.customerSnapshot?.name || line.customerName || "").join(" ");
+        const customerText = order.lines.map((line) => getResolvedLineCustomerName(line)).join(" ");
         const markaText = order.lines.map((line) => line.marka || "").join(" ");
         const detailText = order.lines.map((line) => joinLineDetails(line)).join(" ");
         const hasLoadingDate = Boolean(order.loadingDate?.trim());
@@ -395,7 +395,7 @@ export default function OrdersPage() {
   const wechatSuggestions = useMemo(() => Array.from(new Set(activeOrders.map((o) => o.wechatId.trim()).filter(Boolean))).slice(0, 5), [activeOrders]);
   const customerSuggestions = useMemo(() => {
     const fromCustomerRows = customers.map((c) => c.name?.trim()).filter(Boolean) as string[];
-    const fromOrders = activeOrders.flatMap((o) => o.lines.map((l) => (l.customerName || l.customerSnapshot?.name || "").trim())).filter(Boolean) as string[];
+    const fromOrders = activeOrders.flatMap((o) => o.lines.map((l) => getResolvedLineCustomerName(l))).filter(Boolean) as string[];
     return Array.from(new Set([...fromCustomerRows, ...fromOrders])).slice(0, 20);
   }, [customers, activeOrders]);
   const selectedPaymentAgentId = draft.paymentAgentId || draft.paymentBy;
@@ -1319,10 +1319,9 @@ try {
     if (values.length > 0) return values;
     return line.details?.trim() ? [line.details.trim()] : [];
   };
-  const getCardCustomerValue = (line: Order["lines"][number] | null, paymentMeta: ReturnType<typeof getOrderPaymentAgentDisplay>) => {
-    const lineCustomer = line?.customerSnapshot?.name?.trim() || line?.customerName?.trim();
-    if (lineCustomer) return lineCustomer;
-    return paymentMeta.value?.trim() || "—";
+  const getCardCustomerValue = (line: Order["lines"][number] | null) => {
+    const lineCustomer = line ? getResolvedLineCustomerName(line) : "";
+    return lineCustomer || "—";
   };
   const getHistoryRowTone = (loadingDate?: string) => {
     return "bg-[var(--bg-card)]";
@@ -1333,8 +1332,7 @@ try {
     const searchable = [
       line.marka || "",
       joinLineDetails(line),
-      line.customerName || "",
-      line.customerSnapshot?.name || "",
+      getResolvedLineCustomerName(line),
       formatAmount(getLineAmount(line)),
       formatAmount(getLineTotalPcs(line)),
       formatAmount(getLineRate(line)),
@@ -1548,7 +1546,6 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
               const canEditOperationalFields = order.status !== "draft" && order.status !== "archived";
               const productPhoto = line ? getLineProductPhoto(line) : "";
               const detailLines = line ? getVisibleLineDetails(line) : [];
-              const customerValue = getCardCustomerValue(line, paymentMeta);
               const totalPcs = line ? getLineTotalPcs(line) : 0;
               const ctns = line ? getLineCtns(line) : getOrderTotalCtns(order);
               const pcsPerCtn = line ? getLinePcsPerCtn(line) : 0;
@@ -1650,7 +1647,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                       <div className="text-[12px] font-semibold text-fg-subtle">Sub Line {index + 2}</div>
                       <div className="min-w-0"><div className="truncate text-[15px] font-semibold">{extraLine.marka?.trim() || "—"}</div><div className="truncate text-[12px] text-fg-subtle">{getVisibleLineDetails(extraLine).join(" · ") || "—"}</div></div>
                       <div className={cn("text-center text-[14px] font-semibold tabular-nums", getLineAmount(extraLine) > 0 ? "text-fg" : "text-[var(--danger)]")}>{formatFinalAmount(getLineAmount(extraLine))}</div>
-                      <div className="text-center text-[13px] font-semibold">{getCardCustomerValue(extraLine, paymentMeta)}</div>
+                      <div className="text-center text-[13px] font-semibold">{getCardCustomerValue(extraLine)}</div>
                     </div>)}
                   </div>
                 </div>
@@ -1744,7 +1741,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                 <div className="px-1 py-1.5 text-center leading-[1.05]"><div>PCS/</div><div>CTN</div></div>
                 <div className="px-1 py-1.5 text-center">Total Pieces</div>
                 <div className="px-1 py-1.5 text-center">Price/Pc</div>
-                <div className="px-1 py-1.5 text-right">Shipping</div>
+                <div className="px-1 py-1.5 text-center">Shipping</div>
                 <div className="px-1 py-1.5 text-right">Main Total Amount</div>
                 <div className="px-1 py-1.5 text-center">Customer</div>
                 <div className="px-1 py-1.5 text-center">Loading Date</div>
@@ -1771,7 +1768,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                   const amount = getOrderTotalAmount(order);
                   const shippingAmount = getOrderShippingAmount(order);
                   const marka = selectedLine?.marka?.trim() || "—";
-                  const customerName = getCardCustomerValue(selectedLine, paymentMeta);
+                  const customerName = getCardCustomerValue(selectedLine);
                   const hasMultipleLines = orderLines.length > 1;
 
                   return <div key={row.key} className="rounded-lg border border-border/70 bg-bg-card">
@@ -1852,7 +1849,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                       <div className="px-0.5 py-1.5 text-center text-[13.5px] font-semibold tabular-nums">{pcsPerCtn.toLocaleString()}</div>
                       <div className="px-0.5 py-1.5 text-center text-[13.5px] font-semibold tabular-nums">{totalPcs.toLocaleString()}</div>
                       <div className="px-0.5 py-1.5 text-center text-[14px] font-semibold tabular-nums">{formatPlainAmount(rate)}</div>
-                      <div className={cn("px-0.5 py-1.5 text-right text-[14px] font-semibold tabular-nums", shippingAmount > 0 ? "text-rose-600" : "text-[var(--danger)]")}>{formatFinalAmount(shippingAmount)}</div>
+                      <div className={cn("px-0.5 py-1.5 text-center text-[14px] font-semibold tabular-nums", shippingAmount > 0 ? "text-rose-600" : "text-[var(--danger)]")}>{formatFinalAmount(shippingAmount)}</div>
                       <div className={cn("px-0.5 py-1.5 text-right text-[15px] font-bold tabular-nums", amount > 0 ? "text-fg" : "text-[var(--danger)]")}>{formatFinalAmount(amount)}</div>
                       <div className="min-w-0 px-1 py-1.5"><div className="block w-full min-w-0 truncate text-center text-[13.5px] font-semibold leading-tight" title={customerName}>{customerName}</div></div>
                       <div className="min-w-0 pl-1 pr-2 py-1.5 text-center">
