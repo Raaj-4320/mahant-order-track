@@ -2,6 +2,7 @@
 
 import { PageShell } from "@/components/PageShell";
 import { formatAmount, formatDate } from "@/lib/data";
+import { formatWholeMoney } from "@/lib/numbers";
 import { useStore } from "@/lib/store";
 import { useSuppliers } from "@/hooks/useSuppliers";
 import { getUniqueSupplierGroups, getWechatSupplierGroups, isSupplierSourceOrder } from "@/services/supplierSelectors";
@@ -137,7 +138,7 @@ export default function SuppliersPage() {
               <StatCard label="Total WeChat IDs" value={filteredWechat.length.toString()} />
               <StatCard label="Total Orders" value={filteredWechat.reduce((s, g) => s + g.totalOrders, 0).toString()} />
               <StatCard label="Total Supplier Entries" value={filteredWechat.reduce((s, g) => s + g.totalLineCount, 0).toString()} />
-              <StatCard label="Total Amount" value={formatAmount(filteredWechat.reduce((s, g) => s + g.totalAmount, 0))} />
+              <StatCard label="Total Amount" value={formatWholeMoney(filteredWechat.reduce((s, g) => s + g.totalAmount, 0))} />
             </div>
 
             <div className="card overflow-hidden">
@@ -159,7 +160,7 @@ export default function SuppliersPage() {
                         <td className="px-3 py-2 font-semibold">{g.wechatId}</td>
                         <td>{g.totalOrders}</td>
                         <td>{g.totalSuppliers}</td>
-                        <td>{formatAmount(g.totalAmount)}</td>
+                        <td className={g.totalAmount > 0 ? "" : "text-[var(--danger)]"}>{formatWholeMoney(g.totalAmount)}</td>
                         <td>{g.lastOrderDate ? formatDate(g.lastOrderDate) : "—"}</td>
                         <td className="flex justify-end gap-2">
                           <Button size="sm" variant="secondary" onClick={() => setExpanded(expanded === g.wechatId ? null : g.wechatId)}>View Details</Button>
@@ -173,7 +174,7 @@ export default function SuppliersPage() {
                               <div key={o.orderId} className="mb-2">
                                 <div className="text-[12px] font-medium">{o.orderNumber} · {formatDate(o.date)}</div>
                                 {o.lines.map((l: any) => (
-                                  <div key={l.lineId} className="text-[12px] text-fg-subtle">{l.supplierName} · {formatAmount(l.amount)} · CTNs {l.totalCtns} · PCS {l.totalPcs} · {l.customerName || "—"} · {l.marka || l.details || "—"}</div>
+                                  <div key={l.lineId} className="text-[12px] text-fg-subtle">{l.supplierName} · {formatWholeMoney(l.amount)} · CTNs {l.totalCtns} · PCS {l.totalPcs} · {l.customerName || "—"} · {l.marka || l.details || "—"}</div>
                                 ))}
                               </div>
                             ))}
@@ -193,7 +194,7 @@ export default function SuppliersPage() {
               <StatCard label="Total Unique Suppliers" value={filteredUnique.length.toString()} />
               <StatCard label="Total Orders" value={filteredUnique.reduce((s, g) => s + g.totalOrders, 0).toString()} />
               <StatCard label="Total WeChat IDs" value={filteredUnique.reduce((s, g) => s + g.totalWechatIds, 0).toString()} />
-              <StatCard label="Total Amount" value={formatAmount(filteredUnique.reduce((s, g) => s + g.totalAmount, 0))} />
+              <StatCard label="Total Amount" value={formatWholeMoney(filteredUnique.reduce((s, g) => s + g.totalAmount, 0))} />
             </div>
 
             <div className="card overflow-hidden">
@@ -215,7 +216,7 @@ export default function SuppliersPage() {
                         <td className="px-3 py-2 font-semibold">{g.supplierName}</td>
                         <td>{g.totalOrders}</td>
                         <td>{g.totalWechatIds}</td>
-                        <td>{formatAmount(g.totalAmount)}</td>
+                        <td className={g.totalAmount > 0 ? "" : "text-[var(--danger)]"}>{formatWholeMoney(g.totalAmount)}</td>
                         <td>{g.lastOrderDate ? formatDate(g.lastOrderDate) : "—"}</td>
                         <td className="flex justify-end gap-2">
                           <Button size="sm" variant="secondary" onClick={() => setExpanded(expanded === g.supplierKey ? null : g.supplierKey)}>View Details</Button>
@@ -226,7 +227,7 @@ export default function SuppliersPage() {
                         <tr>
                           <td colSpan={6} className="bg-bg-subtle px-3 py-2">
                             {g.entries.map((e: any) => (
-                              <div key={e.lineId} className="text-[12px] text-fg-subtle">{e.orderNumber} · {e.wechatId || "—"} · {formatDate(e.date)} · {formatAmount(e.amount)} · {e.marka || e.details || "—"}</div>
+                              <div key={e.lineId} className="text-[12px] text-fg-subtle">{e.orderNumber} · {e.wechatId || "—"} · {formatDate(e.date)} · {formatWholeMoney(e.amount)} · {e.marka || e.details || "—"}</div>
                             ))}
                           </td>
                         </tr>

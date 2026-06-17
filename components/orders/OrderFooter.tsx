@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { formatAmount } from "@/lib/data";
 import { formatWholeMoney } from "@/lib/numbers";
+import { cn } from "@/lib/cn";
 import type { PaymentAgent } from "@/lib/types";
 import type { PaymentAgentSettlementResult } from "@/services/settlement/paymentAgentSettlement";
 
@@ -28,11 +29,39 @@ type Props = {
 const fmt = (value: number) => formatAmount(value);
 const fmtFinal = (value: number) => formatWholeMoney(value);
 
-function Metric({ label, value, tone = "default" }: { label: string; value: string; tone?: "default" | "success" | "warning" | "info" | "danger" }) {
+function Metric({
+  label,
+  value,
+  tone = "default",
+  zeroDanger = false,
+}: {
+  label: string;
+  value: string;
+  tone?: "default" | "success" | "warning" | "info" | "danger";
+  zeroDanger?: boolean;
+}) {
+  const isZero = zeroDanger && value.replace(/,/g, "") === "0";
   return (
     <div className="px-3 py-1.5">
       <div className="text-[10px] uppercase tracking-wide text-fg-subtle">{label}</div>
-      <div className={`text-[16px] font-semibold tabular-nums ${tone === "success" ? "text-[var(--success)]" : tone === "warning" ? "text-amber-600" : tone === "info" ? "text-sky-600" : tone === "danger" ? "text-rose-600" : "text-fg"}`}>{value}</div>
+      <div
+        className={cn(
+          "text-[16px] font-semibold tabular-nums",
+          isZero
+            ? "text-[var(--danger)]"
+            : tone === "success"
+              ? "text-[var(--success)]"
+              : tone === "warning"
+                ? "text-amber-600"
+                : tone === "info"
+                  ? "text-sky-600"
+                  : tone === "danger"
+                    ? "text-rose-600"
+                    : "text-fg",
+        )}
+      >
+        {value}
+      </div>
     </div>
   );
 }
@@ -63,8 +92,8 @@ export function OrderFooter({
       <div className="rounded-xl border border-border bg-bg-subtle px-2 py-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center divide-x divide-border/70">
-            <Metric label="Agent Credit" value={paymentAgent ? fmt(settlement.existingCredit) : "—"} />
-            <Metric label="Order Lines Total" value={fmt(lineTotal)} />
+            <Metric label="Agent Credit" value={paymentAgent ? fmt(settlement.existingCredit) : "—"} zeroDanger />
+            <Metric label="Order Lines Total" value={fmtFinal(lineTotal)} zeroDanger />
             <div className="px-3 py-1.5">
               <div className="text-[10px] uppercase tracking-wide text-fg-subtle">Shipping Price</div>
               <input
@@ -80,14 +109,17 @@ export function OrderFooter({
                   }
                 }}
                 onBlur={() => setShippingInput(shippingPrice ? String(shippingPrice) : "")}
-                className="mt-0.5 h-8 w-28 rounded-md border border-border bg-bg-card px-2 text-[14px] font-semibold tabular-nums text-rose-600 outline-none transition-colors focus:border-brand"
+                className={cn(
+                  "mt-0.5 h-8 w-28 rounded-md border border-border bg-bg-card px-2 text-[14px] font-semibold tabular-nums outline-none transition-colors focus:border-brand",
+                  shippingPrice > 0 ? "text-fg" : "text-rose-600",
+                )}
                 placeholder="0"
               />
             </div>
-            <Metric label="Final Total Amount" value={fmtFinal(total)} tone="warning" />
-            <Metric label="Credit Used" value={paymentAgent ? fmt(settlement.creditUsed) : "0"} tone="info" />
-            <Metric label="Payable" value={paymentAgent ? fmt(settlement.remainingPayable) : fmt(total)} tone={(paymentAgent ? settlement.remainingPayable : total) > 0 ? "warning" : "default"} />
-            <Metric label="Credit Left" value={paymentAgent ? fmt(settlement.resultingCreditBalance) : "—"} tone={paymentAgent && settlement.resultingCreditBalance > 0 ? "success" : "default"} />
+            <Metric label="Main Total Amount" value={fmtFinal(total)} tone="warning" zeroDanger />
+            <Metric label="Credit Used" value={paymentAgent ? fmt(settlement.creditUsed) : "0"} tone="info" zeroDanger />
+            <Metric label="Payable" value={paymentAgent ? fmtFinal(settlement.remainingPayable) : fmtFinal(total)} tone={(paymentAgent ? settlement.remainingPayable : total) > 0 ? "warning" : "default"} zeroDanger />
+            <Metric label="Credit Left" value={paymentAgent ? fmt(settlement.resultingCreditBalance) : "—"} tone={paymentAgent && settlement.resultingCreditBalance > 0 ? "success" : "default"} zeroDanger />
           </div>
 
           <div className="flex flex-wrap items-center gap-2">

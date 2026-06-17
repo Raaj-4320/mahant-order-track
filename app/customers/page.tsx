@@ -13,6 +13,7 @@ import { useOrders } from "@/hooks/useOrders";
 import { usePaymentAgents } from "@/hooks/usePaymentAgents";
 import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
 import { formatAmount, formatDate } from "@/lib/data";
+import { formatWholeMoney } from "@/lib/numbers";
 import { joinLineDetails } from "@/lib/orderLineDetails";
 import { getOrderPaymentAgentDisplay } from "@/lib/orderDisplay";
 import { lineTotalPcs, type Customer, type Order } from "@/lib/types";
@@ -81,6 +82,8 @@ const sortLedgerRowsNewestFirst = (rows: CustomerLedgerRow[]) =>
     return (right.lineId || "").localeCompare(left.lineId || "");
   });
 
+const formatTotalAmount = (value: number) => formatWholeMoney(value);
+
 export default function CustomersPage() {
   const { data: customers, isLoading, error, reload: reloadCustomers } = useCustomers();
   const { data: firebaseOrders } = useOrders();
@@ -141,7 +144,7 @@ export default function CustomersPage() {
         customer.wechatId || "",
         customer.phone || "",
         customer.email || "",
-        formatAmount(totalPurchaseAmount),
+        formatTotalAmount(totalPurchaseAmount),
         String(totalOrders),
         ...ledgerRows.flatMap((row) => [
           row.orderNumber,
@@ -153,7 +156,7 @@ export default function CustomersPage() {
           row.orderDate,
           row.loadingDate,
           row.status,
-          formatAmount(row.totalAmount),
+          formatTotalAmount(row.totalAmount),
           formatAmount(row.pricePerPiece),
           String(row.totalCtns),
           String(row.pcsPerCtn),
@@ -235,9 +238,9 @@ export default function CustomersPage() {
       row.lastOrderNumber,
       row.lastOrderMarka,
       row.lastOrderDate ? formatDate(row.lastOrderDate) : "Not Set",
-      formatAmount(row.lastOrderAmount),
+      formatTotalAmount(row.lastOrderAmount),
       String(row.totalOrders),
-      formatAmount(row.totalPurchaseAmount),
+      formatTotalAmount(row.totalPurchaseAmount),
       row.lastPaidBy,
       row.lastWechatId,
     ]);
@@ -262,7 +265,7 @@ export default function CustomersPage() {
       String(row.pcsPerCtn),
       String(row.totalPieces),
       formatAmount(row.pricePerPiece),
-      formatAmount(row.totalAmount),
+      formatTotalAmount(row.totalAmount),
       row.paidBy,
       row.loadingDate ? formatDate(row.loadingDate) : "Not Set",
       row.status,
@@ -289,7 +292,7 @@ export default function CustomersPage() {
           <td>${row.pcsPerCtn}</td>
           <td>${row.totalPieces}</td>
           <td>${formatAmount(row.pricePerPiece)}</td>
-          <td>${formatAmount(row.totalAmount)}</td>
+          <td>${formatTotalAmount(row.totalAmount)}</td>
           <td>${row.paidBy}</td>
           <td>${row.loadingDate ? formatDate(row.loadingDate) : "Not Set"}</td>
           <td>${row.status}</td>
@@ -312,7 +315,7 @@ export default function CustomersPage() {
         <body>
           <h2>${summary.customer.displayName || summary.customer.name || "Customer Ledger"}</h2>
           <div>Total Orders: ${summary.totalOrders}</div>
-          <div>Total Purchase Amount: ${formatAmount(summary.totalPurchaseAmount)}</div>
+          <div>Total Purchase Amount: ${formatTotalAmount(summary.totalPurchaseAmount)}</div>
           <table>
             <thead>
               <tr>
@@ -436,9 +439,9 @@ export default function CustomersPage() {
                             {row.lastOrderMarka}
                           </div>
                         </td>
-                        <td className="px-2 py-2.5 text-right font-semibold tabular-nums">{formatAmount(row.lastOrderAmount)}</td>
+                        <td className={`px-2 py-2.5 text-right font-semibold tabular-nums ${row.lastOrderAmount > 0 ? "text-fg" : "text-[var(--danger)]"}`}>{formatTotalAmount(row.lastOrderAmount)}</td>
                         <td className="px-2 py-2.5 text-center font-semibold">{row.totalOrders}</td>
-                        <td className="px-2 py-2.5 text-right font-semibold tabular-nums">{formatAmount(row.totalPurchaseAmount)}</td>
+                        <td className={`px-2 py-2.5 text-right font-semibold tabular-nums ${row.totalPurchaseAmount > 0 ? "text-fg" : "text-[var(--danger)]"}`}>{formatTotalAmount(row.totalPurchaseAmount)}</td>
                         <td className="px-2 py-2.5">{row.lastPaidBy}</td>
                         <td className="px-2 py-2.5">{row.lastWechatId}</td>
                         <td className="px-3 py-2.5">
@@ -494,7 +497,7 @@ export default function CustomersPage() {
                     <div className="text-[20px] font-semibold">{activeSummary.customer.displayName || activeSummary.customer.name || "Customer Ledger"}</div>
                     <div className="mt-1 flex flex-wrap gap-4 text-[12px] text-fg-subtle">
                       <span>Total Orders: {activeSummary.totalOrders}</span>
-                      <span>Total Purchase: {formatAmount(activeSummary.totalPurchaseAmount)}</span>
+                      <span className={activeSummary.totalPurchaseAmount > 0 ? "" : "text-[var(--danger)]"}>Total Purchase: {formatTotalAmount(activeSummary.totalPurchaseAmount)}</span>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -574,7 +577,7 @@ export default function CustomersPage() {
                           <td className="px-2 py-2.5 text-center tabular-nums">{row.pcsPerCtn.toLocaleString()}</td>
                           <td className="px-2 py-2.5 text-center tabular-nums">{row.totalPieces.toLocaleString()}</td>
                           <td className="px-2 py-2.5 text-right tabular-nums">{formatAmount(row.pricePerPiece)}</td>
-                          <td className="px-2 py-2.5 text-right font-semibold tabular-nums">{formatAmount(row.totalAmount)}</td>
+                          <td className={`px-2 py-2.5 text-right font-semibold tabular-nums ${row.totalAmount > 0 ? "text-fg" : "text-[var(--danger)]"}`}>{formatTotalAmount(row.totalAmount)}</td>
                           <td className="px-2 py-2.5">{row.paidBy}</td>
                           <td className="px-2 py-2.5">{row.loadingDate ? formatDate(row.loadingDate) : "Not Set"}</td>
                           <td className="px-2 py-2.5">{row.status}</td>

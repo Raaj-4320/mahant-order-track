@@ -18,7 +18,8 @@ import { cn } from "@/lib/cn";
 import { useEffect, useRef, useState } from "react";
 import { useStore } from "@/lib/store";
 import { Order, orderTotal } from "@/lib/types";
-import { formatAmount, formatDate } from "@/lib/data";
+import { formatDate } from "@/lib/data";
+import { formatWholeMoney } from "@/lib/numbers";
 import { useTheme } from "@/components/ThemeProvider";
 
 type View = "list" | "grid" | "calendar";
@@ -115,7 +116,7 @@ export function OrderToolbar({
                       {o.lines.length} line{o.lines.length === 1 ? "" : "s"}
                     </span>
                     <span className="text-[12px] font-semibold text-[var(--success)] tabular-nums">
-                      {formatAmount(orderTotal(o))}
+                      {formatWholeMoney(orderTotal(o))}
                     </span>
                   </div>
                 </button>

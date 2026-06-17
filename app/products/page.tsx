@@ -15,6 +15,7 @@ import { Select } from "@/components/ui/Select";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { TablePagination } from "@/components/table/TablePagination";
 import { formatAmount } from "@/lib/data";
+import { formatWholeMoney } from "@/lib/numbers";
 import { uploadImageUnsigned } from "@/lib/cloudinary/client";
 import type { Product } from "@/lib/types";
 import { Boxes, Download, Filter, Plus, Search, Trash2 } from "lucide-react";
@@ -315,14 +316,14 @@ export default function ProductsPage() {
                 <StatCard label="Inactive Products" value={inactive.toString()} />
                 <StatCard label="Categories" value={displayedCategoriesCount.toString()} />
                 <StatCard label="Low Stock Items" value={displayedLowStock.toString()} />
-                <StatCard label="Active Catalog Value" value={formatAmount(activeCatalogValue)} />
+                <StatCard label="Active Catalog Value" value={formatWholeMoney(activeCatalogValue)} />
               </>
             ) : (
               <>
                 <StatCard label={status === "inactive" ? "Inactive Products" : "Products"} value={displayedRows.length.toString()} icon={<Boxes size={16} />} />
                 <StatCard label={status === "inactive" ? "Inactive Categories" : "Categories"} value={displayedCategoriesCount.toString()} />
                 <StatCard label={status === "inactive" ? "Inactive Low Stock" : "Low Stock Items"} value={displayedLowStock.toString()} />
-                <StatCard label={status === "inactive" ? "Inactive Catalog Value" : "Active Catalog Value"} value={formatAmount(displayedCatalogValue)} />
+                <StatCard label={status === "inactive" ? "Inactive Catalog Value" : "Active Catalog Value"} value={formatWholeMoney(displayedCatalogValue)} />
               </>
             )}
           </div>
@@ -401,7 +402,7 @@ export default function ProductsPage() {
                     <td className="px-2 py-3 text-center tabular-nums">{row.qtyPerCtn.toLocaleString()}</td>
                     <td className="px-2 py-3 text-center tabular-nums">{row.totalQty.toLocaleString()}</td>
                     <td className="px-2 py-3 text-center font-semibold tabular-nums text-[var(--success)]">{formatAmount(row.ratePerPcs)}</td>
-                    <td className="px-4 py-3 text-center font-semibold tabular-nums">{formatAmount(row.amount)}</td>
+                    <td className={`px-4 py-3 text-center font-semibold tabular-nums ${row.amount > 0 ? "text-fg" : "text-[var(--danger)]"}`}>{formatWholeMoney(row.amount)}</td>
                     <td className="px-4 py-3 text-right">
                       <Button size="sm" variant="secondary" onClick={() => setPendingDeleteProduct(row.product)}>
                         <Trash2 size={13} />

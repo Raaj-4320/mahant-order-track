@@ -1,10 +1,11 @@
 "use client";
 
 import { List } from "lucide-react";
-import { formatAmount, formatDate } from "@/lib/data";
+import { formatDate } from "@/lib/data";
 import { useStore } from "@/lib/store";
 import { orderTotal } from "@/lib/types";
 import { cn } from "@/lib/cn";
+import { formatWholeMoney } from "@/lib/numbers";
 import type { Order, OrderLine } from "@/lib/types";
 
 export function OrdersSidebar() {
@@ -57,7 +58,7 @@ export function OrdersSidebar() {
                 <div className="mt-1.5 flex items-center justify-between gap-2">
                   <span className="truncate text-[11.5px] text-fg-muted">{customerNames}</span>
                   <span className="text-[12px] font-semibold text-[var(--success)] tabular-nums whitespace-nowrap">
-                    {formatAmount(total)}
+                    {formatWholeMoney(total)}
                   </span>
                 </div>
                 <div className="mt-0.5 truncate text-[10.5px] text-fg-subtle">{paymentAgentName}</div>

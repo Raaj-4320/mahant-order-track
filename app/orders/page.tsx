@@ -232,7 +232,7 @@ export default function OrdersPage() {
   const isOrderModalOpen = mode === "add" || mode === "edit";
   const [view, setView] = useState<"list" | "grid" | "calendar">("list");
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [selectedOrderCategory, setSelectedOrderCategory] = useState("all");
+  const [selectedOrderCategory, setSelectedOrderCategory] = useState("");
   const [selectedSeriesId, setSelectedSeriesId] = useState("");
   const [seriesPickerOpen, setSeriesPickerOpen] = useState(false);
   const [showCreateSeriesModal, setShowCreateSeriesModal] = useState(false);
@@ -260,7 +260,6 @@ export default function OrdersPage() {
   const { data: orderSeries, isLoading: isOrderSeriesLoading, createSeries: createOrderSeries, syncSeriesFromOrder, reload: reloadOrderSeries } = useOrderNumberSeries(activeOrders);
   const lineTotal = useMemo(() => orderLinesTotal(draft), [draft]);
   const total = useMemo(() => orderTotal(draft), [draft]);
-  const effectiveOrderCategory = query.trim() ? "all" : selectedOrderCategory;
   const orderCategoryTabs = useMemo(() => {
     const discovered = new Set<string>();
     orderSeries.forEach((series) => {
@@ -271,8 +270,9 @@ export default function OrdersPage() {
       const parsed = parseOrderNumber(order.number || order.orderNumber);
       if (parsed?.category) discovered.add(parsed.category);
     });
-    return ["all", ...Array.from(discovered).sort((left, right) => left.localeCompare(right))];
+    return Array.from(discovered).sort((left, right) => left.localeCompare(right));
   }, [orderSeries, activeOrders]);
+  const effectiveOrderCategory = selectedOrderCategory || orderCategoryTabs[0] || "";
   const filteredOrders = useMemo(
     () =>
       activeOrders.filter((order) => {
@@ -295,7 +295,7 @@ export default function OrdersPage() {
         if (filters.orderNumber.trim() && !(order.number || order.orderNumber || "").toLowerCase().includes(filters.orderNumber.trim().toLowerCase())) return false;
         if (filters.customer.trim() && !customerText.toLowerCase().includes(filters.customer.trim().toLowerCase())) return false;
         if (filters.marka.trim() && !`${markaText} ${detailText}`.toLowerCase().includes(filters.marka.trim().toLowerCase())) return false;
-        if (!q && effectiveOrderCategory !== "all" && parsedOrderNumber?.category !== effectiveOrderCategory) return false;
+        if (!q && effectiveOrderCategory && parsedOrderNumber?.category !== effectiveOrderCategory) return false;
         if (!q) return true;
         const searchable = [
           order.number || order.orderNumber || "",
@@ -320,7 +320,7 @@ export default function OrdersPage() {
   const sortedOrders = useMemo(() => {
     const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
     return [...filteredOrders].sort((left, right) => {
-      if (effectiveOrderCategory !== "all") {
+      if (effectiveOrderCategory) {
         const leftParsed = parseOrderNumber(left.number || left.orderNumber);
         const rightParsed = parseOrderNumber(right.number || right.orderNumber);
         const numericDiff = (rightParsed?.numericNumber ?? Number.NEGATIVE_INFINITY) - (leftParsed?.numericNumber ?? Number.NEGATIVE_INFINITY);
@@ -464,9 +464,14 @@ export default function OrdersPage() {
   }, [query, filters, rowsPerPage, mode, selectedOrderCategory]);
 
   useEffect(() => {
-    if (!query.trim()) return;
-    setSelectedOrderCategory("all");
-  }, [query]);
+    if (!orderCategoryTabs.length) {
+      if (selectedOrderCategory) setSelectedOrderCategory("");
+      return;
+    }
+    if (!selectedOrderCategory || !orderCategoryTabs.includes(selectedOrderCategory)) {
+      setSelectedOrderCategory(orderCategoryTabs[0]);
+    }
+  }, [orderCategoryTabs, selectedOrderCategory]);
 
   const onUploadingChange = (isUploading: boolean) => setActiveUploads((p) => Math.max(0, p + (isUploading ? 1 : -1)));
 
@@ -1363,7 +1368,7 @@ try {
     });
     return Array.from(groups.entries()).sort((a, b) => b[0].localeCompare(a[0]));
   }, [pagedHistory]);
-const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 58px 62px 76px 72px 92px minmax(88px,0.78fr) 108px minmax(108px,0.8fr) 104px";
+const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 58px 62px 76px 72px 88px 96px minmax(108px,0.85fr) 108px minmax(108px,0.8fr) 104px";
   const fmtOrderDate = (order: Order) => {
     const raw = order.date || order.createdAt || order.updatedAt;
     if (!raw) return "—";
@@ -1500,7 +1505,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
       </div>
       {ordersDataSource === "mock" ? <div className="border-b border-amber-300 bg-amber-50 px-5 py-2 text-[12px] font-medium text-amber-900">{ordersSourceSelection.hasFirebaseConfig ? "Mock mode is enabled; order and customer data is local and will not persist to Firebase." : "Firebase is not configured; app is running in mock mode and data will not persist."}</div> : null}
       <main className="min-h-0 flex-1 overflow-y-auto p-4 space-y-4">
-        {mode === "history" ? <section className="card p-2.5"><div className="flex flex-wrap items-center gap-2">{orderCategoryTabs.map((category) => { const isActive = effectiveOrderCategory === category; const label = category === "all" ? "All" : category; return <button key={category} type="button" onClick={() => setSelectedOrderCategory(category)} className={cn("rounded-full border px-3 py-1.5 text-[12px] font-medium transition-colors", isActive ? "border-brand bg-brand text-brand-fg" : "border-border bg-bg-card text-fg hover:bg-bg-subtle")}>{label}</button>; })}</div></section> : null}
+        {mode === "history" && orderCategoryTabs.length ? <section className="card p-2.5"><div className="flex flex-wrap items-center gap-2">{orderCategoryTabs.map((category) => { const isActive = effectiveOrderCategory === category; return <button key={category} type="button" onClick={() => setSelectedOrderCategory(category)} className={cn("rounded-full border px-3 py-1.5 text-[12px] font-medium transition-colors", isActive ? "border-brand bg-brand text-brand-fg" : "border-border bg-bg-card text-fg hover:bg-bg-subtle")}>{category}</button>; })}</div></section> : null}
         {mode === "drafts" && <section className="card overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-border"><h3 className="font-semibold">Draft Orders</h3><div className="text-[12px] text-fg-subtle">{drafts.length} draft{drafts.length === 1 ? "" : "s"}</div></div>
           <div className="overflow-x-auto">
@@ -1549,6 +1554,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
               const pcsPerCtn = line ? getLinePcsPerCtn(line) : 0;
               const rate = line ? getLineRate(line) : 0;
               const amount = getOrderTotalAmount(order);
+              const shippingAmount = getOrderShippingAmount(order);
               const expanded = isOrderExpanded(row);
               return <div
                 key={row.key}
@@ -1643,7 +1649,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                     {row.extraLines.map((extraLine, index) => <div key={`${order.id}-grid-extra-${extraLine.id || index}`} className={cn("grid grid-cols-[88px_minmax(0,1fr)_110px_110px] items-center gap-3 rounded-xl border border-border/70 bg-white/85 px-3 py-3", isLineMatchedByQuery(extraLine) && "border-brand/40 bg-brand/5")}>
                       <div className="text-[12px] font-semibold text-fg-subtle">Sub Line {index + 2}</div>
                       <div className="min-w-0"><div className="truncate text-[15px] font-semibold">{extraLine.marka?.trim() || "—"}</div><div className="truncate text-[12px] text-fg-subtle">{getVisibleLineDetails(extraLine).join(" · ") || "—"}</div></div>
-                      <div className="text-center text-[14px] font-semibold tabular-nums">{formatPlainAmount(getLineAmount(extraLine))}</div>
+                      <div className={cn("text-center text-[14px] font-semibold tabular-nums", getLineAmount(extraLine) > 0 ? "text-fg" : "text-[var(--danger)]")}>{formatFinalAmount(getLineAmount(extraLine))}</div>
                       <div className="text-center text-[13px] font-semibold">{getCardCustomerValue(extraLine, paymentMeta)}</div>
                     </div>)}
                   </div>
@@ -1655,9 +1661,10 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                       { label: "PCS/CTN", value: formatPlainAmount(pcsPerCtn), icon: <Boxes size={21} />, tint: "bg-orange-100 text-orange-700", valueClass: "text-slate-950" },
                       { label: "TOTAL PCS", value: formatPlainAmount(totalPcs), icon: <ShoppingBag size={21} />, tint: "bg-sky-100 text-sky-700", valueClass: "text-slate-950" },
                       { label: "RATE", value: formatPlainAmount(rate), icon: <BadgePercent size={21} />, tint: "bg-rose-100 text-rose-700", valueClass: "text-slate-950" },
-                      { label: "TOTAL AMOUNT", value: formatPlainAmount(amount), icon: <IndianRupee size={23} />, tint: "bg-emerald-100 text-emerald-700", valueClass: "text-emerald-700 text-[30px]" },
+                      { label: "SHIPPING", value: formatFinalAmount(shippingAmount), icon: <IndianRupee size={23} />, tint: "bg-rose-100 text-rose-700", valueClass: shippingAmount > 0 ? "text-rose-600 text-[30px]" : "text-[var(--danger)] text-[30px]" },
+                      { label: "TOTAL AMOUNT", value: formatFinalAmount(amount), icon: <IndianRupee size={23} />, tint: "bg-emerald-100 text-emerald-700", valueClass: amount > 0 ? "text-emerald-700 text-[30px]" : "text-[var(--danger)] text-[30px]" },
                     ].map((stat, index) => (
-                      <div key={`${row.key}-${stat.label}`} className={cn("flex min-w-0 items-center gap-4 rounded-2xl lg:rounded-none", index < 5 && "lg:pr-4", index < 4 && "lg:border-r lg:border-[#e8ebef]")}>
+                      <div key={`${row.key}-${stat.label}`} className={cn("flex min-w-0 items-center gap-4 rounded-2xl lg:rounded-none", index < 6 && "lg:pr-4", index < 5 && "lg:border-r lg:border-[#e8ebef]")}>
                         <div className={cn("grid h-12 w-12 shrink-0 place-items-center rounded-2xl", stat.tint)}>
                           {stat.icon}
                         </div>
@@ -1737,7 +1744,8 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                 <div className="px-1 py-1.5 text-center leading-[1.05]"><div>PCS/</div><div>CTN</div></div>
                 <div className="px-1 py-1.5 text-center">Total Pieces</div>
                 <div className="px-1 py-1.5 text-center">Price/Pc</div>
-                <div className="px-1 py-1.5 text-right">Total Amount</div>
+                <div className="px-1 py-1.5 text-right">Shipping</div>
+                <div className="px-1 py-1.5 text-right">Main Total Amount</div>
                 <div className="px-1 py-1.5 text-center">Customer</div>
                 <div className="px-1 py-1.5 text-center">Loading Date</div>
                 <div className="px-1 py-1.5 text-center">Paid By</div>
@@ -1760,19 +1768,20 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                   const pcsPerCtn = selectedLine ? getLinePcsPerCtn(selectedLine) : 0;
                   const totalPcs = selectedLine ? getLineTotalPcs(selectedLine) : 0;
                   const rate = selectedLine ? getLineRate(selectedLine) : 0;
-                  const amount = selectedLine ? getLineAmount(selectedLine) : getOrderTotalAmount(order);
+                  const amount = getOrderTotalAmount(order);
+                  const shippingAmount = getOrderShippingAmount(order);
                   const marka = selectedLine?.marka?.trim() || "—";
                   const customerName = getCardCustomerValue(selectedLine, paymentMeta);
                   const hasMultipleLines = orderLines.length > 1;
 
                   return <div key={row.key} className="rounded-lg border border-border/70 bg-bg-card">
                     <div className={rowClass} style={{ gridTemplateColumns: historyGridTemplate }}>
-                      <div className="min-w-0 pl-2 pr-1 py-1.5">
+                      <div className="min-w-0 px-1 py-1.5 text-center">
                         <div className="min-w-0">
                           <div className="truncate text-[17px] font-bold leading-tight" title={order.number || order.orderNumber || "Draft"}>{order.number || order.orderNumber || "Draft"}</div>
                         </div>
                       </div>
-                      <div className="min-w-0 px-1 py-1.5">
+                      <div className="min-w-0 px-1 py-1.5 text-center">
                         {quickEdit.editingWechat ? (
                           <Input
                             value={quickEdit.wechatValue}
@@ -1799,7 +1808,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                         ) : (
                           <button
                             type="button"
-                            className={cn("block w-full rounded-md px-1 py-1 text-left text-[13.5px] font-semibold leading-tight transition-colors hover:bg-bg-subtle", !order.wechatId?.trim() && "text-[var(--danger)]")}
+                            className={cn("block w-full rounded-md px-1 py-1 text-center text-[13.5px] font-semibold leading-tight transition-colors hover:bg-bg-subtle", !order.wechatId?.trim() && "text-[var(--danger)]")}
                             title={getDisplayWechatId(order)}
                             onClick={() => openQuickField(order, "wechat")}
                           >
@@ -1809,8 +1818,8 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                       </div>
                       <div className="min-w-0 px-0.5 py-1.5">
                         <div className="flex justify-center">{productPhoto ? <button type="button" onClick={() => setPreviewImage({ src: productPhoto, alt: "Product photo" })} className="grid h-[74px] w-[74px] shrink-0 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle"><img src={getCloudinaryOptimizedUrl(productPhoto, { width: 120, height: 120, crop: "fit" })} alt="product" className="h-full w-full object-contain" loading="lazy" decoding="async" /></button> : <span className="text-[10px] text-fg-subtle">—</span>}</div></div>
-                      <div className="min-w-0 px-1 py-1.5 text-left">
-                        <div className="flex items-center gap-1.5">
+                      <div className="min-w-0 px-1 py-1.5 text-center">
+                        <div className="flex items-center justify-center gap-1.5">
                           {hasMultipleLines ? (
                             <button
                               type="button"
@@ -1822,7 +1831,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                               <ChevronLeft size={13} />
                             </button>
                           ) : null}
-                          <div className="min-w-0 flex-1">
+                          <div className="min-w-0 flex-1 text-center">
                             <div className="text-[14px] font-semibold leading-[1.2] whitespace-normal break-normal [overflow-wrap:normal] [word-break:normal]" title={marka}>{marka}</div>
                           </div>
                           {hasMultipleLines ? <span className="shrink-0 text-[11px] font-semibold text-fg-subtle">{`${selectedLineIndex + 1}/${orderLines.length}`}</span> : null}
@@ -1843,15 +1852,16 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                       <div className="px-0.5 py-1.5 text-center text-[13.5px] font-semibold tabular-nums">{pcsPerCtn.toLocaleString()}</div>
                       <div className="px-0.5 py-1.5 text-center text-[13.5px] font-semibold tabular-nums">{totalPcs.toLocaleString()}</div>
                       <div className="px-0.5 py-1.5 text-center text-[14px] font-semibold tabular-nums">{formatPlainAmount(rate)}</div>
-                      <div className="px-0.5 py-1.5 text-center text-[15px] font-bold tabular-nums">{formatPlainAmount(amount)}</div>
-                      <div className="min-w-0 px-1 py-1.5"><div className="block w-full min-w-0 truncate text-[13.5px] text-left font-semibold leading-tight" title={customerName}>{customerName}</div></div>
+                      <div className={cn("px-0.5 py-1.5 text-right text-[14px] font-semibold tabular-nums", shippingAmount > 0 ? "text-rose-600" : "text-[var(--danger)]")}>{formatFinalAmount(shippingAmount)}</div>
+                      <div className={cn("px-0.5 py-1.5 text-right text-[15px] font-bold tabular-nums", amount > 0 ? "text-fg" : "text-[var(--danger)]")}>{formatFinalAmount(amount)}</div>
+                      <div className="min-w-0 px-1 py-1.5"><div className="block w-full min-w-0 truncate text-center text-[13.5px] font-semibold leading-tight" title={customerName}>{customerName}</div></div>
                       <div className="min-w-0 pl-1 pr-2 py-1.5 text-center">
                         <div className="min-w-0 [&_button]:max-w-full [&_button]:text-[13.5px] [&_button]:leading-tight">
                           {canEditOperationalFields ? <LoadingDateControl compact debugOrderId={order.id} value={rowValue.loadingDate} onChange={(next) => { setRowEdit(order, { loadingDate: next }, "date_selected"); }} /> : <span className="text-[15px] text-fg-muted">{order.loadingDate ? formatDate(order.loadingDate) : "Set date"}</span>}
                         </div>
                         {canEditOperationalFields && rowDirty ? <button type="button" title="Save row changes" aria-label="Save row changes" className="mt-1 inline-flex text-[10.5px] font-semibold text-brand transition-colors hover:underline disabled:opacity-60" disabled={rowValue.saving} onClick={() => { void saveRowEdit(order); }}>{rowValue.saving ? "Saving..." : "Save"}</button> : null}
                       </div>
-                      <div className="min-w-0 pl-1 pr-1 py-1.5">
+                      <div className="min-w-0 px-1 py-1.5 text-center">
                         {quickEdit.editingPayment ? (
                           <Input
                             value={quickEdit.paymentValue}
@@ -1878,7 +1888,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                         ) : (
                           <button
                             type="button"
-                            className={cn("block w-full rounded-md px-1 py-1 text-left text-[13.5px] font-semibold leading-tight transition-colors hover:bg-bg-subtle", paymentMeta.isMissing && "text-[var(--danger)]")}
+                            className={cn("block w-full rounded-md px-1 py-1 text-center text-[13.5px] font-semibold leading-tight transition-colors hover:bg-bg-subtle", paymentMeta.isMissing && "text-[var(--danger)]")}
                             title={paymentName}
                             onClick={() => openQuickField(order, "payment")}
                           >
