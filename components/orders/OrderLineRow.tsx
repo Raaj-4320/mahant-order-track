@@ -5,7 +5,7 @@ import { Customer, OrderLine, lineTotalPcs, lineTotalRmb } from "@/lib/types";
 import { Input } from "@/components/ui/Input";
 import { applyTypedCustomerToLine } from "@/services/customers/customerResolution";
 import { PhotoUpload } from "./PhotoUpload";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { getLineDetailsParts } from "@/lib/orderLineDetails";
 import { formatAmount } from "@/lib/data";
 
@@ -29,11 +29,37 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
   const detailParts = getLineDetailsParts(line);
   const customerQuery = (line.customerName || "").trim().toLowerCase();
   const [customerOpen, setCustomerOpen] = useState(false);
+  const [totalCtnsInput, setTotalCtnsInput] = useState(line.totalCtns ? String(line.totalCtns) : "");
+  const [pcsPerCtnInput, setPcsPerCtnInput] = useState(line.pcsPerCtn ? String(line.pcsPerCtn) : "");
+  const [rateInput, setRateInput] = useState(line.rmbPerPcs ? String(line.rmbPerPcs) : "");
 
   const topCustomerSuggestions = useMemo(
     () => customerSuggestions.filter((name) => !customerQuery || name.toLowerCase().includes(customerQuery)).slice(0, 4),
     [customerSuggestions, customerQuery]
   );
+
+  useEffect(() => {
+    setTotalCtnsInput(line.totalCtns ? String(line.totalCtns) : "");
+  }, [line.totalCtns]);
+
+  useEffect(() => {
+    setPcsPerCtnInput(line.pcsPerCtn ? String(line.pcsPerCtn) : "");
+  }, [line.pcsPerCtn]);
+
+  useEffect(() => {
+    setRateInput(line.rmbPerPcs ? String(line.rmbPerPcs) : "");
+  }, [line.rmbPerPcs]);
+
+  const handleDecimalInput = (nextValue: string, commit: (value: number) => void, setValue: (value: string) => void) => {
+    if (nextValue === "" || /^\d*\.?\d*$/.test(nextValue)) {
+      setValue(nextValue);
+      commit(nextValue === "" ? 0 : Number(nextValue));
+    }
+  };
+
+  const normalizeDecimalInput = (value: number, setValue: (next: string) => void) => {
+    setValue(value ? String(value) : "");
+  };
 
   return (
     <div
@@ -76,8 +102,9 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
         inputMode="numeric"
         min={0}
         step="any"
-        value={line.totalCtns || ""}
-        onChange={(e) => onChange({ totalCtns: e.target.value === "" ? 0 : Number(e.target.value) || 0 })}
+        value={totalCtnsInput}
+        onChange={(e) => handleDecimalInput(e.target.value, (value) => onChange({ totalCtns: value }), setTotalCtnsInput)}
+        onBlur={() => normalizeDecimalInput(line.totalCtns, setTotalCtnsInput)}
         className="text-center no-spinner"
         onWheel={(e) => (e.currentTarget as HTMLInputElement).blur()}
       />
@@ -88,8 +115,9 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
         inputMode="numeric"
         min={0}
         step="any"
-        value={line.pcsPerCtn || ""}
-        onChange={(e) => onChange({ pcsPerCtn: e.target.value === "" ? 0 : Number(e.target.value) || 0 })}
+        value={pcsPerCtnInput}
+        onChange={(e) => handleDecimalInput(e.target.value, (value) => onChange({ pcsPerCtn: value }), setPcsPerCtnInput)}
+        onBlur={() => normalizeDecimalInput(line.pcsPerCtn, setPcsPerCtnInput)}
         className="text-center no-spinner"
         onWheel={(e) => (e.currentTarget as HTMLInputElement).blur()}
       />
@@ -104,8 +132,9 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
         inputMode="decimal"
         min={0}
         step="any"
-        value={line.rmbPerPcs || ""}
-        onChange={(e) => onChange({ rmbPerPcs: e.target.value === "" ? 0 : Number(e.target.value) || 0 })}
+        value={rateInput}
+        onChange={(e) => handleDecimalInput(e.target.value, (value) => onChange({ rmbPerPcs: value }), setRateInput)}
+        onBlur={() => normalizeDecimalInput(line.rmbPerPcs, setRateInput)}
         className="text-center no-spinner"
         onWheel={(e) => (e.currentTarget as HTMLInputElement).blur()}
       />

@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { formatAmount } from "@/lib/data";
 import { formatWholeMoney } from "@/lib/numbers";
@@ -51,6 +52,12 @@ export function OrderFooter({
   onViewDetails,
   onShippingPriceChange,
 }: Props) {
+  const [shippingInput, setShippingInput] = useState(shippingPrice ? String(shippingPrice) : "");
+
+  useEffect(() => {
+    setShippingInput(shippingPrice ? String(shippingPrice) : "");
+  }, [shippingPrice]);
+
   return (
     <footer className="sticky bottom-0 z-20 border-t border-border bg-bg-card px-5 py-2.5">
       <div className="rounded-xl border border-border bg-bg-subtle px-2 py-2">
@@ -64,8 +71,15 @@ export function OrderFooter({
                 type="number"
                 min={0}
                 step="any"
-                value={shippingPrice || ""}
-                onChange={(event) => onShippingPriceChange(event.target.value === "" ? 0 : Math.max(0, Number(event.target.value) || 0))}
+                value={shippingInput}
+                onChange={(event) => {
+                  const nextValue = event.target.value;
+                  if (nextValue === "" || /^\d*\.?\d*$/.test(nextValue)) {
+                    setShippingInput(nextValue);
+                    onShippingPriceChange(nextValue === "" ? 0 : Number(nextValue));
+                  }
+                }}
+                onBlur={() => setShippingInput(shippingPrice ? String(shippingPrice) : "")}
                 className="mt-0.5 h-8 w-28 rounded-md border border-border bg-bg-card px-2 text-[14px] font-semibold tabular-nums text-rose-600 outline-none transition-colors focus:border-brand"
                 placeholder="0"
               />
