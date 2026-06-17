@@ -65,7 +65,7 @@ export default function SettingsPage() {
         <div className="card max-w-xl space-y-4 p-5">
           <div>
             <h2 className="text-[18px] font-semibold">Set/Reset Password</h2>
-            <p className="mt-1 text-sm text-fg-subtle">Set a new workspace password. Old passwords are ignored and are no longer required.</p>
+            <p className="mt-1 text-sm text-fg-subtle">Password gating is temporarily disabled, so this setting is parked for now and will not prompt users during app access.</p>
           </div>
           <Input
             type="password"
