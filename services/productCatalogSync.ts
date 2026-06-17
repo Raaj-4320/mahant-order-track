@@ -20,8 +20,40 @@ export const productFromOrderLine = async (order: Order, line: OrderLine, index:
   const code = `${order.number || order.orderNumber}-L${index + 1}`;
   const isFirebaseProducts = process.env.NEXT_PUBLIC_PRODUCTS_DATA_SOURCE === "firebase";
   const linePhoto = isHttpUrl(line.productPhotoUrl) ? line.productPhotoUrl : (isFirebaseProducts && isDataUrl(line.productPhotoUrl) ? "" : line.productPhotoUrl || "");
-  const existingPhoto = existing?.photo && !(isFirebaseProducts && isDataUrl(existing.photo)) ? existing.photo : "";
-  return { id, productCode: existing?.productCode || code, sku: existing?.sku || code, name: joinLineDetails(line) || line.marka?.trim() || "Order Line Product", marka: line.marka?.trim() || existing?.marka || "", category: existing?.category || "Order Generated", unit: existing?.unit || "pcs", defaultDim: line.picDim?.trim() || existing?.defaultDim, photo: existingPhoto || linePhoto || "", supplierId: line.supplierId || existing?.supplierId, supplierSnapshot: supplier ? { id: supplier.id, code: supplier.supplierCode, name: supplier.name } : existing?.supplierSnapshot, purchasePrice: existing?.purchasePrice, sellingPrice: Number(line.rmbPerPcs) || existing?.sellingPrice, defaultRmbPerPcs: Number(line.rmbPerPcs) || existing?.defaultRmbPerPcs, stockQty: lineTotalPcs(line), status: existing?.status || "active", createdAt: existing?.createdAt || now, updatedAt: now, source: existing?.source || "order-line", sourceOrderId: order.id, sourceOrderNumber: order.number || order.orderNumber, sourceLineId: line.id, sourceOrderIds: uniqueAppend(existing?.sourceOrderIds, order.id), sourceLineIds: uniqueAppend(existing?.sourceLineIds, `${order.id}:${line.id}`), catalogKey: existing?.catalogKey, generatedFromOrderLines: existing?.generatedFromOrderLines ?? true, lastSeenAt: now, lastLineTotalPcs: lineTotalPcs(line) };
+  const marka = line.marka?.trim() || "";
+  const supplierId = line.supplierId?.trim() || "";
+  const ratePerPcs = Number(line.rmbPerPcs);
+  const hasRatePerPcs = Number.isFinite(ratePerPcs) && ratePerPcs > 0;
+  return {
+    id,
+    productCode: existing?.productCode || code,
+    sku: existing?.sku || code,
+    name: joinLineDetails(line) || marka || "Order Line Product",
+    marka,
+    category: existing?.category || "Order Generated",
+    unit: existing?.unit || "pcs",
+    defaultDim: line.picDim?.trim() || existing?.defaultDim,
+    photo: linePhoto || "",
+    supplierId: supplierId || undefined,
+    supplierSnapshot: supplierId && supplier ? { id: supplier.id, code: supplier.supplierCode, name: supplier.name } : undefined,
+    purchasePrice: existing?.purchasePrice,
+    sellingPrice: hasRatePerPcs ? ratePerPcs : undefined,
+    defaultRmbPerPcs: hasRatePerPcs ? ratePerPcs : undefined,
+    stockQty: lineTotalPcs(line),
+    status: existing?.status || "active",
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    source: existing?.source || "order-line",
+    sourceOrderId: order.id,
+    sourceOrderNumber: order.number || order.orderNumber,
+    sourceLineId: line.id,
+    sourceOrderIds: uniqueAppend(existing?.sourceOrderIds, order.id),
+    sourceLineIds: uniqueAppend(existing?.sourceLineIds, `${order.id}:${line.id}`),
+    catalogKey: existing?.catalogKey,
+    generatedFromOrderLines: existing?.generatedFromOrderLines ?? true,
+    lastSeenAt: now,
+    lastLineTotalPcs: lineTotalPcs(line),
+  };
 };
 
 export type ProductSyncFailure = { lineId: string; generatedProductId?: string; reason: string; errorCode?: string; errorMessage?: string };

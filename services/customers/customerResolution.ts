@@ -2,11 +2,33 @@ import type { Customer, OrderLine } from "@/lib/types";
 import { createCustomerIdFromName, normalizeCustomerName } from "@/services/customers/customerIdentity";
 import { logCustomer } from "@/lib/logger";
 
+export const CUSTOMER_NOT_LINKED = "Not Linked";
+export const CUSTOMER_DELETED = "Deleted Customer";
+export const CUSTOMER_INVALID = "Invalid Customer Reference";
+
 export function getResolvedLineCustomerName(line: Pick<OrderLine, "customerId" | "customerName" | "customerSnapshot">): string {
-  const snapshotName = line.customerSnapshot?.name?.trim() || "";
-  if (snapshotName) return snapshotName;
   if (!line.customerId?.trim()) return "";
-  return line.customerName?.trim() || "";
+  return line.customerName?.trim() || line.customerSnapshot?.name?.trim() || "";
+}
+
+export function getLineCustomerDisplay(
+  line: Pick<OrderLine, "customerId" | "customerName" | "customerSnapshot">,
+  customers: Customer[] = [],
+): string {
+  const customerId = line.customerId?.trim() || "";
+  if (!customerId) return CUSTOMER_NOT_LINKED;
+
+  const linkedCustomer = customers.find((customer) => customer.id === customerId) ?? null;
+  if (linkedCustomer) {
+    return linkedCustomer.displayName?.trim() || linkedCustomer.name?.trim() || getResolvedLineCustomerName(line) || CUSTOMER_INVALID;
+  }
+
+  if (customers.length > 0) {
+    const hasSnapshotMetadata = Boolean(line.customerSnapshot?.id?.trim() || line.customerSnapshot?.name?.trim() || line.customerName?.trim());
+    return hasSnapshotMetadata ? CUSTOMER_DELETED : CUSTOMER_INVALID;
+  }
+
+  return getResolvedLineCustomerName(line) || CUSTOMER_INVALID;
 }
 
 export function findCustomerByTypedName(customers: Customer[], typedName: string): Customer | null {

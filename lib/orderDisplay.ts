@@ -1,6 +1,9 @@
 import type { Order, PaymentAgent } from "@/lib/types";
 
-export const PAYMENT_AGENT_NOT_SET = "Not Set";
+export const PAYMENT_AGENT_NOT_LINKED = "Not Linked";
+export const PAYMENT_AGENT_DELETED = "Deleted Payment Agent";
+export const PAYMENT_AGENT_INVALID = "Invalid Payment Agent Reference";
+export const PAYMENT_AGENT_UNKNOWN = "Unknown Payment Agent";
 
 const normalizeValue = (value?: string | null) => (value || "").trim().toLowerCase();
 
@@ -31,13 +34,20 @@ export function resolveOrderPaymentAgent(order: Order | (Partial<Order> & { paym
 
 export function getOrderPaymentAgentDisplay(order: Order, paymentAgents: PaymentAgent[] = []) {
   const matchedAgent = resolveOrderPaymentAgent(order, paymentAgents);
-  const resolved =
-    matchedAgent?.name ||
-    order.paymentAgentSnapshot?.name ||
-    (order as any).paymentByName ||
-    (order as any).paymentAgentName ||
-    (typeof order.paymentBy === "string" ? order.paymentBy.trim() : "") ||
-    "";
-  const value = resolved || PAYMENT_AGENT_NOT_SET;
-  return { value, isMissing: !resolved };
+  if (matchedAgent?.name) return { value: matchedAgent.name, isMissing: false };
+
+  const paymentAgentId = typeof order.paymentAgentId === "string" ? order.paymentAgentId.trim() : "";
+  const paymentBy = typeof order.paymentBy === "string" ? order.paymentBy.trim() : "";
+  const snapshotId = typeof order.paymentAgentSnapshot?.id === "string" ? order.paymentAgentSnapshot.id.trim() : "";
+  const snapshotName = typeof order.paymentAgentSnapshot?.name === "string" ? order.paymentAgentSnapshot.name.trim() : "";
+  const paymentByName = typeof (order as any).paymentByName === "string" ? (order as any).paymentByName.trim() : "";
+  const paymentAgentName = typeof (order as any).paymentAgentName === "string" ? (order as any).paymentAgentName.trim() : "";
+
+  const hasLinkedId = Boolean(paymentAgentId || snapshotId);
+  const hasStoredMetadata = Boolean(snapshotName || paymentByName || paymentAgentName);
+  const hasAnyReference = hasLinkedId || Boolean(paymentBy) || hasStoredMetadata;
+
+  if (!hasAnyReference) return { value: PAYMENT_AGENT_NOT_LINKED, isMissing: true };
+  if (hasLinkedId) return { value: hasStoredMetadata ? PAYMENT_AGENT_DELETED : PAYMENT_AGENT_INVALID, isMissing: true };
+  return { value: PAYMENT_AGENT_UNKNOWN, isMissing: true };
 }

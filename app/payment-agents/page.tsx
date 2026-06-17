@@ -8,6 +8,7 @@ import { TablePagination } from "@/components/table/TablePagination";
 import { Select } from "@/components/ui/Select";
 import { PaymentAgentLedgerModal } from "@/components/payment-agents/PaymentAgentLedgerModal";
 import { usePaymentAgents } from "@/hooks/usePaymentAgents";
+import { useCustomers } from "@/hooks/useCustomers";
 import { useOrders } from "@/hooks/useOrders";
 import { useStore } from "@/lib/store";
 import { formatAmount } from "@/lib/data";
@@ -18,6 +19,7 @@ import { ordersDataSource } from "@/lib/runtimeConfig";
 import { openStatementPdfPrint } from "@/services/statementPdf";
 import { orderLifecycleService } from "@/services/orderLifecycleService";
 import { buildPaymentAgentAccountingSummary, buildPaymentAgentOrderRows, buildPaymentAgentPaymentRows, buildPaymentAgentTransactionRows } from "@/services/settlement/paymentAgentAccounting";
+import { getLineCustomerDisplay } from "@/services/customers/customerResolution";
 
 const ALL_LEDGER_ROWS_KEY = "__all__";
 type LedgerViewRow = {
@@ -34,6 +36,7 @@ type LedgerViewRow = {
 export default function PaymentAgentsPage() {
   const PAGE_SIZE = 100;
   const { data: agents, isLoading: isPaymentAgentsLoading, upsertPaymentAgent, deletePaymentAgent, recordPaymentToAgent, listPaymentAgentLedger, reload: reloadPaymentAgents } = usePaymentAgents();
+  const { data: customers } = useCustomers();
   const { orders, pushToast } = useStore();
   const { data: firebaseOrders } = useOrders();
   const ordersSource = ordersDataSource();
@@ -79,7 +82,7 @@ export default function PaymentAgentsPage() {
   const rows = useMemo(() => {
     const allLedger = ledgerRows[ALL_LEDGER_ROWS_KEY] || [];
     return agents.map((agent) => {
-      const summary = buildPaymentAgentAccountingSummary(agent, sourceOrders, allLedger);
+      const summary = buildPaymentAgentAccountingSummary(agent, sourceOrders, allLedger, customers);
       const searchText = [
         agent.name,
         agent.wechatId || "",
@@ -92,7 +95,7 @@ export default function PaymentAgentsPage() {
         formatAmount(summary.creditLeft),
         formatAmount(summary.paymentsMade),
         summary.matchedOrders.map((order) => order.number || order.orderNumber || "").join(" "),
-        summary.matchedOrders.flatMap((order) => order.lines.map((line) => line.customerSnapshot?.name || line.customerName || "")).join(" "),
+        summary.matchedOrders.flatMap((order) => order.lines.map((line) => getLineCustomerDisplay(line, customers))).join(" "),
         summary.matchedEntries.map((entry) => entry.note || "").join(" "),
         summary.matchedEntries.map((entry) => entry.paymentMethod || "").join(" "),
       ]
@@ -104,7 +107,7 @@ export default function PaymentAgentsPage() {
         searchText,
       };
     });
-  }, [agents, ledgerRows, sourceOrders]);
+  }, [agents, ledgerRows, sourceOrders, customers]);
 
   const filtered = useMemo(() => {
     const query = q.toLowerCase().trim();
@@ -175,7 +178,7 @@ export default function PaymentAgentsPage() {
   }, [filtered, isPaymentAgentsLoading, rows]);
 
   const buildLedgerTable = (agent: PaymentAgent) => {
-    const summary = buildPaymentAgentAccountingSummary(agent, sourceOrders, ledgerRows[ALL_LEDGER_ROWS_KEY] || []);
+    const summary = buildPaymentAgentAccountingSummary(agent, sourceOrders, ledgerRows[ALL_LEDGER_ROWS_KEY] || [], customers);
     return [...summary.matchedEntries]
       .sort((a, b) => (a.paymentDate || a.createdAt || "").localeCompare(b.paymentDate || b.createdAt || ""))
       .map<LedgerViewRow>((entry) => ({
@@ -522,6 +525,7 @@ export default function PaymentAgentsPage() {
             summary={activeLedgerSummary}
             entries={activeLedgerRows}
             orders={sourceOrders}
+            customers={customers}
             error={activeLedgerError}
             onClose={() => setLedgerAgent(null)}
             onExport={exportLedgerStatement}

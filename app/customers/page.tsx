@@ -17,7 +17,6 @@ import { formatWholeMoney } from "@/lib/numbers";
 import { joinLineDetails } from "@/lib/orderLineDetails";
 import { getOrderPaymentAgentDisplay } from "@/lib/orderDisplay";
 import { lineTotalPcs, type Customer, type Order } from "@/lib/types";
-import { getResolvedLineCustomerName } from "@/services/customers/customerResolution";
 import { getOrderCustomerReceivableAmount } from "@/services/settlement/customerReceivableLedger";
 import { useStore } from "@/lib/store";
 import { ordersDataSource } from "@/lib/runtimeConfig";
@@ -68,11 +67,7 @@ const getLineImage = (line: Order["lines"][number]) => {
 
 const getOrderTimelineValue = (order: Order) => order.date || order.createdAt || order.updatedAt || "";
 
-const sameCustomer = (line: Order["lines"][number], customer: Customer) => {
-  const customerName = (customer.displayName || customer.name || "").trim().toLowerCase();
-  const lineCustomerName = getResolvedLineCustomerName(line).trim().toLowerCase();
-  return line.customerId === customer.id || (Boolean(customerName) && lineCustomerName === customerName);
-};
+const sameCustomer = (line: Order["lines"][number], customer: Customer) => line.customerId === customer.id;
 
 const sortLedgerRowsNewestFirst = (rows: CustomerLedgerRow[]) =>
   [...rows].sort((left, right) => {
@@ -115,16 +110,16 @@ export default function CustomersPage() {
                 customerId: customer.id,
                 orderId: order.id,
                 lineId: line.id,
-                orderNumber: order.number || order.orderNumber || "Not Set",
+                orderNumber: order.number || order.orderNumber || "—",
                 orderDate: getOrderTimelineValue(order),
                 loadingDate: order.loadingDate || "",
-                status: order.status || "Not Set",
+                status: order.status || "—",
                 paidBy: getOrderPaymentAgentDisplay(order, paymentAgents).value,
-                wechatId: order.wechatId?.trim() || "Not Set",
+                wechatId: order.wechatId?.trim() || "—",
                 productName: line.productSnapshot?.name || "",
                 productImage: getLineImage(line),
-                marka: line.marka?.trim() || "Not Set",
-                details: joinLineDetails(line).trim() || "Not Set",
+                marka: line.marka?.trim() || "—",
+                details: joinLineDetails(line).trim() || "—",
                 totalCtns: Number(line.totalCtns) || 0,
                 pcsPerCtn: Number(line.pcsPerCtn) || 0,
                 totalPieces,
@@ -172,12 +167,12 @@ export default function CustomersPage() {
         ledgerRows,
         totalOrders,
         totalPurchaseAmount,
-        lastOrderNumber: latestLine?.orderNumber || "Not Set",
+        lastOrderNumber: latestLine?.orderNumber || "—",
         lastOrderDate: latestLine?.orderDate || "",
-        lastOrderMarka: latestLine?.marka || "Not Set",
+        lastOrderMarka: latestLine?.marka || "—",
         lastOrderAmount: latestLine?.totalAmount || 0,
-        lastPaidBy: latestLine?.paidBy || "Not Set",
-        lastWechatId: latestLine?.wechatId || customer.wechatId || "Not Set",
+        lastPaidBy: latestLine?.paidBy || "—",
+        lastWechatId: latestLine?.wechatId || customer.wechatId || "—",
         lastOrderImage: latestLine?.productImage || "",
         searchIndex,
       } satisfies CustomerSummaryRow;
@@ -235,10 +230,10 @@ export default function CustomersPage() {
       "WeChat ID",
     ];
     const rows = filteredAndSorted.map((row) => [
-      row.customer.displayName || row.customer.name || "Not Set",
+      row.customer.displayName || row.customer.name || "—",
       row.lastOrderNumber,
       row.lastOrderMarka,
-      row.lastOrderDate ? formatDate(row.lastOrderDate) : "Not Set",
+      row.lastOrderDate ? formatDate(row.lastOrderDate) : "—",
       formatTotalAmount(row.lastOrderAmount),
       String(row.totalOrders),
       formatTotalAmount(row.totalPurchaseAmount),
@@ -259,7 +254,7 @@ export default function CustomersPage() {
     const header = ["Order Number", "Date", "Marka", "Details", "CTNS", "PCS/CTN", "Total Pieces", "Price", "Total Amount", "Paid By", "Loading Date", "Status"];
     const rows = summary.ledgerRows.map((row) => [
       row.orderNumber,
-      row.orderDate ? formatDate(row.orderDate) : "Not Set",
+      row.orderDate ? formatDate(row.orderDate) : "—",
       row.marka,
       row.details,
       String(row.totalCtns),
@@ -268,7 +263,7 @@ export default function CustomersPage() {
       formatAmount(row.pricePerPiece),
       formatTotalAmount(row.totalAmount),
       row.paidBy,
-      row.loadingDate ? formatDate(row.loadingDate) : "Not Set",
+      row.loadingDate ? formatDate(row.loadingDate) : "—",
       row.status,
     ]);
     const csv = [header, ...rows].map((line) => line.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
@@ -286,7 +281,7 @@ export default function CustomersPage() {
       .map((row) => `
         <tr>
           <td>${row.orderNumber}</td>
-          <td>${row.orderDate ? formatDate(row.orderDate) : "Not Set"}</td>
+          <td>${row.orderDate ? formatDate(row.orderDate) : "—"}</td>
           <td>${row.marka}</td>
           <td>${row.details}</td>
           <td>${row.totalCtns}</td>
@@ -295,7 +290,7 @@ export default function CustomersPage() {
           <td>${formatAmount(row.pricePerPiece)}</td>
           <td>${formatTotalAmount(row.totalAmount)}</td>
           <td>${row.paidBy}</td>
-          <td>${row.loadingDate ? formatDate(row.loadingDate) : "Not Set"}</td>
+          <td>${row.loadingDate ? formatDate(row.loadingDate) : "—"}</td>
           <td>${row.status}</td>
         </tr>
       `)
@@ -415,7 +410,7 @@ export default function CustomersPage() {
                     {pagedRows.map((row) => (
                       <tr key={row.customer.id} className="border-b border-border transition-colors last:border-b-0 hover:bg-bg-subtle/40">
                         <td className="px-3 py-2.5">
-                          <div className="font-semibold text-fg">{row.customer.displayName || row.customer.name || "Not Set"}</div>
+                          <div className="font-semibold text-fg">{row.customer.displayName || row.customer.name || "—"}</div>
                         </td>
                         <td className="px-2 py-2.5">
                           <div className="mx-auto grid h-12 w-12 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle">
@@ -571,7 +566,7 @@ export default function CustomersPage() {
                             </div>
                           </td>
                           <td className="px-2 py-2.5 font-semibold">{row.orderNumber}</td>
-                          <td className="px-2 py-2.5">{row.orderDate ? formatDate(row.orderDate) : "Not Set"}</td>
+                          <td className="px-2 py-2.5">{row.orderDate ? formatDate(row.orderDate) : "—"}</td>
                           <td className="px-2 py-2.5">{row.marka}</td>
                           <td className="px-2 py-2.5">{row.details}</td>
                           <td className="px-2 py-2.5 text-center tabular-nums">{row.totalCtns.toLocaleString()}</td>
@@ -580,7 +575,7 @@ export default function CustomersPage() {
                           <td className="px-2 py-2.5 text-right tabular-nums">{formatAmount(row.pricePerPiece)}</td>
                           <td className={`px-2 py-2.5 text-right font-semibold tabular-nums ${row.totalAmount > 0 ? "text-fg" : "text-[var(--danger)]"}`}>{formatTotalAmount(row.totalAmount)}</td>
                           <td className="px-2 py-2.5">{row.paidBy}</td>
-                          <td className="px-2 py-2.5">{row.loadingDate ? formatDate(row.loadingDate) : "Not Set"}</td>
+                          <td className="px-2 py-2.5">{row.loadingDate ? formatDate(row.loadingDate) : "—"}</td>
                           <td className="px-2 py-2.5">{row.status}</td>
                         </tr>
                       ))}

@@ -1,9 +1,9 @@
-import type { Order, PaymentAgent, PaymentAgentLedgerEntry } from "@/lib/types";
+import type { Customer, Order, PaymentAgent, PaymentAgentLedgerEntry } from "@/lib/types";
 import { buildPaymentAgentAccountingSummary } from "@/services/settlement/paymentAgentAccounting";
 
-export function getPaymentAgentFinanceSummary(agents: PaymentAgent[], orders: Order[], entries: PaymentAgentLedgerEntry[] = []) {
+export function getPaymentAgentFinanceSummary(agents: PaymentAgent[], orders: Order[], entries: PaymentAgentLedgerEntry[] = [], customers: Customer[] = []) {
   return agents.map((agent) => {
-    const summary = buildPaymentAgentAccountingSummary(agent, orders, entries);
+    const summary = buildPaymentAgentAccountingSummary(agent, orders, entries, customers);
     return {
       agent,
       orders: summary.matchedOrders,

@@ -174,7 +174,7 @@ export default function SuppliersPage() {
                               <div key={o.orderId} className="mb-2">
                                 <div className="text-[12px] font-medium">{o.orderNumber} · {formatDate(o.date)}</div>
                                 {o.lines.map((l: any) => (
-                                  <div key={l.lineId} className="text-[12px] text-fg-subtle">{l.supplierName} · {formatWholeMoney(l.amount)} · CTNs {l.totalCtns} · PCS {l.totalPcs} · {l.customerName || "—"} · {l.marka || l.details || "—"}</div>
+                                  <div key={l.lineId} className="text-[12px] text-fg-subtle">{l.supplierName} · {formatWholeMoney(l.amount)} · CTNs {l.totalCtns} · PCS {l.totalPcs} · {l.customerName || "Not Linked"} · Marka: {l.marka || "—"} · Details: {l.details || "—"}</div>
                                 ))}
                               </div>
                             ))}
@@ -227,7 +227,7 @@ export default function SuppliersPage() {
                         <tr>
                           <td colSpan={6} className="bg-bg-subtle px-3 py-2">
                             {g.entries.map((e: any) => (
-                              <div key={e.lineId} className="text-[12px] text-fg-subtle">{e.orderNumber} · {e.wechatId || "—"} · {formatDate(e.date)} · {formatWholeMoney(e.amount)} · {e.marka || e.details || "—"}</div>
+                              <div key={e.lineId} className="text-[12px] text-fg-subtle">{e.orderNumber} · {e.wechatId || "—"} · {formatDate(e.date)} · {formatWholeMoney(e.amount)} · Marka: {e.marka || "—"} · Details: {e.details || "—"}</div>
                             ))}
                           </td>
                         </tr>

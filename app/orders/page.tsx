@@ -1552,6 +1552,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
               const rate = line ? getLineRate(line) : 0;
               const amount = getOrderTotalAmount(order);
               const shippingAmount = getOrderShippingAmount(order);
+              const customerValue = getCardCustomerValue(line);
               const expanded = isOrderExpanded(row);
               return <div
                 key={row.key}
@@ -1889,7 +1890,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                             title={paymentName}
                             onClick={() => openQuickField(order, "payment")}
                           >
-                            {paymentMeta.isMissing ? "Not Set" : paymentName}
+                            {paymentName}
                           </button>
                         )}
                       </div>

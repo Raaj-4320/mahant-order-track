@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/Input";
 import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
 import { formatAmount } from "@/lib/data";
 import { formatIndianDate } from "@/lib/dateFormat";
-import type { Order, PaymentAgent, PaymentAgentLedgerEntry } from "@/lib/types";
+import type { Customer, Order, PaymentAgent, PaymentAgentLedgerEntry } from "@/lib/types";
 import { CalendarDays, Download, Plus, Wallet, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { TablePagination } from "@/components/table/TablePagination";
@@ -21,6 +21,7 @@ type Props = {
   summary: AgentSummary | null;
   entries: PaymentAgentLedgerEntry[];
   orders: Order[];
+  customers: Customer[];
   error?: string | null;
   onClose: () => void;
   onExport?: () => void;
@@ -32,7 +33,7 @@ const formatDateLabel = (value?: string) => {
   return formatIndianDate(value);
 };
 
-export function PaymentAgentLedgerModal({ open, summary, entries, orders, error, onClose, onExport, onAddPayment }: Props) {
+export function PaymentAgentLedgerModal({ open, summary, entries, orders, customers, error, onClose, onExport, onAddPayment }: Props) {
   const PAGE_SIZE = 100;
   const [addPaymentOpen, setAddPaymentOpen] = useState(false);
   const [transactionsPage, setTransactionsPage] = useState(1);
@@ -47,8 +48,8 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, error,
   const [paymentBusy, setPaymentBusy] = useState(false);
 
   const accounting = useMemo(
-    () => (summary ? buildPaymentAgentAccountingSummary(summary.agent, orders, entries) : null),
-    [summary, orders, entries],
+    () => (summary ? buildPaymentAgentAccountingSummary(summary.agent, orders, entries, customers) : null),
+    [summary, orders, entries, customers],
   );
   const transactionRows = useMemo(() => (accounting ? buildPaymentAgentTransactionRows(accounting) : []), [accounting]);
   const paymentRows = useMemo(() => (accounting ? buildPaymentAgentPaymentRows(accounting) : []), [accounting]);

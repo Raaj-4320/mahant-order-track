@@ -1,5 +1,5 @@
-import { orderTotal, type Order, type PaymentAgent, type PaymentAgentLedgerEntry } from "@/lib/types";
-import { getResolvedLineCustomerName } from "@/services/customers/customerResolution";
+import { orderTotal, type Customer, type Order, type PaymentAgent, type PaymentAgentLedgerEntry } from "@/lib/types";
+import { getLineCustomerDisplay } from "@/services/customers/customerResolution";
 
 const clamp = (value: number) => Math.max(0, Number.isFinite(value) ? value : 0);
 const normalize = (value?: string | null) => (value || "").trim().toLowerCase();
@@ -14,6 +14,7 @@ export type PaymentAgentAccountingTransactionType =
 
 export type PaymentAgentAccountingSummary = {
   agent: PaymentAgent;
+  customers: Customer[];
   matchedOrders: Order[];
   matchedEntries: PaymentAgentLedgerEntry[];
   activeSettlementEntries: PaymentAgentLedgerEntry[];
@@ -102,9 +103,9 @@ const createFallbackSettlementEntry = (order: Order, agent: PaymentAgent): Payme
   };
 };
 
-const getOrderCustomerSummary = (order?: Order | null) => {
+const getOrderCustomerSummary = (order?: Order | null, customers: Customer[] = []) => {
   if (!order) return "—";
-  const names = Array.from(new Set((order.lines || []).map((line) => getResolvedLineCustomerName(line)).filter(Boolean)));
+  const names = Array.from(new Set((order.lines || []).map((line) => getLineCustomerDisplay(line, customers)).filter(Boolean)));
   return names.length > 0 ? names.join(", ") : "—";
 };
 
@@ -127,6 +128,7 @@ export const buildPaymentAgentAccountingSummary = (
   agent: PaymentAgent,
   orders: Order[],
   entries: PaymentAgentLedgerEntry[],
+  customers: Customer[] = [],
 ): PaymentAgentAccountingSummary => {
   const matchedOrders = orders.filter((order) => order.status !== "archived" && isOrderMatchedToPaymentAgent(order, agent));
   const matchedOrderIds = new Set(matchedOrders.map((order) => order.id));
@@ -185,6 +187,7 @@ export const buildPaymentAgentAccountingSummary = (
 
   return {
     agent,
+    customers,
     matchedOrders,
     matchedEntries,
     activeSettlementEntries: netSettlementEntries,
@@ -209,7 +212,7 @@ export const buildPaymentAgentTransactionRows = (summary: PaymentAgentAccounting
   summary.activeSettlementEntries.forEach((entry) => {
     const linkedOrder = orderById.get(entry.sourceOrderId || "") || null;
     const orderNumber = entry.sourceOrderNumber || linkedOrder?.number || linkedOrder?.orderNumber || "—";
-    const customer = getOrderCustomerSummary(linkedOrder);
+    const customer = getOrderCustomerSummary(linkedOrder, summary.customers);
     if (clamp(entry.creditUsed ?? 0) > 0) {
       rows.push({
         id: `${entry.id}-usage`,
@@ -257,7 +260,7 @@ export const buildPaymentAgentTransactionRows = (summary: PaymentAgentAccounting
       id: entry.id,
       date: entryTime(entry),
       orderNumber: entry.sourceOrderNumber || linkedOrder?.number || linkedOrder?.orderNumber || "—",
-      customer: getOrderCustomerSummary(linkedOrder),
+      customer: getOrderCustomerSummary(linkedOrder, summary.customers),
       type: "Credit Returned",
       amount: clamp(entry.creditUsed ?? entry.amount),
       notes: entry.note?.trim() || "Reversal of previous settlement",
@@ -294,7 +297,7 @@ export const buildPaymentAgentOrderRows = (summary: PaymentAgentAccountingSummar
         totalPcs: (Number(line.totalCtns) || 0) * (Number(line.pcsPerCtn) || 0),
         rate: Number(line.rmbPerPcs) || 0,
         amount: (Number(line.totalCtns) || 0) * (Number(line.pcsPerCtn) || 0) * (Number(line.rmbPerPcs) || 0),
-        customer: getResolvedLineCustomerName(line) || "—",
+        customer: getLineCustomerDisplay(line, summary.customers),
         loadingDate: order.loadingDate || "",
       })),
     )
