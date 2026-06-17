@@ -2,6 +2,7 @@
 
 import { Button } from "@/components/ui/Button";
 import { formatAmount } from "@/lib/data";
+import { formatWholeMoney } from "@/lib/numbers";
 import type { PaymentAgent } from "@/lib/types";
 import type { PaymentAgentSettlementResult } from "@/services/settlement/paymentAgentSettlement";
 
@@ -24,6 +25,7 @@ type Props = {
 };
 
 const fmt = (value: number) => formatAmount(value);
+const fmtFinal = (value: number) => formatWholeMoney(value);
 
 function Metric({ label, value, tone = "default" }: { label: string; value: string; tone?: "default" | "success" | "warning" | "info" | "danger" }) {
   return (
@@ -68,7 +70,7 @@ export function OrderFooter({
                 placeholder="0"
               />
             </div>
-            <Metric label="Final Total Amount" value={fmt(total)} tone="warning" />
+            <Metric label="Final Total Amount" value={fmtFinal(total)} tone="warning" />
             <Metric label="Credit Used" value={paymentAgent ? fmt(settlement.creditUsed) : "0"} tone="info" />
             <Metric label="Payable" value={paymentAgent ? fmt(settlement.remainingPayable) : fmt(total)} tone={(paymentAgent ? settlement.remainingPayable : total) > 0 ? "warning" : "default"} />
             <Metric label="Credit Left" value={paymentAgent ? fmt(settlement.resultingCreditBalance) : "—"} tone={paymentAgent && settlement.resultingCreditBalance > 0 ? "success" : "default"} />

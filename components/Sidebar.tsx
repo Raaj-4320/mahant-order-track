@@ -31,13 +31,19 @@ const items: Item[] = [
   { label: "Recycle Bin", href: "/recycle-bin", icon: RotateCcw },
 ];
 
-export function Sidebar() {
+export function Sidebar({ collapsed = false }: { collapsed?: boolean }) {
   const pathname = usePathname();
   const businessId = getFirebaseConfigStatus().businessId || "mahant";
 
   return (
-    <aside className="hidden lg:flex w-[208px] shrink-0 flex-col border-r border-border bg-bg-subtle">
-      <div className="flex items-center gap-2 px-4 h-[58px] border-b border-border">
+    <aside
+      className={cn(
+        "hidden shrink-0 flex-col border-r border-border bg-bg-subtle transition-[width,opacity] duration-200 lg:flex",
+        collapsed ? "w-0 overflow-hidden border-r-0 opacity-0" : "w-[208px] opacity-100",
+      )}
+      aria-hidden={collapsed}
+    >
+      <div className="flex h-[58px] items-center gap-2 border-b border-border px-4">
         <div className="grid h-7 w-7 place-items-center rounded-lg bg-brand text-brand-fg">
           <span className="text-[13px] font-bold">T</span>
         </div>

@@ -5,6 +5,7 @@ import { useStore } from "@/lib/store";
 import { OrderForm, newLine } from "@/components/orders/OrderForm";
 import { OrderFooter } from "@/components/orders/OrderFooter";
 import { formatAmount, formatDate } from "@/lib/data";
+import { formatWholeMoney } from "@/lib/numbers";
 import { formatIndianDate } from "@/lib/dateFormat";
 import { Order, OrderNumberSeries, PaymentAgent, lineTotalPcs, lineTotalRmb, orderLinesTotal, orderShippingPrice, orderTotal } from "@/lib/types";
 import { syncOrderLinesToProducts, archiveProductsForOrder, archiveProductsForRemovedOrderLines } from "@/services/productCatalogSync";
@@ -21,7 +22,7 @@ import { useCustomers } from "@/hooks/useCustomers";
 import { customerLedgerService } from "@/services/customerLedgerService";
 import { resolveCustomersForOrderLines } from "@/services/customers/customerResolution";
 import { logCustomer, logDB, logError, logOrder, logPageAccess, logDataFlow } from "@/lib/logger";
-import { BadgePercent, Boxes, CalendarDays, Check, ChevronDown, Eye, Filter, IndianRupee, LayoutGrid, List, MessageCircleMore, Moon, Package2, Search, ShoppingBag, SquarePen, Sun, Trash2, UserRound, X } from "lucide-react";
+import { BadgePercent, Boxes, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Eye, Filter, IndianRupee, LayoutGrid, List, MessageCircleMore, Moon, Package2, Search, ShoppingBag, SquarePen, Sun, Trash2, UserRound, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { getOrderPaymentAgentDisplay, resolveOrderPaymentAgent } from "@/lib/orderDisplay";
 import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
@@ -38,10 +39,13 @@ import { getLineDetailsParts, joinLineDetails, seedDetailBoxesFromLegacy, withDe
 import { orderLifecycleService } from "@/services/orderLifecycleService";
 import { getMeaningfulOrderLines } from "@/services/orderValidation";
 import { buildSeriesPrefix, deriveOrderSeriesFields, formatSeriesOrderNumber, getSeriesSuggestion, normalizeSeriesLabel, orderNumberExists, parseOrderNumber } from "@/lib/orderNumberSeries";
+import { getOrderNumberSeriesService } from "@/services/orderNumberSeriesService";
+import { getPaymentAgentsService } from "@/services/paymentAgentsService";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const LAST_SELECTED_ORDER_SERIES_KEY = "orders:lastSelectedSeriesId";
 const PAGE_SIZE = 100;
+const SAVE_AUDIT_ENABLED = process.env.NODE_ENV !== "production";
 const createEmptyDraft = (_orders: Order[], reservedOrderNumber = ""): Order => ({
   id: `ord-${Date.now()}`,
   orderNumber: reservedOrderNumber,
@@ -80,6 +84,14 @@ type RowEditState = {
   status: Order["status"];
   saving: boolean;
 };
+type QuickEditState = {
+  wechatValue: string;
+  paymentValue: string;
+  editingWechat: boolean;
+  editingPayment: boolean;
+  savingWechat: boolean;
+  savingPayment: boolean;
+};
 type FlatHistoryRow = {
   key: string;
   order: Order;
@@ -96,6 +108,43 @@ type OrdersFilterState = {
   orderNumber: string;
   customer: string;
   marka: string;
+};
+
+type SaveTimingStep = {
+  step: string;
+  at: number;
+  meta?: Record<string, unknown>;
+};
+
+const createSaveTimingProfile = (label: string, meta?: Record<string, unknown>) => {
+  const perf = typeof performance !== "undefined" ? performance : null;
+  const startedAt = perf?.now() ?? Date.now();
+  const steps: SaveTimingStep[] = [{ step: "save:start", at: startedAt, meta }];
+  let flushed = false;
+
+  const mark = (step: string, nextMeta?: Record<string, unknown>) => {
+    const at = perf?.now() ?? Date.now();
+    steps.push({ step, at, meta: nextMeta });
+    return at;
+  };
+
+  const flush = (finalStep = "save:done", nextMeta?: Record<string, unknown>) => {
+    if (flushed) return;
+    flushed = true;
+    const finalAt = mark(finalStep, nextMeta);
+    if (!SAVE_AUDIT_ENABLED) return;
+    const rows = steps.map((entry, index) => ({
+      step: entry.step,
+      elapsedMs: Number((entry.at - startedAt).toFixed(2)),
+      deltaMs: Number((entry.at - (index === 0 ? startedAt : steps[index - 1]!.at)).toFixed(2)),
+      meta: entry.meta ? JSON.stringify(entry.meta) : "",
+    }));
+    console.groupCollapsed(`[Orders Save Audit] ${label} · ${Number((finalAt - startedAt).toFixed(2))}ms`);
+    console.table(rows);
+    console.groupEnd();
+  };
+
+  return { mark, flush };
 };
 
 const STATUS_OPTIONS_WITH_DATE: Array<{ value: Order["status"]; label: string }> = [
@@ -195,10 +244,12 @@ export default function OrdersPage() {
   const [headerWechatOpen, setHeaderWechatOpen] = useState(false);
   const [previewImage, setPreviewImage] = useState<{ src: string; alt: string; caption?: string } | null>(null);
   const [rowEdits, setRowEdits] = useState<Record<string, RowEditState>>({});
+  const [quickEdits, setQuickEdits] = useState<Record<string, QuickEditState>>({});
   const [orderSaveState, setOrderSaveState] = useState<"idle" | "saving">("idle");
   const [pendingDeleteOrder, setPendingDeleteOrder] = useState<Order | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [expandedOrderIds, setExpandedOrderIds] = useState<Record<string, boolean>>({});
+  const [orderLineIndexes, setOrderLineIndexes] = useState<Record<string, number>>({});
   const wechatNormalizationStartedRef = useRef(false);
 
   const pickerRef = useRef<HTMLDivElement | null>(null);
@@ -607,6 +658,57 @@ export default function OrdersPage() {
     const pending = rowEdits[order.id];
     return pending ?? { loadingDate: order.loadingDate, status: order.status, saving: false };
   };
+  const getQuickEditValue = (order: Order): QuickEditState => {
+    const pending = quickEdits[order.id];
+    return pending ?? {
+      wechatValue: order.wechatId?.trim() || "",
+      paymentValue: order.paymentAgentSnapshot?.name?.trim() || order.paymentByName?.trim() || order.paymentAgentName?.trim() || order.paymentBy?.trim() || "",
+      editingWechat: false,
+      editingPayment: false,
+      savingWechat: false,
+      savingPayment: false,
+    };
+  };
+  const setQuickEditValue = (orderId: string, patch: Partial<QuickEditState>) => {
+    setQuickEdits((prev) => {
+      const current = prev[orderId] ?? {
+        wechatValue: "",
+        paymentValue: "",
+        editingWechat: false,
+        editingPayment: false,
+        savingWechat: false,
+        savingPayment: false,
+      };
+      return { ...prev, [orderId]: { ...current, ...patch } };
+    });
+  };
+  const openQuickField = (order: Order, field: "wechat" | "payment") => {
+    const current = getQuickEditValue(order);
+    setQuickEdits((prev) => ({
+      ...prev,
+      [order.id]: {
+        ...current,
+        wechatValue: current.wechatValue || order.wechatId?.trim() || "",
+        paymentValue: current.paymentValue || order.paymentAgentSnapshot?.name?.trim() || order.paymentByName?.trim() || order.paymentAgentName?.trim() || order.paymentBy?.trim() || "",
+        editingWechat: field === "wechat",
+        editingPayment: field === "payment",
+      },
+    }));
+  };
+  const cancelQuickField = (order: Order, field: "wechat" | "payment") => {
+    setQuickEdits((prev) => ({
+      ...prev,
+      [order.id]: {
+        ...getQuickEditValue(order),
+        wechatValue: order.wechatId?.trim() || "",
+        paymentValue: order.paymentAgentSnapshot?.name?.trim() || order.paymentByName?.trim() || order.paymentAgentName?.trim() || order.paymentBy?.trim() || "",
+        editingWechat: field === "wechat" ? false : getQuickEditValue(order).editingWechat,
+        editingPayment: field === "payment" ? false : getQuickEditValue(order).editingPayment,
+        savingWechat: false,
+        savingPayment: false,
+      },
+    }));
+  };
   const resolveStatusOptions = (order: Order, rowValue: RowEditState) => {
     const options = rowValue.loadingDate ? STATUS_OPTIONS_WITH_DATE : STATUS_OPTIONS_NO_DATE;
     return options;
@@ -671,7 +773,102 @@ try {
     }
   };
 
+  const saveQuickOrderField = async (order: Order, field: "wechat" | "payment") => {
+    const current = getQuickEditValue(order);
+    const isWechat = field === "wechat";
+    const trimmedWechat = current.wechatValue.trim();
+    const trimmedPayment = current.paymentValue.trim();
+    const nextOrder = { ...order };
+
+    setQuickEditValue(order.id, isWechat ? { savingWechat: true } : { savingPayment: true });
+
+    try {
+      let resolvedAgent = paymentAgents.find((agent) => agent.id === trimmedPayment || normalizePaymentAgentValue(agent.name) === normalizePaymentAgentValue(trimmedPayment)) ?? null;
+      if (!isWechat && trimmedPayment && !resolvedAgent) {
+        resolvedAgent = await resolveOrCreatePaymentAgentByName(trimmedPayment);
+      }
+
+      if (isWechat) {
+        nextOrder.wechatId = trimmedWechat;
+      } else {
+        const nextPaymentAgentId = resolvedAgent?.id || "";
+        const settlementPreview = calculatePaymentAgentSettlement({
+          orderTotal: orderTotal(order),
+          existingCredit: resolvedAgent?.creditBalance ?? 0,
+          paidNow: order.paidToPaymentAgentNow ?? 0,
+        });
+        nextOrder.paymentAgentId = nextPaymentAgentId;
+        nextOrder.paymentBy = nextPaymentAgentId || trimmedPayment;
+        nextOrder.paymentByName = resolvedAgent?.name || trimmedPayment;
+        nextOrder.paymentAgentName = resolvedAgent?.name || trimmedPayment;
+        nextOrder.paymentAgentSnapshot = nextPaymentAgentId
+          ? { id: nextPaymentAgentId, name: resolvedAgent?.name || trimmedPayment, code: resolvedAgent?.agentCode || "" }
+          : { id: "", name: "", code: "" };
+        nextOrder.paymentAgentSettlementSnapshot = {
+          ...settlementPreview,
+          orderTotal: settlementPreview.orderTotal,
+          existingCredit: settlementPreview.existingCredit,
+          paymentAgentId: nextPaymentAgentId,
+          paymentAgentName: resolvedAgent?.name || trimmedPayment,
+          updatedAt: new Date().toISOString(),
+          createdAt: order.paymentAgentSettlementSnapshot?.createdAt || new Date().toISOString(),
+        };
+      }
+
+      nextOrder.updatedAt = new Date().toISOString();
+
+      if (isFirebaseOrdersMode) {
+        await upsertFirebaseOrder(nextOrder as any);
+      } else {
+        upsertOrder(nextOrder);
+      }
+
+      if (isFirebaseOrdersMode) {
+        const paymentAgentsService = getPaymentAgentsService();
+        const backgroundTasks: Promise<unknown>[] = [];
+        if (!isWechat) {
+          if (nextOrder.paymentAgentId || nextOrder.paymentBy) backgroundTasks.push(paymentAgentsService.applyOrderSettlement?.(nextOrder) ?? Promise.resolve());
+          else backgroundTasks.push(paymentAgentsService.reverseOrderSettlement?.(nextOrder) ?? Promise.resolve());
+        }
+        backgroundTasks.push(
+          orderLifecycleService.syncOrderLifecycleMetadata(nextOrder, {
+            knownCustomerIds: new Set(customers.map((customer) => customer.id)),
+            knownPaymentAgentIds: new Set(paymentAgents.map((agent) => agent.id)),
+          }),
+        );
+        await Promise.allSettled(backgroundTasks);
+        await Promise.allSettled([reloadFirebaseOrders(), reloadCustomers(), reloadPaymentAgents()]);
+      } else if (!isWechat) {
+        await recalculateFromOrders(orders.filter((entry) => entry.id !== nextOrder.id).concat(nextOrder));
+      }
+
+      setQuickEdits((prev) => ({
+        ...prev,
+        [order.id]: {
+          ...getQuickEditValue(nextOrder),
+          wechatValue: nextOrder.wechatId?.trim() || "",
+          paymentValue: nextOrder.paymentAgentSnapshot?.name?.trim() || nextOrder.paymentByName?.trim() || nextOrder.paymentAgentName?.trim() || nextOrder.paymentBy?.trim() || "",
+          editingWechat: false,
+          editingPayment: false,
+          savingWechat: false,
+          savingPayment: false,
+        },
+      }));
+      pushToast({ tone: "success", text: isWechat ? "WeChat ID updated." : "Paid By updated." });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setQuickEditValue(order.id, isWechat ? { savingWechat: false } : { savingPayment: false });
+      pushToast({ tone: "danger", text: isWechat ? `WeChat update failed: ${message}` : `Paid By update failed: ${message}` });
+    }
+  };
+
   const onSave = async (status: Order["status"], forceDraft = false) => {
+    const saveAudit = createSaveTimingProfile(status === "draft" ? "draft-save" : editingOrderId ? "edit-save" : "new-order-save", {
+      orderId: draft.id,
+      mode: editingOrderId ? "edit" : "create",
+      requestedStatus: status,
+      lineCount: draft.lines.length,
+    });
     logDataFlow("Orders", JSON.stringify({ event: status === "draft" ? "draft_save_started" : "order_save_started", status, lineCount: draft.lines.length, displayedOrderNumber: draft.number || draft.orderNumber }, null, 2));
     if (!ensureFirebaseOrderWriteReady()) return;
     if (activeUploads > 0) return pushToast({ tone: "info", text: "Please wait for image uploads to finish before saving." });
@@ -697,16 +894,21 @@ try {
       if (!hasAnyDraftContent(cleanedDraft)) return pushToast({ tone: "info", text: "Add at least one field before saving a draft." });
       if (!forceDraft && !validation.isValid) {
         setOrderSaveState("idle");
+        saveAudit.flush("save:blocked", { stage: "draft_validation" });
         setShowDraftIncompleteConfirm(true);
         return;
       }
+      saveAudit.mark("validation:done", { draftMode: true, forceDraft, isValid: validation.isValid });
       let resolvedDraftAgent = paymentAgents.find((agent) => agent.id === (cleanedDraft.paymentAgentId || cleanedDraft.paymentBy) || normalizePaymentAgentValue(agent.name) === normalizePaymentAgentValue(cleanedDraft.paymentBy)) ?? null;
       if (!resolvedDraftAgent && cleanedDraft.paymentBy.trim()) {
+        saveAudit.mark("paymentAgentResolve:start");
         try {
           resolvedDraftAgent = await resolveOrCreatePaymentAgentByName(cleanedDraft.paymentBy);
+          saveAudit.mark("paymentAgentResolve:end", { resolvedAgentId: resolvedDraftAgent?.id || null });
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           setOrderSaveState("idle");
+          saveAudit.flush("save:error", { stage: "payment_agent_resolve", message });
           pushToast({ tone: "danger", text: `Payment agent create failed: ${message}` });
           return;
         }
@@ -725,16 +927,19 @@ try {
           ? cleanedDraft.paymentAgentSnapshot
           : { id: "", name: "", code: "" },
       };
+      saveAudit.mark("orderPayload:built", { status: "draft" });
       try {
+        saveAudit.mark("orderWrite:start", { firebase: isFirebaseOrdersMode });
         if (isFirebaseOrdersMode) {
           await upsertFirebaseOrder({ ...draftOrder, draftAutosavedAt: new Date().toISOString() } as any);
-          await reloadFirebaseOrders();
         } else {
           upsertOrder(draftOrder);
         }
+        saveAudit.mark("orderWrite:end");
       } catch (e) {
         const message = e instanceof Error ? e.message : "Draft save failed.";
         setOrderSaveState("idle");
+        saveAudit.flush("save:error", { stage: "order_write", message });
         pushToast({ tone: "danger", text: message });
         return;
       }
@@ -747,7 +952,9 @@ try {
       setShowDraftIncompleteConfirm(false);
       setValidationWarning({ visible: false, items: [] });
       setOrderSaveState("idle");
+      saveAudit.mark("ui:modalClosed");
       logDataFlow("Orders", JSON.stringify({ event: "draft_save_completed", orderId: draftOrder.id, persistedOrderNumber: draftOrder.number || draftOrder.orderNumber || "" }, null, 2));
+      saveAudit.flush("save:done", { path: "draft" });
       return pushToast({ tone: "success", text: "Draft saved. Use Complete Draft to finish it." });
     }
 
@@ -760,8 +967,10 @@ try {
       ];
       setOrderSaveState("idle");
       setValidationWarning({ visible: true, items: missingItems });
+      saveAudit.flush("save:blocked", { stage: "validation", missingItems: missingItems.length });
       return;
     }
+    saveAudit.mark("validation:done", { missingFields: validation.missingFields.length, lineIssues: validation.lineIssues.length });
 
     const now = new Date().toISOString();
     logOrder("save_order_lines_before_resolution", { lines: draft.lines.map((l) => ({ lineId: l.id, customerId: l.customerId, customerName: l.customerName, lineTotal: (l.totalCtns||0)*(l.pcsPerCtn||0)*(l.rmbPerPcs||0) })) });
@@ -769,6 +978,7 @@ try {
     const knownPaymentAgentIdsBeforeSave = new Set(paymentAgents.map((agent) => agent.id));
     let resolvedLines = meaningfulLines;
     try {
+      saveAudit.mark("customerResolution:start", { lines: meaningfulLines.length, knownCustomers: customers.length });
       resolvedLines = (await resolveCustomersForOrderLines(meaningfulLines, customers, now)).map((line) =>
         withDerivedLegacyDetails(seedDetailBoxesFromLegacy(line)),
       );
@@ -778,10 +988,12 @@ try {
       const reusedCustomerIds = affectedCustomerIds.filter((id) => knownIds.has(id));
       logCustomer("save_order_customer_resolution_summary", { affectedCustomerIds, createdCustomerIds, reusedCustomerIds });
       logOrder("customer_resolution_success", { resolvedLines: resolvedLines.length });
+      saveAudit.mark("customerResolution:end", { affectedCustomerIds: affectedCustomerIds.length, createdCustomerIds: createdCustomerIds.length });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       logError("customer_resolution_failure", { error: message });
       setOrderSaveState("idle");
+      saveAudit.flush("save:error", { stage: "customer_resolution", message });
       pushToast({ tone: "danger", text: message || "Customer resolution failed." });
       return;
     }
@@ -791,20 +1003,25 @@ try {
     if (!finalOrderNumber) {
       setOrderSaveState("idle");
       setValidationWarning({ visible: true, items: ["Order Number is required."] });
+      saveAudit.flush("save:blocked", { stage: "order_number_missing" });
       return;
     }
     if (orderNumberExists(activeOrders, finalOrderNumber, draft.id)) {
       setOrderSaveState("idle");
       setValidationWarning({ visible: true, items: [`Order Number ${finalOrderNumber} already exists.`] });
+      saveAudit.flush("save:blocked", { stage: "duplicate_order_number", orderNumber: finalOrderNumber });
       return;
     }
     let resolvedAgent = paymentAgents.find((agent) => agent.id === (cleanedDraft.paymentAgentId || cleanedDraft.paymentBy) || normalizePaymentAgentValue(agent.name) === normalizePaymentAgentValue(cleanedDraft.paymentBy)) ?? null;
     if (!resolvedAgent && cleanedDraft.paymentBy.trim()) {
+      saveAudit.mark("paymentAgentResolve:start");
       try {
         resolvedAgent = await resolveOrCreatePaymentAgentByName(cleanedDraft.paymentBy);
+        saveAudit.mark("paymentAgentResolve:end", { resolvedAgentId: resolvedAgent?.id || null });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         setOrderSaveState("idle");
+        saveAudit.flush("save:error", { stage: "payment_agent_resolve", message });
         pushToast({ tone: "danger", text: `Payment agent create failed: ${message}` });
         return;
       }
@@ -840,27 +1057,25 @@ try {
         createdAt: draft.paymentAgentSettlementSnapshot?.createdAt || now,
       },
     };
+    saveAudit.mark("orderPayload:built", { finalOrderNumber, resolvedLines: resolvedLines.length, resolvedPaymentAgentId: resolvedPaymentAgentId || null });
     try {
+      saveAudit.mark("orderWrite:start", { firebase: isFirebaseOrdersMode });
       if (isFirebaseOrdersMode) {
         await upsertFirebaseOrder(savedOrder as any);
-        await reloadFirebaseOrders();
       } else {
-        upsertOrder(savedOrder);
+          upsertOrder(savedOrder);
       }
+      saveAudit.mark("orderWrite:end");
       logDB("upsert_order_success", { orderId: savedOrder.id, status: savedOrder.status });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       logError("upsert_order_failure", { orderId: savedOrder.id, error: message });
       setOrderSaveState("idle");
+      saveAudit.flush("save:error", { stage: "order_write", message });
       pushToast({ tone: "danger", text: message });
       return;
     }
     const mergedOrders = activeOrders.some((o) => o.id === savedOrder.id) ? activeOrders.map((o) => (o.id === savedOrder.id ? savedOrder : o)) : [savedOrder, ...activeOrders];
-    try {
-      await syncSeriesFromOrder(savedOrder, mergedOrders);
-    } catch (error) {
-      logError("order_series_sync_failure", { orderId: savedOrder.id, orderNumber: savedOrder.number, error: error instanceof Error ? error.message : String(error) });
-    }
     logCustomer("skipped_unrelated_customer_upserts", { reason: "normal_save_should_not_rewrite_unrelated_customers", affectedCustomerIds: Array.from(new Set(savedOrder.lines.map((l) => l.customerId).filter(Boolean))) });
     const result: OrderSideEffectResult = { mode: editingOrderId ? "edit" : "create", orderSaved: true, productsSynced: false, productSyncFailures: [], paymentSettlementApplied: !isFirebaseOrdersMode && Boolean(selectedPaymentAgentId), paymentSettlementReversed: false, customerReceivablesApplied: false, customerReceivablesReversed: false, generatedProductsArchived: editingOrderId ? false : true, blocked: false, warnings: [], errors: [] };
     const affectedCustomerIds = Array.from(new Set(savedOrder.lines.map((l) => l.customerId).filter(Boolean)));
@@ -868,66 +1083,135 @@ try {
     logDataFlow("Orders", JSON.stringify({ event: "order_side_effects_started", orderId: savedOrder.id, orderNumber: savedOrder.number, mode: result.mode, affectedCustomerIds, affectedPaymentAgentId: savedOrder.paymentAgentId || savedOrder.paymentBy, generatedProductIds }, null, 2));
 
     setOrderSaveState("idle");
+    saveAudit.mark("ui:modalClosed");
     resetOrderComposer(false);
+    pushToast({ tone: "info", text: "Order saved. Syncing ledgers..." });
 
     void (async () => {
-      if (editingOrderId && removedLineIds.length) {
-        try { await archiveProductsForRemovedOrderLines(editingOrderId, removedLineIds); result.generatedProductsArchived = true; logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: savedOrder.id, mode: result.mode, step: "archive_removed_line_products", success: true }, null, 2)); }
-        catch (e) { result.generatedProductsArchived = false; result.warnings.push("Removed-line product archive failed."); logError("order_side_effect_step_failed", { orderId: savedOrder.id, mode: result.mode, step: "archive_removed_line_products", error: e instanceof Error ? e.message : String(e) }); }
-      }
+      const paymentAgentsService = getPaymentAgentsService();
+      const orderNumberSeriesService = getOrderNumberSeriesService();
+      saveAudit.mark("backgroundSync:start");
+      const syncTasks: Promise<unknown>[] = [];
 
-      try {
-        const sync = await syncOrderLinesToProducts(savedOrder);
-        result.productsSynced = sync.failed === 0;
-        result.productSyncFailures = sync.failures.map((f) => ({ lineId: f.lineId, reason: f.reason, errorCode: f.errorCode, errorMessage: f.errorMessage }));
-        if (!result.productsSynced) result.warnings.push(`Product sync failed for ${sync.failed} line(s).`);
-        logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: savedOrder.id, mode: result.mode, step: "sync_products", success: result.productsSynced, productSyncFailures: result.productSyncFailures }, null, 2));
-      } catch (e) {
-        result.productsSynced = false;
-        result.warnings.push("Product sync failed.");
-        logError("order_side_effect_step_failed", { orderId: savedOrder.id, mode: result.mode, step: "sync_products", error: e instanceof Error ? e.message : String(e) });
-      }
+      syncTasks.push((async () => {
+        saveAudit.mark("seriesUpdate:start");
+        try {
+          await orderNumberSeriesService.syncOrderNumberSeriesFromOrder(savedOrder, mergedOrders);
+          logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: savedOrder.id, mode: result.mode, step: "sync_order_series", success: true }, null, 2));
+        } catch (error) {
+          result.warnings.push(`Order series sync failed: ${error instanceof Error ? error.message : String(error)}`);
+          logError("order_series_sync_failure", { orderId: savedOrder.id, orderNumber: savedOrder.number, error: error instanceof Error ? error.message : String(error) });
+        } finally {
+          saveAudit.mark("seriesUpdate:end");
+        }
+      })());
+
+      syncTasks.push((async () => {
+        if (editingOrderId && removedLineIds.length) {
+          try {
+            await archiveProductsForRemovedOrderLines(editingOrderId, removedLineIds);
+            result.generatedProductsArchived = true;
+            logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: savedOrder.id, mode: result.mode, step: "archive_removed_line_products", success: true }, null, 2));
+          } catch (e) {
+            result.generatedProductsArchived = false;
+            result.warnings.push("Removed-line product archive failed.");
+            logError("order_side_effect_step_failed", { orderId: savedOrder.id, mode: result.mode, step: "archive_removed_line_products", error: e instanceof Error ? e.message : String(e) });
+          }
+        }
+
+        try {
+          const sync = await syncOrderLinesToProducts(savedOrder);
+          result.productsSynced = sync.failed === 0;
+          result.productSyncFailures = sync.failures.map((f) => ({ lineId: f.lineId, reason: f.reason, errorCode: f.errorCode, errorMessage: f.errorMessage }));
+          if (!result.productsSynced) result.warnings.push(`Product sync failed for ${sync.failed} line(s).`);
+          logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: savedOrder.id, mode: result.mode, step: "sync_products", success: result.productsSynced, productSyncFailures: result.productSyncFailures }, null, 2));
+        } catch (e) {
+          result.productsSynced = false;
+          result.warnings.push("Product sync failed.");
+          logError("order_side_effect_step_failed", { orderId: savedOrder.id, mode: result.mode, step: "sync_products", error: e instanceof Error ? e.message : String(e) });
+        }
+      })());
 
       if (isFirebaseOrdersMode && (savedOrder.paymentAgentId || savedOrder.paymentBy)) {
-        try { await applyOrderSettlement(savedOrder); result.paymentSettlementApplied = true; logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: savedOrder.id, mode: result.mode, step: "apply_payment_settlement", success: true }, null, 2)); }
-        catch (e) { result.paymentSettlementApplied = false; result.warnings.push(`Payment-agent settlement failed: ${e instanceof Error ? e.message : String(e)}`); logError("order_side_effect_step_failed", { orderId: savedOrder.id, mode: result.mode, step: "apply_payment_settlement", error: e instanceof Error ? e.message : String(e) }); }
+        syncTasks.push((async () => {
+          saveAudit.mark("paymentAgentLedger:start");
+          try {
+            await paymentAgentsService.applyOrderSettlement?.(savedOrder);
+            result.paymentSettlementApplied = true;
+            logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: savedOrder.id, mode: result.mode, step: "apply_payment_settlement", success: true }, null, 2));
+          } catch (e) {
+            result.paymentSettlementApplied = false;
+            result.warnings.push(`Payment-agent settlement failed: ${e instanceof Error ? e.message : String(e)}`);
+            logError("order_side_effect_step_failed", { orderId: savedOrder.id, mode: result.mode, step: "apply_payment_settlement", error: e instanceof Error ? e.message : String(e) });
+          } finally {
+            saveAudit.mark("paymentAgentLedger:end", { applied: result.paymentSettlementApplied });
+          }
+        })());
       }
 
-      try { await customerLedgerService.applyOrderCustomerReceivables(savedOrder as any); result.customerReceivablesApplied = true; logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: savedOrder.id, mode: result.mode, step: "apply_customer_receivables", success: true }, null, 2)); }
-      catch (e) { result.customerReceivablesApplied = false; result.warnings.push(`Customer receivable update failed: ${e instanceof Error ? e.message : String(e)}`); logError("order_side_effect_step_failed", { orderId: savedOrder.id, mode: result.mode, step: "apply_customer_receivables", error: e instanceof Error ? e.message : String(e) }); }
+      syncTasks.push((async () => {
+        saveAudit.mark("customerLedger:start");
+        try {
+          await customerLedgerService.applyOrderCustomerReceivables(savedOrder as any);
+          result.customerReceivablesApplied = true;
+          logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: savedOrder.id, mode: result.mode, step: "apply_customer_receivables", success: true }, null, 2));
+        } catch (e) {
+          result.customerReceivablesApplied = false;
+          result.warnings.push(`Customer receivable update failed: ${e instanceof Error ? e.message : String(e)}`);
+          logError("order_side_effect_step_failed", { orderId: savedOrder.id, mode: result.mode, step: "apply_customer_receivables", error: e instanceof Error ? e.message : String(e) });
+        } finally {
+          saveAudit.mark("customerLedger:end", { applied: result.customerReceivablesApplied });
+        }
+      })());
 
       if (isFirebaseOrdersMode) {
-        try {
-          savedOrder = { ...savedOrder, ...((await orderLifecycleService.syncOrderLifecycleMetadata(savedOrder, {
-            knownCustomerIds: knownCustomerIdsBeforeSave,
-            knownPaymentAgentIds: knownPaymentAgentIdsBeforeSave,
-          })) || {}) };
-          await reloadFirebaseOrders();
-          logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: savedOrder.id, mode: result.mode, step: "sync_lifecycle_metadata", success: true }, null, 2));
-        } catch (e) {
-          result.warnings.push(`Lifecycle sync failed: ${e instanceof Error ? e.message : String(e)}`);
-          logError("order_side_effect_step_failed", { orderId: savedOrder.id, mode: result.mode, step: "sync_lifecycle_metadata", error: e instanceof Error ? e.message : String(e) });
-        }
+        syncTasks.push((async () => {
+          saveAudit.mark("lifecycleSync:start");
+          try {
+            savedOrder = { ...savedOrder, ...((await orderLifecycleService.syncOrderLifecycleMetadata(savedOrder, {
+              knownCustomerIds: knownCustomerIdsBeforeSave,
+              knownPaymentAgentIds: knownPaymentAgentIdsBeforeSave,
+            })) || {}) };
+            logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: savedOrder.id, mode: result.mode, step: "sync_lifecycle_metadata", success: true }, null, 2));
+          } catch (e) {
+            result.warnings.push(`Lifecycle sync failed: ${e instanceof Error ? e.message : String(e)}`);
+            logError("order_side_effect_step_failed", { orderId: savedOrder.id, mode: result.mode, step: "sync_lifecycle_metadata", error: e instanceof Error ? e.message : String(e) });
+          } finally {
+            saveAudit.mark("lifecycleSync:end");
+          }
+        })());
       }
 
-      await recalculateFromOrders(mergedOrders);
-      await reloadCustomers();
-      await reloadPaymentAgents();
+      await Promise.allSettled(syncTasks);
+
+      saveAudit.mark("stateRefresh:start");
+      const refreshTasks: Promise<unknown>[] = [];
+      if (isFirebaseOrdersMode) {
+        refreshTasks.push(reloadFirebaseOrders());
+      } else {
+        refreshTasks.push(recalculateFromOrders(mergedOrders));
+      }
+      refreshTasks.push(reloadCustomers());
+      refreshTasks.push(reloadPaymentAgents());
+      refreshTasks.push(reloadOrderSeries());
+      await Promise.allSettled(refreshTasks);
+      saveAudit.mark("stateRefresh:end");
       logDataFlow("Orders", JSON.stringify({ event: "order_side_effects_completed", orderId: savedOrder.id, orderNumber: savedOrder.number, ...result }, null, 2));
 
       if (result.warnings.length > 0) {
         if (result.productSyncFailures.length) pushToast({ tone: "info", text: `Order saved, but product sync failed for ${result.productSyncFailures.length} line.` });
+        else if (result.warnings.some((warning) => warning.startsWith("Order series sync failed"))) pushToast({ tone: "info", text: result.warnings.find((warning) => warning.startsWith("Order series sync failed")) || "Order series sync failed." });
         else if (!result.customerReceivablesApplied) pushToast({ tone: "info", text: `Order saved, but ${result.warnings.find((warning) => warning.startsWith("Customer receivable update failed")) || "customer receivable update failed."}` });
         else if (!result.paymentSettlementApplied) pushToast({ tone: "info", text: `Order saved, but ${result.warnings.find((warning) => warning.startsWith("Payment-agent settlement failed")) || "payment-agent settlement failed."}` });
         else pushToast({ tone: "info", text: `Order saved with warnings: ${result.warnings[0]}` });
-      } else {
-        pushToast({ tone: "success", text: "Order saved." });
       }
       setOrderSaveState("idle");
+      saveAudit.flush("save:done", { warnings: result.warnings.length, mode: result.mode });
     })().catch((error) => {
       logError("order_side_effects_background_failure", { orderId: savedOrder.id, error: error instanceof Error ? error.message : String(error) });
       pushToast({ tone: "danger", text: "Order saved, but background sync failed." });
       setOrderSaveState("idle");
+      saveAudit.flush("save:error", { stage: "background_sync", message: error instanceof Error ? error.message : String(error) });
     });
     return;
   };
@@ -993,6 +1277,7 @@ try {
   const draftTotalPages = Math.max(1, Math.ceil(drafts.length / PAGE_SIZE));
   const pagedDrafts = useMemo(() => drafts.slice((draftPage - 1) * PAGE_SIZE, draftPage * PAGE_SIZE), [drafts, draftPage]);
   const formatPlainAmount = (value: number) => formatAmount(value);
+  const formatFinalAmount = (value: number) => formatWholeMoney(value);
   const getPaymentAgentMeta = (order: Order) => getOrderPaymentAgentDisplay(order, paymentAgents);
   const getLineCtns = (line: Order["lines"][number]) => Number(line.totalCtns) || 0;
   const getLinePcsPerCtn = (line: Order["lines"][number]) => Number(line.pcsPerCtn) || 0;
@@ -1056,6 +1341,19 @@ try {
   const isOrderExpanded = (row: FlatHistoryRow) =>
     Boolean(expandedOrderIds[row.order.id]) ||
     (query.trim().length > 0 && row.extraLines.some((line) => isLineMatchedByQuery(line)));
+  const getSelectedOrderLineIndex = (orderId: string, lineCount: number) => {
+    const rawIndex = orderLineIndexes[orderId] ?? 0;
+    if (lineCount <= 0) return 0;
+    return Math.min(Math.max(rawIndex, 0), lineCount - 1);
+  };
+  const changeOrderLineIndex = (orderId: string, lineCount: number, direction: -1 | 1) => {
+    setOrderLineIndexes((prev) => {
+      const currentIndex = prev[orderId] ?? 0;
+      const nextIndex = Math.min(Math.max(currentIndex + direction, 0), Math.max(lineCount - 1, 0));
+      if (nextIndex === currentIndex) return prev;
+      return { ...prev, [orderId]: nextIndex };
+    });
+  };
   const historyCalendarGroups = useMemo(() => {
     const groups = new Map<string, FlatHistoryRow[]>();
     pagedHistory.forEach((row) => {
@@ -1065,7 +1363,7 @@ try {
     });
     return Array.from(groups.entries()).sort((a, b) => b[0].localeCompare(a[0]));
   }, [pagedHistory]);
-const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr) 62px 70px 88px 84px 110px minmax(76px,0.82fr) 116px minmax(114px,0.82fr) 136px";
+const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 58px 62px 76px 72px 92px minmax(88px,0.78fr) 108px minmax(108px,0.8fr) 104px";
   const fmtOrderDate = (order: Order) => {
     const raw = order.date || order.createdAt || order.updatedAt;
     if (!raw) return "—";
@@ -1091,35 +1389,46 @@ const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr)
   const confirmRemoveOrder = async () => {
     if (!pendingDeleteOrder || deleteBusy) return;
     const o = pendingDeleteOrder;
+    const deleteAudit = createSaveTimingProfile("order-delete", { orderId: o.id, orderNumber: o.number || o.orderNumber, mode: isFirebaseOrdersMode ? "soft_delete" : "local_delete" });
     setDeleteBusy(true);
     if (isFirebaseOrdersMode) {
       logDataFlow("Orders", JSON.stringify({ event: "order_side_effects_started", orderId: o.id, orderNumber: o.number || o.orderNumber, mode: "soft_delete" }, null, 2));
       try {
+        deleteAudit.mark("lifecycleSync:start");
         await orderLifecycleService.softDeleteOrder(o, "orders-page");
+        deleteAudit.mark("lifecycleSync:end");
       } catch (e) {
         logError("order_side_effect_step_failed", { orderId: o.id, mode: "soft_delete", step: "soft_delete_order", error: e instanceof Error ? e.message : String(e) });
         pushToast({ tone: "danger", text: e instanceof Error ? e.message : "Order delete failed." });
         setDeleteBusy(false);
+        deleteAudit.flush("save:error", { stage: "soft_delete", message: e instanceof Error ? e.message : String(e) });
         return;
       }
+      deleteAudit.mark("stateRefresh:start");
       await reloadFirebaseOrders();
       await reloadCustomers();
       await reloadPaymentAgents();
+      deleteAudit.mark("stateRefresh:end");
       logDataFlow("Orders", JSON.stringify({ event: "order_side_effects_completed", orderId: o.id, orderNumber: o.number || o.orderNumber, mode: "soft_delete" }, null, 2));
       pushToast({ tone: "success", text: `Order ${o.number || o.orderNumber} moved to Recycle Bin.` });
       setPendingDeleteOrder(null);
       setDeleteBusy(false);
+      deleteAudit.flush("save:done");
       return;
     }
     try {
+      deleteAudit.mark("orderWrite:start");
       deleteOrder(o.id);
       await recalculateFromOrders(orders.filter((x) => x.id !== o.id && x.status === "saved"));
       await archiveProductsForOrder(o);
+      deleteAudit.mark("orderWrite:end");
       pushToast({ tone: "success", text: `Order ${o.number || o.orderNumber} deleted and related generated products archived.` });
       if (editingOrderId === o.id) resetOrderComposer(false);
       setPendingDeleteOrder(null);
+      deleteAudit.flush("save:done");
     } catch (e) {
       pushToast({ tone: "danger", text: e instanceof Error ? e.message : "Order delete failed." });
+      deleteAudit.flush("save:error", { stage: "local_delete", message: e instanceof Error ? e.message : String(e) });
     } finally {
       setDeleteBusy(false);
     }
@@ -1164,7 +1473,7 @@ const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr)
         <div className="min-w-[280px] flex-1 max-w-xl"><Input value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="Search order no., payment agent, WeChat, marka, details, customer, amounts, status, dates..." leadingIcon={<Search size={15} />} /></div>
         <div className="relative" ref={pickerRef}>
           <Button size="sm" onClick={() => setPickerOpen((v) => !v)}><List size={14} /><span className="text-fg-muted">Order</span><span className="font-semibold">{(editingOrder?.number || draft.number || history[0]?.order.number || history[0]?.order.orderNumber || "—")}</span><ChevronDown size={13} /></Button>
-          {pickerOpen && <div className="absolute left-0 top-full z-20 mt-2 w-72 rounded-xl border border-border bg-bg-card p-1.5 shadow-card max-h-[320px] overflow-y-auto">{pickerOrders.slice(0,30).map((o) => <button key={o.id} onClick={() => { setPickerOpen(false); startEdit(o); }} className="block w-full rounded-md px-2.5 py-2 text-left text-[12.5px] hover:bg-bg-subtle transition-colors"><div className="flex items-center justify-between"><span className="text-[14px] font-semibold">{o.number || o.orderNumber || "Draft"}</span><span className="text-[11px] text-fg-subtle">{formatDate(o.date)}</span></div><div className="mt-0.5 text-[11.5px] text-fg-muted">{o.lines.length} lines Â· {formatPlainAmount(orderTotal(o))}</div></button>)}</div>}
+          {pickerOpen && <div className="absolute left-0 top-full z-20 mt-2 w-72 rounded-xl border border-border bg-bg-card p-1.5 shadow-card max-h-[320px] overflow-y-auto">{pickerOrders.slice(0,30).map((o) => <button key={o.id} onClick={() => { setPickerOpen(false); startEdit(o); }} className="block w-full rounded-md px-2.5 py-2 text-left text-[12.5px] hover:bg-bg-subtle transition-colors"><div className="flex items-center justify-between"><span className="text-[14px] font-semibold">{o.number || o.orderNumber || "Draft"}</span><span className="text-[11px] text-fg-subtle">{formatDate(o.date)}</span></div><div className="mt-0.5 text-[11.5px] text-fg-muted">{o.lines.length} lines Â· {formatFinalAmount(orderTotal(o))}</div></button>)}</div>}
         </div>
         <div className="relative">
           <Button size="sm" variant="secondary" onClick={() => { setFilterOpen((prev) => !prev); }}><Filter size={14} />Filter</Button>
@@ -1215,7 +1524,7 @@ const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr)
                     <td>{paymentMeta.isMissing ? renderDraftMissing() : <span>{paymentMeta.value}</span>}</td>
                     <td>{marka ? <span>{marka}</span> : renderDraftMissing()}</td>
                     <td>{(totalPcs > 0 || totalCtns > 0) ? <span>{totalPcs.toLocaleString()} PCS / {totalCtns.toLocaleString()} CTNS</span> : renderDraftMissing()}</td>
-                    <td className="tabular-nums">{totalAmount > 0 ? <span>{formatPlainAmount(totalAmount)}</span> : renderDraftMissing()}</td>
+                    <td className="tabular-nums">{totalAmount > 0 ? <span>{formatFinalAmount(totalAmount)}</span> : renderDraftMissing()}</td>
                     <td className="px-4"><div className="flex justify-end gap-2"><Button size="sm" variant="secondary" onClick={async () => { logDataFlow("Orders", JSON.stringify({ event: "complete_draft_opened", orderId: o.id, orderNumber: o.number || o.orderNumber }, null, 2)); await startEdit(o); }}>Continue</Button><Button size="sm" variant="secondary" onClick={() => removeOrder(o)}>Delete</Button></div></td>
                   </tr>;
                 })}
@@ -1404,7 +1713,7 @@ const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr)
                 </div>
                 <div className="text-right">
                   <div className="text-[12px] text-fg-subtle">{getPaymentAgentMeta(row.order).value}</div>
-                  <div className="text-[15px] font-bold text-[var(--success)]">{formatPlainAmount(getOrderTotalAmount(row.order))}</div>
+                  <div className="text-[15px] font-bold text-[var(--success)]">{formatFinalAmount(getOrderTotalAmount(row.order))}</div>
                 </div>
                 <div className="flex items-center gap-1">
                   <button type="button" className="grid h-7 w-7 place-items-center rounded-md text-fg transition-colors hover:bg-bg-subtle" onClick={() => setViewOrder(row.order)}><Eye size={14} /></button>
@@ -1438,84 +1747,151 @@ const historyGridTemplate = "102px minmax(84px,0.58fr) 132px minmax(96px,0.72fr)
                 {pagedHistory.length === 0 ? <div className="px-4 py-8 text-center text-fg-subtle">No orders yet. Click Add Order to create one.</div> : pagedHistory.map((row) => {
                   const { order, line, extraLines, paymentMeta } = row;
                   const paymentName = paymentMeta.value;
+                  const quickEdit = getQuickEditValue(order);
                   const canEditOperationalFields = order.status !== "draft" && order.status !== "archived";
                   const rowValue = getRowValue(order);
                   const rowDirty = rowValue.loadingDate !== order.loadingDate || rowValue.status !== order.status;
-                  const expanded = isOrderExpanded(row);
+                  const orderLines = line ? [line, ...extraLines] : [];
+                  const selectedLineIndex = getSelectedOrderLineIndex(order.id, orderLines.length);
+                  const selectedLine = orderLines[selectedLineIndex] ?? null;
                   const rowClass = "grid items-center border-b border-border transition-colors last:border-b-0";
-                  const productPhoto = line ? getLineProductPhoto(line) : "";
-                  const ctns = line ? getLineCtns(line) : 0;
-                  const pcsPerCtn = line ? getLinePcsPerCtn(line) : 0;
-                  const totalPcs = line ? getLineTotalPcs(line) : 0;
-                  const rate = line ? getLineRate(line) : 0;
-                  const amount = getOrderTotalAmount(order);
-                  const marka = line?.marka?.trim() || "—";
-                  const customerName = getCardCustomerValue(line, paymentMeta);
+                  const productPhoto = selectedLine ? getLineProductPhoto(selectedLine) : "";
+                  const ctns = selectedLine ? getLineCtns(selectedLine) : 0;
+                  const pcsPerCtn = selectedLine ? getLinePcsPerCtn(selectedLine) : 0;
+                  const totalPcs = selectedLine ? getLineTotalPcs(selectedLine) : 0;
+                  const rate = selectedLine ? getLineRate(selectedLine) : 0;
+                  const amount = selectedLine ? getLineAmount(selectedLine) : getOrderTotalAmount(order);
+                  const marka = selectedLine?.marka?.trim() || "—";
+                  const customerName = getCardCustomerValue(selectedLine, paymentMeta);
+                  const hasMultipleLines = orderLines.length > 1;
 
                   return <div key={row.key} className="rounded-lg border border-border/70 bg-bg-card">
                     <div className={rowClass} style={{ gridTemplateColumns: historyGridTemplate }}>
-                      <div className="min-w-0 pl-2 pr-1 py-2">
+                      <div className="min-w-0 pl-2 pr-1 py-1.5">
                         <div className="min-w-0">
                           <div className="truncate text-[17px] font-bold leading-tight" title={order.number || order.orderNumber || "Draft"}>{order.number || order.orderNumber || "Draft"}</div>
                         </div>
                       </div>
-                      <div className="min-w-0 px-1 py-2"><div className="block w-full min-w-0 text-[14px] font-semibold leading-tight" title={getDisplayWechatId(order)}>{getDisplayWechatId(order)}</div></div>
-                      <div className="min-w-0 px-1 py-2"><div className="flex justify-center">{productPhoto ? <button type="button" onClick={() => setPreviewImage({ src: productPhoto, alt: "Product photo" })} className="grid h-[80px] w-[80px] shrink-0 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle"><img src={getCloudinaryOptimizedUrl(productPhoto, { width: 132, height: 132, crop: "fit" })} alt="product" className="h-full w-full object-contain" loading="lazy" decoding="async" /></button> : <span className="text-[10px] text-fg-subtle">—</span>}</div></div>
-                      <div className="min-w-0 px-1 py-2 text-center">
-                        <div className="text-[15px] font-semibold leading-tight" title={marka}>{marka}</div>
-                        {extraLines.length > 0 ? (
+                      <div className="min-w-0 px-1 py-1.5">
+                        {quickEdit.editingWechat ? (
+                          <Input
+                            value={quickEdit.wechatValue}
+                            onChange={(event) => setQuickEditValue(order.id, { wechatValue: event.target.value })}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                void saveQuickOrderField(order, "wechat");
+                              }
+                              if (event.key === "Escape") {
+                                event.preventDefault();
+                                cancelQuickField(order, "wechat");
+                              }
+                            }}
+                            onBlur={() => {
+                              if (!quickEdit.savingWechat) {
+                                void saveQuickOrderField(order, "wechat");
+                              }
+                            }}
+                            autoFocus
+                            placeholder="Set WeChat ID"
+                            className="h-8 min-w-0 text-[12px]"
+                          />
+                        ) : (
                           <button
                             type="button"
-                            className="mt-1 text-[11px] font-semibold text-brand transition-colors hover:underline"
-                            onClick={() => setExpandedOrderIds((prev) => ({ ...prev, [order.id]: !expanded }))}
+                            className={cn("block w-full rounded-md px-1 py-1 text-left text-[13.5px] font-semibold leading-tight transition-colors hover:bg-bg-subtle", !order.wechatId?.trim() && "text-[var(--danger)]")}
+                            title={getDisplayWechatId(order)}
+                            onClick={() => openQuickField(order, "wechat")}
                           >
-                            {expanded ? "Show Less" : `See More (+${extraLines.length})`}
+                            {getDisplayWechatId(order)}
                           </button>
-                        ) : null}
+                        )}
                       </div>
-                      <div className="px-1 py-2 text-center text-[14px] font-semibold tabular-nums">{ctns.toLocaleString()}</div>
-                      <div className="px-1 py-2 text-center text-[14px] font-semibold tabular-nums">{pcsPerCtn.toLocaleString()}</div>
-                      <div className="px-1 py-2 text-center text-[14px] font-semibold tabular-nums">{totalPcs.toLocaleString()}</div>
-                      <div className="px-1 py-2 text-center text-[16px] font-semibold tabular-nums">{formatPlainAmount(rate)}</div>
-                      <div className="px-1 py-2 text-center text-[16px] font-bold tabular-nums">{formatPlainAmount(amount)}</div>
-                      <div className="min-w-0 px-1 py-2"><div className="block w-full min-w-0 truncate text-[14px] text-center font-semibold leading-tight" title={customerName}>{customerName}</div></div>
-                      <div className="min-w-0 pl-1 pr-3 py-2 text-center">
+                      <div className="min-w-0 px-0.5 py-1.5">
+                        <div className="flex justify-center">{productPhoto ? <button type="button" onClick={() => setPreviewImage({ src: productPhoto, alt: "Product photo" })} className="grid h-[74px] w-[74px] shrink-0 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle"><img src={getCloudinaryOptimizedUrl(productPhoto, { width: 120, height: 120, crop: "fit" })} alt="product" className="h-full w-full object-contain" loading="lazy" decoding="async" /></button> : <span className="text-[10px] text-fg-subtle">—</span>}</div></div>
+                      <div className="min-w-0 px-1 py-1.5 text-left">
+                        <div className="flex items-center gap-1.5">
+                          {hasMultipleLines ? (
+                            <button
+                              type="button"
+                              className="grid h-5 w-5 shrink-0 place-items-center rounded-md border border-border bg-white text-fg transition-colors hover:bg-bg-subtle disabled:cursor-not-allowed disabled:opacity-40"
+                              onClick={() => changeOrderLineIndex(order.id, orderLines.length, -1)}
+                              disabled={selectedLineIndex === 0}
+                              aria-label="Previous product line"
+                            >
+                              <ChevronLeft size={13} />
+                            </button>
+                          ) : null}
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[14px] font-semibold leading-[1.2] whitespace-normal break-normal [overflow-wrap:normal] [word-break:normal]" title={marka}>{marka}</div>
+                          </div>
+                          {hasMultipleLines ? <span className="shrink-0 text-[11px] font-semibold text-fg-subtle">{`${selectedLineIndex + 1}/${orderLines.length}`}</span> : null}
+                          {hasMultipleLines ? (
+                            <button
+                              type="button"
+                              className="grid h-5 w-5 shrink-0 place-items-center rounded-md border border-border bg-white text-fg transition-colors hover:bg-bg-subtle disabled:cursor-not-allowed disabled:opacity-40"
+                              onClick={() => changeOrderLineIndex(order.id, orderLines.length, 1)}
+                              disabled={selectedLineIndex === orderLines.length - 1}
+                              aria-label="Next product line"
+                            >
+                              <ChevronRight size={13} />
+                            </button>
+                          ) : null}
+                        </div>
+                      </div>
+                      <div className="px-0.5 py-1.5 text-center text-[13.5px] font-semibold tabular-nums">{ctns.toLocaleString()}</div>
+                      <div className="px-0.5 py-1.5 text-center text-[13.5px] font-semibold tabular-nums">{pcsPerCtn.toLocaleString()}</div>
+                      <div className="px-0.5 py-1.5 text-center text-[13.5px] font-semibold tabular-nums">{totalPcs.toLocaleString()}</div>
+                      <div className="px-0.5 py-1.5 text-center text-[14px] font-semibold tabular-nums">{formatPlainAmount(rate)}</div>
+                      <div className="px-0.5 py-1.5 text-center text-[15px] font-bold tabular-nums">{formatPlainAmount(amount)}</div>
+                      <div className="min-w-0 px-1 py-1.5"><div className="block w-full min-w-0 truncate text-[13.5px] text-left font-semibold leading-tight" title={customerName}>{customerName}</div></div>
+                      <div className="min-w-0 pl-1 pr-2 py-1.5 text-center">
                         <div className="min-w-0 [&_button]:max-w-full [&_button]:text-[13.5px] [&_button]:leading-tight">
                           {canEditOperationalFields ? <LoadingDateControl compact debugOrderId={order.id} value={rowValue.loadingDate} onChange={(next) => { setRowEdit(order, { loadingDate: next }, "date_selected"); }} /> : <span className="text-[15px] text-fg-muted">{order.loadingDate ? formatDate(order.loadingDate) : "Set date"}</span>}
                         </div>
                         {canEditOperationalFields && rowDirty ? <button type="button" title="Save row changes" aria-label="Save row changes" className="mt-1 inline-flex text-[10.5px] font-semibold text-brand transition-colors hover:underline disabled:opacity-60" disabled={rowValue.saving} onClick={() => { void saveRowEdit(order); }}>{rowValue.saving ? "Saving..." : "Save"}</button> : null}
                       </div>
-                      <div className="min-w-0 pl-2 pr-1 py-2"><div className={cn("block w-full min-w-0 text-center truncate text-[14px] font-semibold leading-tight", paymentMeta.isMissing && "text-[var(--danger)]")} title={paymentName}>{paymentName}</div></div>
-                      <div className="px-1 py-2">
-                        <div className="flex justify-center gap-1 whitespace-nowrap">
+                      <div className="min-w-0 pl-1 pr-1 py-1.5">
+                        {quickEdit.editingPayment ? (
+                          <Input
+                            value={quickEdit.paymentValue}
+                            onChange={(event) => setQuickEditValue(order.id, { paymentValue: event.target.value })}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                void saveQuickOrderField(order, "payment");
+                              }
+                              if (event.key === "Escape") {
+                                event.preventDefault();
+                                cancelQuickField(order, "payment");
+                              }
+                            }}
+                            onBlur={() => {
+                              if (!quickEdit.savingPayment) {
+                                void saveQuickOrderField(order, "payment");
+                              }
+                            }}
+                            autoFocus
+                            placeholder="Set Paid By"
+                            className="h-8 min-w-0 text-[12px]"
+                          />
+                        ) : (
+                          <button
+                            type="button"
+                            className={cn("block w-full rounded-md px-1 py-1 text-left text-[13.5px] font-semibold leading-tight transition-colors hover:bg-bg-subtle", paymentMeta.isMissing && "text-[var(--danger)]")}
+                            title={paymentName}
+                            onClick={() => openQuickField(order, "payment")}
+                          >
+                            {paymentMeta.isMissing ? "Not Set" : paymentName}
+                          </button>
+                        )}
+                      </div>
+                      <div className="px-0.5 py-1.5">
+                        <div className="flex justify-center gap-0.5 whitespace-nowrap">
                           <button type="button" title="View" aria-label="View" className="grid h-[28px] w-[28px] place-items-center rounded-md text-fg transition-colors hover:bg-bg-subtle" onClick={() => setViewOrder(order)}><Eye size={14} /></button>
                           <button type="button" title="Edit" aria-label="Edit" className="grid h-[28px] w-[28px] place-items-center rounded-md text-fg transition-colors hover:bg-bg-subtle" onClick={() => startEdit(order)}><SquarePen size={14} /></button>
                           <button type="button" title="Delete" aria-label="Delete" className="grid h-[28px] w-[28px] place-items-center rounded-md text-[var(--danger)] transition-colors hover:bg-[var(--danger)]/10" onClick={() => removeOrder(order)}><Trash2 size={14} /></button>
                         </div>
-                      </div>
-                    </div>
-                    <div className={cn("overflow-hidden border-t border-border bg-bg-subtle/35 transition-all duration-200", expanded ? "max-h-[1200px] px-2 py-2 opacity-100" : "max-h-0 px-2 py-0 opacity-0")}>
-                      <div className="space-y-1.5">
-                        {extraLines.map((extraLine, index) => {
-                          const extraPhoto = getLineProductPhoto(extraLine);
-                          const extraCustomer = getCardCustomerValue(extraLine, paymentMeta);
-                          const matched = isLineMatchedByQuery(extraLine);
-                          return <div key={`${order.id}-extra-${extraLine.id || index}`} className={cn("grid items-center rounded-md border border-border/60 bg-white/85", matched && "border-brand/40 bg-brand/5")} style={{ gridTemplateColumns: historyGridTemplate }}>
-                            <div className="pl-2 pr-1 py-2 text-[11px] font-semibold text-fg-subtle">Sub Line {index + 2}</div>
-                            <div className="px-1 py-2 text-[12px] text-fg-subtle">{getDisplayWechatId(order)}</div>
-                            <div className="px-1 py-2 flex justify-center">{extraPhoto ? <button type="button" onClick={() => setPreviewImage({ src: extraPhoto, alt: "Product photo" })} className="grid h-[56px] w-[56px] place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle"><img src={getCloudinaryOptimizedUrl(extraPhoto, { width: 96, height: 96, crop: "fit" })} alt="product" className="h-full w-full object-contain" loading="lazy" decoding="async" /></button> : <span className="text-[10px] text-fg-subtle">—</span>}</div>
-                            <div className="px-1 py-2 text-center text-[13px] font-semibold">{extraLine.marka?.trim() || "—"}</div>
-                            <div className="px-1 py-2 text-center text-[13px] font-semibold tabular-nums">{getLineCtns(extraLine).toLocaleString()}</div>
-                            <div className="px-1 py-2 text-center text-[13px] font-semibold tabular-nums">{getLinePcsPerCtn(extraLine).toLocaleString()}</div>
-                            <div className="px-1 py-2 text-center text-[13px] font-semibold tabular-nums">{getLineTotalPcs(extraLine).toLocaleString()}</div>
-                            <div className="px-1 py-2 text-center text-[13px] font-semibold tabular-nums">{formatPlainAmount(getLineRate(extraLine))}</div>
-                            <div className="px-1 py-2 text-center text-[13px] font-semibold tabular-nums">{formatPlainAmount(getLineAmount(extraLine))}</div>
-                            <div className="px-1 py-2 text-center text-[13px] font-semibold truncate" title={extraCustomer}>{extraCustomer}</div>
-                            <div className="px-1 py-2 text-center text-[12px] text-fg-subtle">{order.loadingDate ? formatDate(order.loadingDate) : "Set date"}</div>
-                            <div className="px-1 py-2 text-center text-[12px] font-semibold truncate" title={paymentName}>{paymentName}</div>
-                            <div className="px-1 py-2 text-center text-[11px] text-fg-subtle">{getVisibleLineDetails(extraLine).join(" · ") || "—"}</div>
-                          </div>;
-                        })}
                       </div>
                     </div>
                   </div>;
@@ -1575,7 +1951,7 @@ setHeaderPaymentQuery(next); setHeaderPaymentOpen(true); setDraft((d)=>({...d,pa
         onConfirm={() => { void confirmRemoveOrder(); }}
       />
       <LoadingOverlay
-        open={orderSaveState === "saving" || isOrdersLoading || isCustomersLoading || paymentAgentsLoading}
+        open={orderSaveState === "saving"}
         title={orderSaveState === "saving" ? "Saving order" : "Loading"}
         message={orderSaveState === "saving" ? "Saving your order now…" : "Fetching the latest data…"}
       />

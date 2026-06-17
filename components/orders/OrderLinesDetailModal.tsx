@@ -2,6 +2,7 @@
 
 import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
 import { formatAmount } from "@/lib/data";
+import { formatWholeMoney } from "@/lib/numbers";
 import { Order, lineTotalPcs, lineTotalRmb, orderShippingPrice, orderTotal } from "@/lib/types";
 import { Button } from "@/components/ui/Button";
 import { ImageLightbox } from "@/components/ui/ImageLightbox";
@@ -16,6 +17,7 @@ type OrderLinesDetailModalProps = {
 };
 
 const formatPlainAmount = (value: number) => formatAmount(value);
+const formatFinalAmount = (value: number) => formatWholeMoney(value);
 
 const EXPORT_HIDDEN_ATTR = "data-export-hidden";
 const TwoLineHeader = ({ zh, en }: { zh: string; en?: string }) => (
@@ -293,7 +295,7 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
                   <th className="border border-border px-1.5 py-2 text-[14px] leading-tight whitespace-nowrap"><TwoLineHeader zh="件/箱" en="PCS/CTN" /></th>
                   <th className="border border-border px-1.5 py-2 text-[14px] leading-tight whitespace-nowrap">TOTAL Pieces</th>
                   <th className="border border-border px-1.5 py-2 text-[13px] leading-tight whitespace-nowrap"><TwoLineHeader zh="单价" en="PRICE/PC" /></th>
-                  <th className="border border-border px-1.5 py-2 text-[13px] leading-tight whitespace-nowrap"><TwoLineHeader zh="金额" en="TOTAL AMOUNT" /></th>
+                  <th className="border border-border px-1.5 py-2 text-[13px] leading-tight whitespace-nowrap"><TwoLineHeader zh="金额" en="AMOUNT" /></th>
                   <th className="border border-border px-1.5 py-2 text-[15px] leading-tight whitespace-nowrap" data-export-hidden="true">COPY</th>
                 </tr>
               </thead>
@@ -406,30 +408,32 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
                 ) : null}
               </tbody>
               <tfoot>
+                {shippingPrice > 0 ? (
+                  <tr className="bg-bg-subtle">
+                    <td colSpan={leadingFooterColSpan} className="border-t-2 border-border px-2 py-3" />
+                    <td colSpan={2} className="border-t-2 border-border px-1.5 py-2 text-right align-middle">
+                      <div className="inline-flex bg-bg-card px-2 py-1 text-right text-[15px] font-bold uppercase leading-tight tracking-wide text-rose-600 whitespace-nowrap">
+                        SHIPPING
+                      </div>
+                    </td>
+                    <td className="border-t-2 border-border px-1.5 py-2 text-center align-middle">
+                      <div className="mx-auto inline-flex rounded border border-rose-200 bg-rose-50 px-3 py-1 text-[18px] font-bold text-rose-600 tabular-nums whitespace-nowrap">
+                        {formatFinalAmount(shippingPrice)}
+                      </div>
+                    </td>
+                    <td className="border-t-2 border-border px-1.5 py-2 text-center align-middle" data-export-hidden="true" />
+                  </tr>
+                ) : null}
                 <tr className="bg-bg-subtle">
-                  <td colSpan={leadingFooterColSpan} className="border-t-2 border-border px-2 py-3" />
-                  <td colSpan={2} className="border-t-2 border-border px-1.5 py-2 text-right align-middle">
-                    <div className="inline-flex bg-bg-card px-2 py-1 text-right text-[15px] font-bold uppercase leading-tight tracking-wide text-rose-600 whitespace-nowrap">
-                      SHIPPING PRICE
-                    </div>
-                  </td>
-                  <td className="border-t-2 border-border px-1.5 py-2 text-center align-middle">
-                    <div className="mx-auto inline-flex rounded border border-rose-200 bg-rose-50 px-3 py-1 text-[18px] font-bold text-rose-600 tabular-nums whitespace-nowrap">
-                      {formatPlainAmount(shippingPrice)}
-                    </div>
-                  </td>
-                  <td className="border-t-2 border-border px-1.5 py-2 text-center align-middle" data-export-hidden="true" />
-                </tr>
-                <tr className="bg-bg-subtle">
-                  <td colSpan={leadingFooterColSpan} className="border-t border-border px-2 py-3" />
+                  <td colSpan={leadingFooterColSpan} className={shippingPrice > 0 ? "border-t border-border px-2 py-3" : "border-t-2 border-border px-2 py-3"} />
                   <td colSpan={2} className="border-t-2 border-border px-1.5 py-3 text-right align-middle">
                     <div className="inline-flex bg-bg-card px-2 py-1 text-right text-[16px] font-bold uppercase leading-tight tracking-wide text-danger whitespace-nowrap">
-                      TOTAL AMOUNT
+                      AMOUNT
                     </div>
                   </td>
                   <td className="border-t-2 border-border px-1.5 py-3 text-center align-middle">
                     <div className="mx-auto inline-flex rounded border-2 border-border bg-[var(--brand)] px-3 py-1 text-[18px] font-bold text-[var(--brand-fg)] tabular-nums whitespace-nowrap">
-                      {formatPlainAmount(orderTotal(order))}
+                      {formatFinalAmount(orderTotal(order))}
                     </div>
                   </td>
                   <td className="border-t-2 border-border px-1.5 py-3 text-center align-middle" data-export-hidden="true">

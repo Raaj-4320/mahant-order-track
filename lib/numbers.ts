@@ -44,8 +44,19 @@ export const floorMoney = (value: number | string | undefined | null, precision 
   return Math.floor((safe + Number.EPSILON) * factor) / factor;
 };
 
+export const floorWholeMoney = (value: number | string | undefined | null) => {
+  const safe = roundNumber(value, DEFAULT_PRECISION);
+  return Math.floor(safe + Number.EPSILON);
+};
+
 export const formatMoney = (value: number | string | undefined | null) =>
   floorMoney(value).toLocaleString("en-US", {
     minimumFractionDigits: 0,
     maximumFractionDigits: MONEY_PRECISION,
+  });
+
+export const formatWholeMoney = (value: number | string | undefined | null) =>
+  floorWholeMoney(value).toLocaleString("en-US", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
   });
