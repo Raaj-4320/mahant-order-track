@@ -33,14 +33,6 @@ function normalizeSeriesDoc(raw: Record<string, unknown>): OrderNumberSeries {
   };
 }
 
-async function persistMissingDerivedSeries(db: ReturnType<typeof requireDb>, businessId: string, derivedSeries: OrderNumberSeries[], storedSeries: OrderNumberSeries[]) {
-  const storedPrefixes = new Set(storedSeries.map((series) => series.prefix));
-  for (const series of derivedSeries) {
-    if (storedPrefixes.has(series.prefix)) continue;
-    await setDoc(doc(db, orderNumberSeriesDocPath(businessId, series.id)), series, { merge: true });
-  }
-}
-
 export const orderNumberSeriesFirebaseService: OrderNumberSeriesService = {
   async listOrderNumberSeries(orders = []) {
     const db = requireDb();
@@ -48,9 +40,6 @@ export const orderNumberSeriesFirebaseService: OrderNumberSeriesService = {
     const snapshot = await getDocs(collection(db, orderNumberSeriesPath(businessId)));
     const stored = snapshot.docs.map((docSnap) => normalizeSeriesDoc({ id: docSnap.id, ...(docSnap.data() as Record<string, unknown>) }));
     const derived = backfillSeriesFromOrders(orders);
-    if (derived.length > 0) {
-      await persistMissingDerivedSeries(db, businessId, derived, stored);
-    }
     return mergeOrderSeries(stored, derived);
   },
   async createOrderNumberSeries(input, orders = []) {
@@ -88,6 +77,17 @@ export const orderNumberSeriesFirebaseService: OrderNumberSeriesService = {
         nextNumber: Math.max(base.nextNumber, parsed.sequenceNumber + 1),
         updatedAt: new Date().toISOString(),
       };
+      if (
+        updated.startNumber === base.startNumber &&
+        updated.lastUsedNumber === base.lastUsedNumber &&
+        updated.nextNumber === base.nextNumber &&
+        updated.prefix === base.prefix &&
+        updated.label === base.label &&
+        updated.isDefault === base.isDefault &&
+        updated.isActive === base.isActive
+      ) {
+        return base;
+      }
       transaction.set(seriesRef, updated, { merge: true });
       return updated;
     });

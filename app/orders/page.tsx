@@ -20,9 +20,9 @@ import { hasAnyDraftContent, validateOrderForSave } from "@/services/orderValida
 import { OrderLinesDetailModal } from "@/components/orders/OrderLinesDetailModal";
 import { useCustomers } from "@/hooks/useCustomers";
 import { customerLedgerService } from "@/services/customerLedgerService";
-import { getResolvedLineCustomerName, resolveCustomersForOrderLines } from "@/services/customers/customerResolution";
+import { applyTypedCustomerToLine, getLineCustomerDisplay, getResolvedLineCustomerName, resolveCustomersForOrderLines } from "@/services/customers/customerResolution";
 import { logCustomer, logDB, logError, logOrder, logPageAccess, logDataFlow } from "@/lib/logger";
-import { BadgePercent, Boxes, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Eye, Filter, IndianRupee, LayoutGrid, List, MessageCircleMore, Moon, Package2, Search, ShoppingBag, SquarePen, Sun, Trash2, UserRound, X } from "lucide-react";
+import { BadgePercent, Boxes, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Eye, Filter, IndianRupee, LayoutGrid, List, MessageCircleMore, Moon, Package2, Search, ShoppingBag, SquarePen, Sun, Trash2, UserRound, WalletCards, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { getOrderPaymentAgentDisplay, resolveOrderPaymentAgent } from "@/lib/orderDisplay";
 import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
@@ -84,13 +84,22 @@ type RowEditState = {
   status: Order["status"];
   saving: boolean;
 };
-type QuickEditState = {
-  wechatValue: string;
-  paymentValue: string;
-  editingWechat: boolean;
-  editingPayment: boolean;
-  savingWechat: boolean;
-  savingPayment: boolean;
+type OutsideEditField =
+  | "orderNumber"
+  | "wechat"
+  | "payment"
+  | "customer"
+  | "marka"
+  | "details"
+  | "totalCtns"
+  | "pcsPerCtn"
+  | "rate"
+  | "shipping";
+type OutsideEditState = {
+  activeField: OutsideEditField | null;
+  lineId?: string;
+  value: string;
+  saving: boolean;
 };
 type FlatHistoryRow = {
   key: string;
@@ -244,7 +253,7 @@ export default function OrdersPage() {
   const [headerWechatOpen, setHeaderWechatOpen] = useState(false);
   const [previewImage, setPreviewImage] = useState<{ src: string; alt: string; caption?: string } | null>(null);
   const [rowEdits, setRowEdits] = useState<Record<string, RowEditState>>({});
-  const [quickEdits, setQuickEdits] = useState<Record<string, QuickEditState>>({});
+  const [outsideEdits, setOutsideEdits] = useState<Record<string, OutsideEditState>>({});
   const [orderSaveState, setOrderSaveState] = useState<"idle" | "saving">("idle");
   const [pendingDeleteOrder, setPendingDeleteOrder] = useState<Order | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -555,7 +564,6 @@ export default function OrdersPage() {
     };
     try {
       await upsertPaymentAgent(created);
-      await reloadPaymentAgents();
       return created;
     } catch (error) {
       throw error;
@@ -663,56 +671,106 @@ export default function OrdersPage() {
     const pending = rowEdits[order.id];
     return pending ?? { loadingDate: order.loadingDate, status: order.status, saving: false };
   };
-  const getQuickEditValue = (order: Order): QuickEditState => {
-    const pending = quickEdits[order.id];
-    return pending ?? {
-      wechatValue: order.wechatId?.trim() || "",
-      paymentValue: order.paymentAgentSnapshot?.name?.trim() || order.paymentByName?.trim() || order.paymentAgentName?.trim() || order.paymentBy?.trim() || "",
-      editingWechat: false,
-      editingPayment: false,
-      savingWechat: false,
-      savingPayment: false,
-    };
+  const getOutsideFieldValue = (order: Order, field: OutsideEditField, line?: Order["lines"][number] | null) => {
+    if (field === "orderNumber") return order.number || order.orderNumber || "";
+    if (field === "wechat") return order.wechatId?.trim() || "";
+    if (field === "payment") return order.paymentAgentSnapshot?.name?.trim() || order.paymentByName?.trim() || order.paymentAgentName?.trim() || order.paymentBy?.trim() || "";
+    if (field === "shipping") return order.shippingPrice ? String(order.shippingPrice) : "";
+    if (!line) return "";
+    if (field === "customer") return line.customerName?.trim() || line.customerSnapshot?.name?.trim() || "";
+    if (field === "marka") return line.marka?.trim() || "";
+    if (field === "details") return joinLineDetails(line).trim() || "";
+    if (field === "totalCtns") return Number(line.totalCtns) ? String(line.totalCtns) : "";
+    if (field === "pcsPerCtn") return Number(line.pcsPerCtn) ? String(line.pcsPerCtn) : "";
+    if (field === "rate") return Number(line.rmbPerPcs) ? String(line.rmbPerPcs) : "";
+    return "";
   };
-  const setQuickEditValue = (orderId: string, patch: Partial<QuickEditState>) => {
-    setQuickEdits((prev) => {
-      const current = prev[orderId] ?? {
-        wechatValue: "",
-        paymentValue: "",
-        editingWechat: false,
-        editingPayment: false,
-        savingWechat: false,
-        savingPayment: false,
-      };
+  const getOutsideEditValue = (order: Order): OutsideEditState => {
+    const pending = outsideEdits[order.id];
+    return pending ?? { activeField: null, lineId: undefined, value: "", saving: false };
+  };
+  const setOutsideEditValue = (orderId: string, patch: Partial<OutsideEditState>) => {
+    setOutsideEdits((prev) => {
+      const current = prev[orderId] ?? { activeField: null, lineId: undefined, value: "", saving: false };
       return { ...prev, [orderId]: { ...current, ...patch } };
     });
   };
-  const openQuickField = (order: Order, field: "wechat" | "payment") => {
-    const current = getQuickEditValue(order);
-    setQuickEdits((prev) => ({
+  const openOutsideField = (order: Order, field: OutsideEditField, line?: Order["lines"][number] | null) => {
+    setOutsideEdits((prev) => ({
       ...prev,
       [order.id]: {
-        ...current,
-        wechatValue: current.wechatValue || order.wechatId?.trim() || "",
-        paymentValue: current.paymentValue || order.paymentAgentSnapshot?.name?.trim() || order.paymentByName?.trim() || order.paymentAgentName?.trim() || order.paymentBy?.trim() || "",
-        editingWechat: field === "wechat",
-        editingPayment: field === "payment",
+        activeField: field,
+        lineId: line?.id,
+        value: getOutsideFieldValue(order, field, line),
+        saving: false,
       },
     }));
   };
-  const cancelQuickField = (order: Order, field: "wechat" | "payment") => {
-    setQuickEdits((prev) => ({
-      ...prev,
-      [order.id]: {
-        ...getQuickEditValue(order),
-        wechatValue: order.wechatId?.trim() || "",
-        paymentValue: order.paymentAgentSnapshot?.name?.trim() || order.paymentByName?.trim() || order.paymentAgentName?.trim() || order.paymentBy?.trim() || "",
-        editingWechat: field === "wechat" ? false : getQuickEditValue(order).editingWechat,
-        editingPayment: field === "payment" ? false : getQuickEditValue(order).editingPayment,
-        savingWechat: false,
-        savingPayment: false,
-      },
-    }));
+  const cancelOutsideField = (orderId: string) => {
+    setOutsideEdits((prev) => {
+      const copy = { ...prev };
+      delete copy[orderId];
+      return copy;
+    });
+  };
+  const isOutsideFieldEditing = (order: Order, field: OutsideEditField, line?: Order["lines"][number] | null) => {
+    const current = getOutsideEditValue(order);
+    return current.activeField === field && (field === "orderNumber" || field === "wechat" || field === "payment" || field === "shipping"
+      ? !current.lineId
+      : current.lineId === line?.id);
+  };
+  const hasOutsideFieldChanged = (order: Order, field: OutsideEditField, rawValue: string, line?: Order["lines"][number] | null) => {
+    const trimmedValue = rawValue.trim();
+    if (field === "orderNumber") {
+      return normalizeEditableOrderNumber(trimmedValue) !== normalizeEditableOrderNumber(order.number || order.orderNumber || "");
+    }
+    if (field === "wechat") {
+      return trimmedValue !== (order.wechatId?.trim() || "");
+    }
+    if (field === "payment") {
+      const resolvedCurrentAgent = resolveOrderPaymentAgent(order, paymentAgents);
+      const currentPaymentId = resolvedCurrentAgent?.id || order.paymentAgentId?.trim() || "";
+      const currentPaymentName = normalizePaymentAgentValue(
+        resolvedCurrentAgent?.name ||
+        order.paymentAgentSnapshot?.name ||
+        order.paymentByName ||
+        order.paymentAgentName ||
+        order.paymentBy ||
+        "",
+      );
+      const resolvedNextAgent = paymentAgents.find((agent) => agent.id === trimmedValue || normalizePaymentAgentValue(agent.name) === normalizePaymentAgentValue(trimmedValue)) ?? null;
+      const nextPaymentId = resolvedNextAgent?.id || "";
+      const nextPaymentName = normalizePaymentAgentValue(resolvedNextAgent?.name || trimmedValue);
+      return currentPaymentId !== nextPaymentId || currentPaymentName !== nextPaymentName;
+    }
+    if (field === "shipping") {
+      return (Number(rawValue) || 0) !== (Number(order.shippingPrice) || 0);
+    }
+    if (!line) return false;
+    if (field === "customer") {
+      const resolved = trimmedValue ? applyTypedCustomerToLine(line, trimmedValue, customers) : { customerId: "", customerName: "", customerSnapshot: undefined };
+      const currentCustomerId = line.customerId?.trim() || "";
+      const currentCustomerName = normalizePaymentAgentValue(line.customerName || "");
+      const nextCustomerId = resolved.customerId?.trim() || "";
+      const nextCustomerName = normalizePaymentAgentValue(resolved.customerName || trimmedValue);
+      return currentCustomerId !== nextCustomerId || currentCustomerName !== nextCustomerName;
+    }
+    if (field === "marka") {
+      return trimmedValue !== (line.marka?.trim() || "");
+    }
+    if (field === "details") {
+      return trimmedValue !== joinLineDetails(line).trim();
+    }
+    if (field === "totalCtns") {
+      return (rawValue === "" ? 0 : Number(rawValue)) !== (Number(line.totalCtns) || 0);
+    }
+    if (field === "pcsPerCtn") {
+      return (rawValue === "" ? 0 : Number(rawValue)) !== (Number(line.pcsPerCtn) || 0);
+    }
+    if (field === "rate") {
+      return (rawValue === "" ? 0 : Number(rawValue)) !== (Number(line.rmbPerPcs) || 0);
+    }
+    return false;
   };
   const resolveStatusOptions = (order: Order, rowValue: RowEditState) => {
     const options = rowValue.loadingDate ? STATUS_OPTIONS_WITH_DATE : STATUS_OPTIONS_NO_DATE;
@@ -759,7 +817,6 @@ try {
         await upsertFirebaseOrder(updated);
         if (isOrderEligibleForCreditSettlement(updated)) await applyOrderSettlement(updated);
         else await reverseOrderSettlement(updated);
-        await reloadFirebaseOrders();
       } else {
         upsertOrder(updated);
         await recalculateFromOrders(orders.filter((x) => x.id !== updated.id).concat(updated));
@@ -778,92 +835,128 @@ try {
     }
   };
 
-  const saveQuickOrderField = async (order: Order, field: "wechat" | "payment") => {
-    const current = getQuickEditValue(order);
-    const isWechat = field === "wechat";
-    const trimmedWechat = current.wechatValue.trim();
-    const trimmedPayment = current.paymentValue.trim();
-    const nextOrder = { ...order };
+  const persistOutsideEditedOrder = async (previousOrder: Order, nextOrder: Order) => {
+    if (isFirebaseOrdersMode) {
+      await upsertFirebaseOrder(nextOrder as any);
+      const paymentAgentsService = getPaymentAgentsService();
+      const backgroundTasks: Promise<unknown>[] = [];
+      if (nextOrder.paymentAgentId || nextOrder.paymentBy) backgroundTasks.push(paymentAgentsService.applyOrderSettlement?.(nextOrder) ?? Promise.resolve());
+      else backgroundTasks.push(paymentAgentsService.reverseOrderSettlement?.(nextOrder) ?? Promise.resolve());
+      if (nextOrder.status === "saved") backgroundTasks.push(syncOrderLinesToProducts(nextOrder));
+      backgroundTasks.push(customerLedgerService.applyOrderCustomerReceivables(nextOrder));
+      backgroundTasks.push(
+        orderLifecycleService.syncOrderLifecycleMetadata(nextOrder, {
+          knownCustomerIds: new Set(customers.map((customer) => customer.id)),
+          knownPaymentAgentIds: new Set(paymentAgents.map((agent) => agent.id)),
+        }),
+      );
+      await Promise.allSettled(backgroundTasks);
+      await Promise.allSettled([reloadFirebaseOrders(), reloadCustomers(), reloadPaymentAgents()]);
+      return;
+    }
 
-    setQuickEditValue(order.id, isWechat ? { savingWechat: true } : { savingPayment: true });
+    upsertOrder(nextOrder);
+    const mergedOrders = orders.filter((entry) => entry.id !== nextOrder.id).concat(nextOrder);
+    await recalculateFromOrders(mergedOrders);
+  };
+
+  const saveOutsideField = async (order: Order, field: OutsideEditField, line?: Order["lines"][number] | null) => {
+    const current = getOutsideEditValue(order);
+    if (current.saving) return;
+    const targetLineId = line?.id || current.lineId;
+    const targetLine = targetLineId ? order.lines.find((entry) => entry.id === targetLineId) ?? null : null;
+    const rawValue = current.value;
+    if (!hasOutsideFieldChanged(order, field, rawValue, targetLine)) {
+      cancelOutsideField(order.id);
+      return;
+    }
+    const trimmedValue = rawValue.trim();
+    const nextOrder: Order = {
+      ...order,
+      lines: order.lines.map((entry) => ({ ...entry })),
+    };
+
+    setOutsideEditValue(order.id, { saving: true });
 
     try {
-      let resolvedAgent = paymentAgents.find((agent) => agent.id === trimmedPayment || normalizePaymentAgentValue(agent.name) === normalizePaymentAgentValue(trimmedPayment)) ?? null;
-      if (!isWechat && trimmedPayment && !resolvedAgent) {
-        resolvedAgent = await resolveOrCreatePaymentAgentByName(trimmedPayment);
-      }
-
-      if (isWechat) {
-        nextOrder.wechatId = trimmedWechat;
-      } else {
+      if (field === "orderNumber") {
+        const nextNumber = normalizeEditableOrderNumber(trimmedValue);
+        if (!nextNumber) throw new Error("Order number is required.");
+        if (orderNumberExists(orders.filter((entry) => entry.id !== order.id), nextNumber)) throw new Error("Order number already exists.");
+        nextOrder.number = nextNumber;
+        nextOrder.orderNumber = nextNumber;
+        Object.assign(nextOrder, deriveOrderSeriesFields(nextNumber));
+      } else if (field === "wechat") {
+        nextOrder.wechatId = trimmedValue;
+      } else if (field === "payment") {
+        let resolvedAgent = paymentAgents.find((agent) => agent.id === trimmedValue || normalizePaymentAgentValue(agent.name) === normalizePaymentAgentValue(trimmedValue)) ?? null;
+        if (trimmedValue && !resolvedAgent) resolvedAgent = await resolveOrCreatePaymentAgentByName(trimmedValue);
         const nextPaymentAgentId = resolvedAgent?.id || "";
         const settlementPreview = calculatePaymentAgentSettlement({
-          orderTotal: orderTotal(order),
+          orderTotal: orderTotal(nextOrder),
           existingCredit: resolvedAgent?.creditBalance ?? 0,
           paidNow: order.paidToPaymentAgentNow ?? 0,
         });
         nextOrder.paymentAgentId = nextPaymentAgentId;
-        nextOrder.paymentBy = nextPaymentAgentId || trimmedPayment;
-        nextOrder.paymentByName = resolvedAgent?.name || trimmedPayment;
-        nextOrder.paymentAgentName = resolvedAgent?.name || trimmedPayment;
+        nextOrder.paymentBy = nextPaymentAgentId || trimmedValue;
+        nextOrder.paymentByName = resolvedAgent?.name || trimmedValue;
+        nextOrder.paymentAgentName = resolvedAgent?.name || trimmedValue;
         nextOrder.paymentAgentSnapshot = nextPaymentAgentId
-          ? { id: nextPaymentAgentId, name: resolvedAgent?.name || trimmedPayment, code: resolvedAgent?.agentCode || "" }
+          ? { id: nextPaymentAgentId, name: resolvedAgent?.name || trimmedValue, code: resolvedAgent?.agentCode || "" }
           : { id: "", name: "", code: "" };
         nextOrder.paymentAgentSettlementSnapshot = {
           ...settlementPreview,
           orderTotal: settlementPreview.orderTotal,
           existingCredit: settlementPreview.existingCredit,
           paymentAgentId: nextPaymentAgentId,
-          paymentAgentName: resolvedAgent?.name || trimmedPayment,
+          paymentAgentName: resolvedAgent?.name || trimmedValue,
           updatedAt: new Date().toISOString(),
           createdAt: order.paymentAgentSettlementSnapshot?.createdAt || new Date().toISOString(),
         };
+      } else if (field === "shipping") {
+        nextOrder.shippingPrice = Math.max(0, Number(rawValue) || 0);
+      } else {
+        if (!targetLine) throw new Error("Order line not found.");
+        const nextLine = nextOrder.lines.find((entry) => entry.id === targetLine.id);
+        if (!nextLine) throw new Error("Order line not found.");
+        if (field === "customer") {
+          Object.assign(nextLine, trimmedValue ? applyTypedCustomerToLine(nextLine, trimmedValue, customers) : { customerId: "", customerName: "", customerSnapshot: undefined });
+        } else if (field === "marka") {
+          nextLine.marka = rawValue;
+        } else if (field === "details") {
+          nextLine.details = trimmedValue;
+          nextLine.detail1 = trimmedValue;
+          nextLine.detail2 = "";
+          nextLine.detail3 = "";
+        } else if (field === "totalCtns") {
+          nextLine.totalCtns = rawValue === "" ? 0 : Number(rawValue);
+        } else if (field === "pcsPerCtn") {
+          nextLine.pcsPerCtn = rawValue === "" ? 0 : Number(rawValue);
+        } else if (field === "rate") {
+          nextLine.rmbPerPcs = rawValue === "" ? 0 : Number(rawValue);
+        }
       }
 
       nextOrder.updatedAt = new Date().toISOString();
-
-      if (isFirebaseOrdersMode) {
-        await upsertFirebaseOrder(nextOrder as any);
-      } else {
-        upsertOrder(nextOrder);
-      }
-
-      if (isFirebaseOrdersMode) {
-        const paymentAgentsService = getPaymentAgentsService();
-        const backgroundTasks: Promise<unknown>[] = [];
-        if (!isWechat) {
-          if (nextOrder.paymentAgentId || nextOrder.paymentBy) backgroundTasks.push(paymentAgentsService.applyOrderSettlement?.(nextOrder) ?? Promise.resolve());
-          else backgroundTasks.push(paymentAgentsService.reverseOrderSettlement?.(nextOrder) ?? Promise.resolve());
-        }
-        backgroundTasks.push(
-          orderLifecycleService.syncOrderLifecycleMetadata(nextOrder, {
-            knownCustomerIds: new Set(customers.map((customer) => customer.id)),
-            knownPaymentAgentIds: new Set(paymentAgents.map((agent) => agent.id)),
-          }),
-        );
-        await Promise.allSettled(backgroundTasks);
-        await Promise.allSettled([reloadFirebaseOrders(), reloadCustomers(), reloadPaymentAgents()]);
-      } else if (!isWechat) {
-        await recalculateFromOrders(orders.filter((entry) => entry.id !== nextOrder.id).concat(nextOrder));
-      }
-
-      setQuickEdits((prev) => ({
-        ...prev,
-        [order.id]: {
-          ...getQuickEditValue(nextOrder),
-          wechatValue: nextOrder.wechatId?.trim() || "",
-          paymentValue: nextOrder.paymentAgentSnapshot?.name?.trim() || nextOrder.paymentByName?.trim() || nextOrder.paymentAgentName?.trim() || nextOrder.paymentBy?.trim() || "",
-          editingWechat: false,
-          editingPayment: false,
-          savingWechat: false,
-          savingPayment: false,
-        },
-      }));
-      pushToast({ tone: "success", text: isWechat ? "WeChat ID updated." : "Paid By updated." });
+      await persistOutsideEditedOrder(order, nextOrder);
+      cancelOutsideField(order.id);
+      const successLabels: Record<OutsideEditField, string> = {
+        orderNumber: "Order number updated.",
+        wechat: "WeChat ID updated.",
+        payment: "Paid By updated.",
+        customer: "Customer updated.",
+        marka: "Marka updated.",
+        details: "Details updated.",
+        totalCtns: "CTNs updated.",
+        pcsPerCtn: "PCS/CTN updated.",
+        rate: "Rate updated.",
+        shipping: "Shipping updated.",
+      };
+      pushToast({ tone: "success", text: successLabels[field] });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setQuickEditValue(order.id, isWechat ? { savingWechat: false } : { savingPayment: false });
-      pushToast({ tone: "danger", text: isWechat ? `WeChat update failed: ${message}` : `Paid By update failed: ${message}` });
+      setOutsideEditValue(order.id, { saving: false });
+      pushToast({ tone: "danger", text: `${field} update failed: ${message}` });
     }
   };
 
@@ -1320,8 +1413,7 @@ try {
     return line.details?.trim() ? [line.details.trim()] : [];
   };
   const getCardCustomerValue = (line: Order["lines"][number] | null) => {
-    const lineCustomer = line ? getResolvedLineCustomerName(line) : "";
-    return lineCustomer || "—";
+    return line ? getLineCustomerDisplay(line, customers) : "—";
   };
   const getHistoryRowTone = (loadingDate?: string) => {
     return "bg-[var(--bg-card)]";
@@ -1344,6 +1436,89 @@ try {
   const isOrderExpanded = (row: FlatHistoryRow) =>
     Boolean(expandedOrderIds[row.order.id]) ||
     (query.trim().length > 0 && row.extraLines.some((line) => isLineMatchedByQuery(line)));
+  const updateOutsideDecimalValue = (orderId: string, nextValue: string) => {
+    if (nextValue === "" || /^\d*\.?\d*$/.test(nextValue)) {
+      setOutsideEditValue(orderId, { value: nextValue });
+    }
+  };
+  const renderOutsideEditableField = ({
+    order,
+    field,
+    line,
+    displayValue,
+    placeholder,
+    title,
+    buttonClassName,
+    inputClassName,
+    type = "text",
+    inputMode,
+    numeric = false,
+    listId,
+    listOptions = [],
+  }: {
+    order: Order;
+    field: OutsideEditField;
+    line?: Order["lines"][number] | null;
+    displayValue: string;
+    placeholder: string;
+    title?: string;
+    buttonClassName: string;
+    inputClassName: string;
+    type?: "text" | "number";
+    inputMode?: "text" | "decimal" | "numeric" | "search" | "email" | "tel" | "url" | "none";
+    numeric?: boolean;
+    listId?: string;
+    listOptions?: string[];
+  }) => {
+    const outsideEdit = getOutsideEditValue(order);
+    const editing = isOutsideFieldEditing(order, field, line);
+    if (editing) {
+      return (
+        <>
+          <Input
+            value={outsideEdit.value}
+            type={type}
+            inputMode={inputMode}
+            list={listId}
+            autoFocus
+            placeholder={placeholder}
+            className={inputClassName}
+            onChange={(event) => {
+              const nextValue = event.target.value;
+              if (numeric) updateOutsideDecimalValue(order.id, nextValue);
+              else setOutsideEditValue(order.id, { value: nextValue });
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void saveOutsideField(order, field, line);
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                cancelOutsideField(order.id);
+              }
+            }}
+            onBlur={() => {
+              if (!outsideEdit.saving) {
+                void saveOutsideField(order, field, line);
+              }
+            }}
+          />
+          {listId && listOptions.length > 0 ? <datalist id={listId}>{listOptions.map((option) => <option key={option} value={option} />)}</datalist> : null}
+        </>
+      );
+    }
+    return (
+      <button
+        type="button"
+        className={buttonClassName}
+        title={title || displayValue || placeholder}
+        onClick={() => openOutsideField(order, field, line)}
+      >
+        {displayValue || placeholder}
+      </button>
+    );
+  };
   const getSelectedOrderLineIndex = (orderId: string, lineCount: number) => {
     const rawIndex = orderLineIndexes[orderId] ?? 0;
     if (lineCount <= 0) return 0;
@@ -1541,6 +1716,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
           <section className="card overflow-hidden">
             {pagedHistory.length === 0 ? <div className="py-8 text-center text-fg-subtle">No orders yet. Click Add Order to create one.</div> : <div>{pagedHistory.map((row) => {
               const { order, line, paymentMeta } = row;
+              const paymentName = paymentMeta.value;
               const rowValue = getRowValue(order);
               const rowDirty = rowValue.loadingDate !== order.loadingDate || rowValue.status !== order.status;
               const canEditOperationalFields = order.status !== "draft" && order.status !== "archived";
@@ -1561,7 +1737,14 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                 <div className="flex flex-col gap-5 border-b border-[#e8ebef] px-6 py-5 xl:flex-row xl:items-center xl:justify-between">
                   <div className="flex min-w-0 flex-1 flex-col gap-5 lg:flex-row lg:flex-wrap lg:items-stretch">
                     <div className="min-w-[180px]">
-                      <div className="text-[26px] font-extrabold leading-none text-slate-950">{order.number || order.orderNumber || "Draft"}</div>
+                      {renderOutsideEditableField({
+                        order,
+                        field: "orderNumber",
+                        displayValue: order.number || order.orderNumber || "Draft",
+                        placeholder: "Set order number",
+                        buttonClassName: "block w-full rounded-xl px-2 py-1 text-left text-[26px] font-extrabold leading-none text-slate-950 transition-colors hover:bg-white/70",
+                        inputClassName: "h-11 min-w-0 text-[18px] font-bold",
+                      })}
                       <div className="mt-3 flex items-center gap-2 text-[15px] font-medium text-slate-500">
                         <CalendarDays size={16} />
                         <span>{fmtOrderDate(order)}</span>
@@ -1574,7 +1757,20 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                         <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white/92 text-slate-600 shadow-sm ring-1 ring-[#e6e8ec]">
                           <UserRound size={19} />
                         </span>
-                        <span className="min-w-0 break-words">{customerValue || "—"}</span>
+                        <div className="min-w-0 flex-1">
+                          {line ? renderOutsideEditableField({
+                            order,
+                            field: "customer",
+                            line,
+                            displayValue: customerValue || "—",
+                            placeholder: "Set customer",
+                            title: customerValue,
+                            buttonClassName: "block w-full rounded-xl px-2 py-1 text-left text-[21px] font-bold leading-tight transition-colors hover:bg-white/70",
+                            inputClassName: "h-10 min-w-0 text-[15px] font-semibold",
+                            listId: `outside-customer-${order.id}-${line.id}`,
+                            listOptions: customerSuggestions,
+                          }) : <span className="min-w-0 break-words">—</span>}
+                        </div>
                       </div>
                     </div>
                     <div className="hidden w-px self-stretch bg-[#e8ebef] lg:block" />
@@ -1584,7 +1780,39 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                         <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-emerald-100 text-emerald-700 shadow-sm ring-1 ring-emerald-200">
                           <MessageCircleMore size={19} />
                         </span>
-                        <span className="min-w-0 break-words">{getDisplayWechatId(order)}</span>
+                        <div className="min-w-0 flex-1">
+                          {renderOutsideEditableField({
+                            order,
+                            field: "wechat",
+                            displayValue: getDisplayWechatId(order),
+                            placeholder: "Set WeChat ID",
+                            buttonClassName: cn("block w-full rounded-xl px-2 py-1 text-left text-[21px] font-bold leading-tight transition-colors hover:bg-white/70", !order.wechatId?.trim() && "text-[var(--danger)]"),
+                            inputClassName: "h-10 min-w-0 text-[15px] font-semibold",
+                            listId: `outside-wechat-${order.id}`,
+                            listOptions: wechatSuggestions,
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="hidden w-px self-stretch bg-[#e8ebef] lg:block" />
+                    <div className="min-w-[240px] text-center">
+                      <div className="text-[13px] font-semibold uppercase tracking-[0.16em] text-slate-400">Paid By</div>
+                      <div className="mt-3 flex items-center gap-3 text-[21px] font-bold leading-tight text-slate-950">
+                        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-sky-100 text-sky-700 shadow-sm ring-1 ring-sky-200">
+                          <WalletCards size={19} />
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          {renderOutsideEditableField({
+                            order,
+                            field: "payment",
+                            displayValue: paymentName,
+                            placeholder: "Set Paid By",
+                            buttonClassName: cn("block w-full rounded-xl px-2 py-1 text-left text-[21px] font-bold leading-tight transition-colors hover:bg-white/70", paymentMeta.isMissing && "text-[var(--danger)]"),
+                            inputClassName: "h-10 min-w-0 text-[15px] font-semibold",
+                            listId: `outside-payment-${order.id}`,
+                            listOptions: paymentAgents.map((agent) => agent.name),
+                          })}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1633,8 +1861,15 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                     )}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="text-[28px] font-extrabold leading-tight text-slate-950">{line?.marka?.trim() || "—"}</div>
-                    {detailLines.length ? <div className="mt-3 text-[19px] font-medium leading-relaxed text-slate-600">{detailLines.join(" · ")}</div> : null}
+                    {line ? renderOutsideEditableField({
+                      order,
+                      field: "marka",
+                      line,
+                      displayValue: line.marka?.trim() || "—",
+                      placeholder: "Set marka",
+                      buttonClassName: "block w-full rounded-xl px-2 py-1 text-left text-[28px] font-extrabold leading-tight text-slate-950 transition-colors hover:bg-white/70",
+                      inputClassName: "h-11 min-w-0 text-[18px] font-bold",
+                    }) : <div className="text-[28px] font-extrabold leading-tight text-slate-950">—</div>}
                     {row.extraLines.length > 0 ? <button type="button" className="mt-3 text-[13px] font-semibold text-brand transition-colors hover:underline" onClick={() => setExpandedOrderIds((prev) => ({ ...prev, [order.id]: !expanded }))}>{expanded ? "Show Less" : `See More (+${row.extraLines.length})`}</button> : null}
                     <div className="mt-5 text-[19px] leading-relaxed">
                       <span className="font-medium text-slate-500">WeChat: </span>
@@ -1644,31 +1879,64 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                 </div>
                 <div className={cn("overflow-hidden border-b border-[#e8ebef] transition-all duration-200", expanded && row.extraLines.length > 0 ? "max-h-[640px] px-7 py-4 opacity-100" : "max-h-0 px-7 py-0 opacity-0")}>
                   <div className="space-y-2">
-                    {row.extraLines.map((extraLine, index) => <div key={`${order.id}-grid-extra-${extraLine.id || index}`} className={cn("grid grid-cols-[88px_minmax(0,1fr)_110px_110px] items-center gap-3 rounded-xl border border-border/70 bg-white/85 px-3 py-3", isLineMatchedByQuery(extraLine) && "border-brand/40 bg-brand/5")}>
-                      <div className="text-[12px] font-semibold text-fg-subtle">Sub Line {index + 2}</div>
-                      <div className="min-w-0"><div className="truncate text-[15px] font-semibold">{extraLine.marka?.trim() || "—"}</div><div className="truncate text-[12px] text-fg-subtle">{getVisibleLineDetails(extraLine).join(" · ") || "—"}</div></div>
-                      <div className={cn("text-center text-[14px] font-semibold tabular-nums", getLineAmount(extraLine) > 0 ? "text-fg" : "text-[var(--danger)]")}>{formatFinalAmount(getLineAmount(extraLine))}</div>
-                      <div className="text-center text-[13px] font-semibold">{getCardCustomerValue(extraLine)}</div>
-                    </div>)}
+                      {row.extraLines.map((extraLine, index) => <div key={`${order.id}-grid-extra-${extraLine.id || index}`} className={cn("grid grid-cols-[88px_minmax(0,1fr)_110px_110px] items-center gap-3 rounded-xl border border-border/70 bg-white/85 px-3 py-3", isLineMatchedByQuery(extraLine) && "border-brand/40 bg-brand/5")}>
+                        <div className="text-[12px] font-semibold text-fg-subtle">Sub Line {index + 2}</div>
+                        <div className="min-w-0"><div className="truncate text-[15px] font-semibold">{renderOutsideEditableField({
+                          order,
+                          field: "marka",
+                          line: extraLine,
+                          displayValue: extraLine.marka?.trim() || "—",
+                          placeholder: "Set marka",
+                          buttonClassName: "block w-full rounded-md px-1 py-0.5 text-left text-[15px] font-semibold transition-colors hover:bg-white/70",
+                          inputClassName: "h-8 min-w-0 text-[12px] font-semibold",
+                        })}</div></div>
+                        <div className={cn("text-center text-[14px] font-semibold tabular-nums", getLineAmount(extraLine) > 0 ? "text-fg" : "text-[var(--danger)]")}>{formatFinalAmount(getLineAmount(extraLine))}</div>
+                        <div className="text-center text-[13px] font-semibold">{renderOutsideEditableField({
+                          order,
+                          field: "customer",
+                          line: extraLine,
+                          displayValue: getCardCustomerValue(extraLine),
+                          placeholder: "Set customer",
+                          buttonClassName: "block w-full rounded-md px-1 py-0.5 text-center text-[13px] font-semibold transition-colors hover:bg-white/70",
+                          inputClassName: "h-8 min-w-0 text-[12px]",
+                          listId: `outside-customer-${order.id}-${extraLine.id}`,
+                          listOptions: customerSuggestions,
+                        })}</div>
+                      </div>)}
                   </div>
                 </div>
                 <div className="px-7 py-5">
                   <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.2fr)_auto] lg:items-center">
-                    {[
-                      { label: "CTNS", value: formatPlainAmount(ctns), icon: <Package2 size={21} />, tint: "bg-violet-100 text-violet-700", valueClass: "text-slate-950" },
-                      { label: "PCS/CTN", value: formatPlainAmount(pcsPerCtn), icon: <Boxes size={21} />, tint: "bg-orange-100 text-orange-700", valueClass: "text-slate-950" },
-                      { label: "TOTAL PCS", value: formatPlainAmount(totalPcs), icon: <ShoppingBag size={21} />, tint: "bg-sky-100 text-sky-700", valueClass: "text-slate-950" },
-                      { label: "RATE", value: formatPlainAmount(rate), icon: <BadgePercent size={21} />, tint: "bg-rose-100 text-rose-700", valueClass: "text-slate-950" },
-                      { label: "SHIPPING", value: formatFinalAmount(shippingAmount), icon: <IndianRupee size={23} />, tint: "bg-rose-100 text-rose-700", valueClass: shippingAmount > 0 ? "text-rose-600 text-[30px]" : "text-[var(--danger)] text-[30px]" },
-                      { label: "TOTAL AMOUNT", value: formatFinalAmount(amount), icon: <IndianRupee size={23} />, tint: "bg-emerald-100 text-emerald-700", valueClass: amount > 0 ? "text-emerald-700 text-[30px]" : "text-[var(--danger)] text-[30px]" },
-                    ].map((stat, index) => (
+                      {[
+                        { label: "CTNS", value: formatPlainAmount(ctns), editableField: "totalCtns" as const, icon: <Package2 size={21} />, tint: "bg-violet-100 text-violet-700", valueClass: "text-slate-950" },
+                        { label: "PCS/CTN", value: formatPlainAmount(pcsPerCtn), editableField: "pcsPerCtn" as const, icon: <Boxes size={21} />, tint: "bg-orange-100 text-orange-700", valueClass: "text-slate-950" },
+                        { label: "TOTAL PCS", value: formatPlainAmount(totalPcs), editableField: null, icon: <ShoppingBag size={21} />, tint: "bg-sky-100 text-sky-700", valueClass: "text-slate-950" },
+                        { label: "RATE", value: formatPlainAmount(rate), editableField: "rate" as const, icon: <BadgePercent size={21} />, tint: "bg-rose-100 text-rose-700", valueClass: "text-slate-950" },
+                        { label: "SHIPPING", value: formatFinalAmount(shippingAmount), editableField: "shipping" as const, icon: <IndianRupee size={23} />, tint: "bg-rose-100 text-rose-700", valueClass: shippingAmount > 0 ? "text-rose-600 text-[30px]" : "text-[var(--danger)] text-[30px]" },
+                        { label: "TOTAL AMOUNT", value: formatFinalAmount(amount), editableField: null, icon: <IndianRupee size={23} />, tint: "bg-emerald-100 text-emerald-700", valueClass: amount > 0 ? "text-emerald-700 text-[30px]" : "text-[var(--danger)] text-[30px]" },
+                      ].map((stat, index) => (
                       <div key={`${row.key}-${stat.label}`} className={cn("flex min-w-0 items-center gap-4 rounded-2xl lg:rounded-none", index < 6 && "lg:pr-4", index < 5 && "lg:border-r lg:border-[#e8ebef]")}>
                         <div className={cn("grid h-12 w-12 shrink-0 place-items-center rounded-2xl", stat.tint)}>
                           {stat.icon}
                         </div>
                         <div className="min-w-0 text-center">
                           <div className="text-[13px] font-semibold uppercase tracking-[0.14em] text-slate-400">{stat.label}</div>
-                          <div className={cn("mt-1 text-[25px] font-extrabold leading-none", stat.valueClass)}>{stat.value}</div>
+                          <div className={cn("mt-1 text-[25px] font-extrabold leading-none", stat.valueClass)}>
+                            {stat.editableField && (stat.editableField === "shipping" || line)
+                              ? renderOutsideEditableField({
+                                  order,
+                                  field: stat.editableField,
+                                  line,
+                                  displayValue: stat.value,
+                                  placeholder: `Set ${stat.label.toLowerCase()}`,
+                                  buttonClassName: "block w-full rounded-xl px-1 py-1 text-center transition-colors hover:bg-white/70",
+                                  inputClassName: "h-10 min-w-0 text-center text-[14px] font-semibold",
+                                  type: "number",
+                                  inputMode: "decimal",
+                                  numeric: true,
+                                })
+                              : stat.value}
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -1753,7 +2021,6 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                 {pagedHistory.length === 0 ? <div className="px-4 py-8 text-center text-fg-subtle">No orders yet. Click Add Order to create one.</div> : pagedHistory.map((row) => {
                   const { order, line, extraLines, paymentMeta } = row;
                   const paymentName = paymentMeta.value;
-                  const quickEdit = getQuickEditValue(order);
                   const canEditOperationalFields = order.status !== "draft" && order.status !== "archived";
                   const rowValue = getRowValue(order);
                   const rowDirty = rowValue.loadingDate !== order.loadingDate || rowValue.status !== order.status;
@@ -1776,43 +2043,27 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                     <div className={rowClass} style={{ gridTemplateColumns: historyGridTemplate }}>
                       <div className="min-w-0 px-1 py-1.5 text-center">
                         <div className="min-w-0">
-                          <div className="truncate text-[17px] font-bold leading-tight" title={order.number || order.orderNumber || "Draft"}>{order.number || order.orderNumber || "Draft"}</div>
+                          {renderOutsideEditableField({
+                            order,
+                            field: "orderNumber",
+                            displayValue: order.number || order.orderNumber || "Draft",
+                            placeholder: "Set order number",
+                            buttonClassName: "block w-full rounded-md px-1 py-1 text-center text-[17px] font-bold leading-tight transition-colors hover:bg-bg-subtle",
+                            inputClassName: "h-8 min-w-0 text-[12px] font-semibold",
+                          })}
                         </div>
                       </div>
                       <div className="min-w-0 px-1 py-1.5 text-center">
-                        {quickEdit.editingWechat ? (
-                          <Input
-                            value={quickEdit.wechatValue}
-                            onChange={(event) => setQuickEditValue(order.id, { wechatValue: event.target.value })}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter") {
-                                event.preventDefault();
-                                void saveQuickOrderField(order, "wechat");
-                              }
-                              if (event.key === "Escape") {
-                                event.preventDefault();
-                                cancelQuickField(order, "wechat");
-                              }
-                            }}
-                            onBlur={() => {
-                              if (!quickEdit.savingWechat) {
-                                void saveQuickOrderField(order, "wechat");
-                              }
-                            }}
-                            autoFocus
-                            placeholder="Set WeChat ID"
-                            className="h-8 min-w-0 text-[12px]"
-                          />
-                        ) : (
-                          <button
-                            type="button"
-                            className={cn("block w-full rounded-md px-1 py-1 text-center text-[13.5px] font-semibold leading-tight transition-colors hover:bg-bg-subtle", !order.wechatId?.trim() && "text-[var(--danger)]")}
-                            title={getDisplayWechatId(order)}
-                            onClick={() => openQuickField(order, "wechat")}
-                          >
-                            {getDisplayWechatId(order)}
-                          </button>
-                        )}
+                        {renderOutsideEditableField({
+                          order,
+                          field: "wechat",
+                          displayValue: getDisplayWechatId(order),
+                          placeholder: "Set WeChat ID",
+                          buttonClassName: cn("block w-full rounded-md px-1 py-1 text-center text-[13.5px] font-semibold leading-tight transition-colors hover:bg-bg-subtle", !order.wechatId?.trim() && "text-[var(--danger)]"),
+                          inputClassName: "h-8 min-w-0 text-[12px]",
+                          listId: `outside-wechat-${order.id}`,
+                          listOptions: wechatSuggestions,
+                        })}
                       </div>
                       <div className="min-w-0 px-0.5 py-1.5">
                         <div className="flex justify-center">{productPhoto ? <button type="button" onClick={() => setPreviewImage({ src: productPhoto, alt: "Product photo" })} className="grid h-[74px] w-[74px] shrink-0 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle"><img src={getCloudinaryOptimizedUrl(productPhoto, { width: 120, height: 120, crop: "fit" })} alt="product" className="h-full w-full object-contain" loading="lazy" decoding="async" /></button> : <span className="text-[10px] text-fg-subtle">—</span>}</div></div>
@@ -1830,7 +2081,16 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                             </button>
                           ) : null}
                           <div className="min-w-0 flex-1 text-center">
-                            <div className="text-[14px] font-semibold leading-[1.2] whitespace-normal break-normal [overflow-wrap:normal] [word-break:normal]" title={marka}>{marka}</div>
+                            {selectedLine ? renderOutsideEditableField({
+                              order,
+                              field: "marka",
+                              line: selectedLine,
+                              displayValue: marka,
+                              placeholder: "Set marka",
+                              title: marka,
+                              buttonClassName: "block w-full rounded-md px-1 py-1 text-center text-[14px] font-semibold leading-[1.2] whitespace-normal break-normal [overflow-wrap:normal] [word-break:normal] transition-colors hover:bg-bg-subtle",
+                              inputClassName: "h-8 min-w-0 text-[12px]",
+                            }) : <div className="text-[14px] font-semibold leading-[1.2]">—</div>}
                           </div>
                           {hasMultipleLines ? <span className="shrink-0 text-[11px] font-semibold text-fg-subtle">{`${selectedLineIndex + 1}/${orderLines.length}`}</span> : null}
                           {hasMultipleLines ? (
@@ -1846,13 +2106,74 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                           ) : null}
                         </div>
                       </div>
-                      <div className="px-0.5 py-1.5 text-center text-[13.5px] font-semibold tabular-nums">{ctns.toLocaleString()}</div>
-                      <div className="px-0.5 py-1.5 text-center text-[13.5px] font-semibold tabular-nums">{pcsPerCtn.toLocaleString()}</div>
+                      <div className="px-0.5 py-1.5 text-center text-[13.5px] font-semibold tabular-nums">
+                        {selectedLine ? renderOutsideEditableField({
+                          order,
+                          field: "totalCtns",
+                          line: selectedLine,
+                          displayValue: ctns.toLocaleString(),
+                          placeholder: "Set CTNs",
+                          buttonClassName: "block w-full rounded-md px-1 py-1 text-center transition-colors hover:bg-bg-subtle",
+                          inputClassName: "h-8 min-w-0 text-center text-[12px]",
+                          type: "number",
+                          inputMode: "decimal",
+                          numeric: true,
+                        }) : ctns.toLocaleString()}
+                      </div>
+                      <div className="px-0.5 py-1.5 text-center text-[13.5px] font-semibold tabular-nums">
+                        {selectedLine ? renderOutsideEditableField({
+                          order,
+                          field: "pcsPerCtn",
+                          line: selectedLine,
+                          displayValue: pcsPerCtn.toLocaleString(),
+                          placeholder: "Set PCS/CTN",
+                          buttonClassName: "block w-full rounded-md px-1 py-1 text-center transition-colors hover:bg-bg-subtle",
+                          inputClassName: "h-8 min-w-0 text-center text-[12px]",
+                          type: "number",
+                          inputMode: "decimal",
+                          numeric: true,
+                        }) : pcsPerCtn.toLocaleString()}
+                      </div>
                       <div className="px-0.5 py-1.5 text-center text-[13.5px] font-semibold tabular-nums">{totalPcs.toLocaleString()}</div>
-                      <div className="px-0.5 py-1.5 text-center text-[14px] font-semibold tabular-nums">{formatPlainAmount(rate)}</div>
-                      <div className={cn("px-0.5 py-1.5 text-center text-[14px] font-semibold tabular-nums", shippingAmount > 0 ? "text-rose-600" : "text-[var(--danger)]")}>{formatFinalAmount(shippingAmount)}</div>
+                      <div className="px-0.5 py-1.5 text-center text-[14px] font-semibold tabular-nums">
+                        {selectedLine ? renderOutsideEditableField({
+                          order,
+                          field: "rate",
+                          line: selectedLine,
+                          displayValue: formatPlainAmount(rate),
+                          placeholder: "Set rate",
+                          buttonClassName: "block w-full rounded-md px-1 py-1 text-center transition-colors hover:bg-bg-subtle",
+                          inputClassName: "h-8 min-w-0 text-center text-[12px]",
+                          type: "number",
+                          inputMode: "decimal",
+                          numeric: true,
+                        }) : formatPlainAmount(rate)}
+                      </div>
+                      <div className={cn("px-0.5 py-1.5 text-center text-[14px] font-semibold tabular-nums", shippingAmount > 0 ? "text-rose-600" : "text-[var(--danger)]")}>
+                        {renderOutsideEditableField({
+                          order,
+                          field: "shipping",
+                          displayValue: formatFinalAmount(shippingAmount),
+                          placeholder: "Set shipping",
+                          buttonClassName: "block w-full rounded-md px-1 py-1 text-center transition-colors hover:bg-bg-subtle",
+                          inputClassName: "h-8 min-w-0 text-center text-[12px]",
+                          type: "number",
+                          inputMode: "decimal",
+                          numeric: true,
+                        })}
+                      </div>
                       <div className={cn("px-0.5 py-1.5 text-right text-[15px] font-bold tabular-nums", amount > 0 ? "text-fg" : "text-[var(--danger)]")}>{formatFinalAmount(amount)}</div>
-                      <div className="min-w-0 px-1 py-1.5"><div className="block w-full min-w-0 truncate text-center text-[13.5px] font-semibold leading-tight" title={customerName}>{customerName}</div></div>
+                      <div className="min-w-0 px-1 py-1.5"><div className="block w-full min-w-0 truncate text-center text-[13.5px] font-semibold leading-tight" title={customerName}>{selectedLine ? renderOutsideEditableField({
+                        order,
+                        field: "customer",
+                        line: selectedLine,
+                        displayValue: customerName,
+                        placeholder: "Set customer",
+                        buttonClassName: "block w-full rounded-md px-1 py-1 text-center text-[13.5px] font-semibold leading-tight transition-colors hover:bg-bg-subtle",
+                        inputClassName: "h-8 min-w-0 text-[12px]",
+                        listId: `outside-customer-${order.id}-${selectedLine.id}`,
+                        listOptions: customerSuggestions,
+                      }) : customerName}</div></div>
                       <div className="min-w-0 pl-1 pr-2 py-1.5 text-center">
                         <div className="min-w-0 [&_button]:max-w-full [&_button]:text-[13.5px] [&_button]:leading-tight">
                           {canEditOperationalFields ? <LoadingDateControl compact debugOrderId={order.id} value={rowValue.loadingDate} onChange={(next) => { setRowEdit(order, { loadingDate: next }, "date_selected"); }} /> : <span className="text-[15px] text-fg-muted">{order.loadingDate ? formatDate(order.loadingDate) : "Set date"}</span>}
@@ -1860,39 +2181,16 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                         {canEditOperationalFields && rowDirty ? <button type="button" title="Save row changes" aria-label="Save row changes" className="mt-1 inline-flex text-[10.5px] font-semibold text-brand transition-colors hover:underline disabled:opacity-60" disabled={rowValue.saving} onClick={() => { void saveRowEdit(order); }}>{rowValue.saving ? "Saving..." : "Save"}</button> : null}
                       </div>
                       <div className="min-w-0 px-1 py-1.5 text-center">
-                        {quickEdit.editingPayment ? (
-                          <Input
-                            value={quickEdit.paymentValue}
-                            onChange={(event) => setQuickEditValue(order.id, { paymentValue: event.target.value })}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter") {
-                                event.preventDefault();
-                                void saveQuickOrderField(order, "payment");
-                              }
-                              if (event.key === "Escape") {
-                                event.preventDefault();
-                                cancelQuickField(order, "payment");
-                              }
-                            }}
-                            onBlur={() => {
-                              if (!quickEdit.savingPayment) {
-                                void saveQuickOrderField(order, "payment");
-                              }
-                            }}
-                            autoFocus
-                            placeholder="Set Paid By"
-                            className="h-8 min-w-0 text-[12px]"
-                          />
-                        ) : (
-                          <button
-                            type="button"
-                            className={cn("block w-full rounded-md px-1 py-1 text-center text-[13.5px] font-semibold leading-tight transition-colors hover:bg-bg-subtle", paymentMeta.isMissing && "text-[var(--danger)]")}
-                            title={paymentName}
-                            onClick={() => openQuickField(order, "payment")}
-                          >
-                            {paymentName}
-                          </button>
-                        )}
+                        {renderOutsideEditableField({
+                          order,
+                          field: "payment",
+                          displayValue: paymentName,
+                          placeholder: "Set Paid By",
+                          buttonClassName: cn("block w-full rounded-md px-1 py-1 text-center text-[13.5px] font-semibold leading-tight transition-colors hover:bg-bg-subtle", paymentMeta.isMissing && "text-[var(--danger)]"),
+                          inputClassName: "h-8 min-w-0 text-[12px]",
+                          listId: `outside-payment-${order.id}`,
+                          listOptions: paymentAgents.map((agent) => agent.name),
+                        })}
                       </div>
                       <div className="px-0.5 py-1.5">
                         <div className="flex justify-center gap-0.5 whitespace-nowrap">

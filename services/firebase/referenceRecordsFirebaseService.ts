@@ -1,5 +1,6 @@
 import { collection, doc, getDoc, getDocs, query, setDoc, where } from "firebase/firestore";
 import { getFirestoreDb, requireFirebaseBusinessId } from "@/lib/firebase/client";
+import { areBusinessValuesEqual } from "@/lib/firebase/noopWrite";
 import { referenceRecordFromFirestore, referenceRecordToFirestore, sanitizeFirestorePayload } from "@/lib/firebase/mappers";
 import { referenceRecordPath, referenceRecordsPath } from "@/lib/firebase/paths";
 import type { LifecycleMetadata, ReferenceRecord, ReferenceRecordType } from "@/lib/types";
@@ -79,13 +80,28 @@ export const referenceRecordsFirebaseService = {
       createdAt: existing?.createdAt || now,
       updatedAt: now,
     };
-    await setDoc(doc(db, referenceRecordPath(businessId(), id)), sanitizeFirestorePayload(referenceRecordToFirestore(record)).value as Record<string, unknown>, { merge: true });
+    const nextSanitized = sanitizeFirestorePayload(referenceRecordToFirestore(record)).value as Record<string, unknown>;
+    if (existing) {
+      const existingSanitized = sanitizeFirestorePayload(referenceRecordToFirestore(existing)).value as Record<string, unknown>;
+      if (areBusinessValuesEqual(existingSanitized, nextSanitized)) {
+        return { record: existing, created: false };
+      }
+    }
+    await setDoc(doc(db, referenceRecordPath(businessId(), id)), nextSanitized, { merge: true });
     return { record, created: !existing };
   },
 
   async upsertReferenceRecord(record: ReferenceRecord) {
     const db = requireDb();
-    await setDoc(doc(db, referenceRecordPath(businessId(), record.id)), sanitizeFirestorePayload(referenceRecordToFirestore(record)).value as Record<string, unknown>, { merge: true });
+    const existing = await this.getReferenceRecordById(record.id);
+    const nextSanitized = sanitizeFirestorePayload(referenceRecordToFirestore(record)).value as Record<string, unknown>;
+    if (existing) {
+      const existingSanitized = sanitizeFirestorePayload(referenceRecordToFirestore(existing)).value as Record<string, unknown>;
+      if (areBusinessValuesEqual(existingSanitized, nextSanitized)) {
+        return existing;
+      }
+    }
+    await setDoc(doc(db, referenceRecordPath(businessId(), record.id)), nextSanitized, { merge: true });
     return record;
   },
 };

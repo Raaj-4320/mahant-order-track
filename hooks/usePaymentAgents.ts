@@ -21,17 +21,37 @@ export function usePaymentAgents() {
     } finally { setIsLoading(false); }
   }, [service]);
   useEffect(() => { reload(); }, [reload, service]);
-  const upsertPaymentAgent = useCallback(async (agent: PaymentAgent) => { await service.upsertPaymentAgent(agent); await reload(); }, [reload, service]);
-  const deletePaymentAgent = useCallback(async (agentId: string) => { if (!service.deletePaymentAgent) throw new Error("Payment agent delete flow is not enabled for this data source."); await service.deletePaymentAgent(agentId); await reload(); }, [reload, service]);
+  const upsertPaymentAgent = useCallback(async (agent: PaymentAgent) => {
+    const saved = await service.upsertPaymentAgent(agent);
+    setData((prev) => (prev.some((entry) => entry.id === saved.id) ? prev.map((entry) => (entry.id === saved.id ? saved : entry)) : [saved, ...prev]));
+    return saved;
+  }, [service]);
+  const deletePaymentAgent = useCallback(async (agentId: string) => {
+    if (!service.deletePaymentAgent) throw new Error("Payment agent delete flow is not enabled for this data source.");
+    await service.deletePaymentAgent(agentId);
+    setData((prev) => prev.filter((entry) => entry.id !== agentId));
+  }, [service]);
   const recalculateFromOrders = useCallback(async (orders: Order[]) => {
     const savedOrders = orders.filter((o) => o.status === "saved");
     const selection = paymentAgentsDataSourceSelection();
-    if (selection.source !== "firebase") await service.recalculatePaymentAgentsFromOrders(savedOrders);
-    await reload();
-  }, [reload, service]);
-  const recordPaymentToAgent = useCallback(async (agentId: string, payment: { amount: number; paymentDate: string; note?: string; paymentMethod?: string }) => { await service.recordPaymentToAgent(agentId, payment); await reload(); }, [reload, service]);
+    if (selection.source !== "firebase") {
+      const next = await service.recalculatePaymentAgentsFromOrders(savedOrders);
+      if (Array.isArray(next)) setData(next);
+      return next;
+    }
+    return service.recalculatePaymentAgentsFromOrders(savedOrders);
+  }, [service]);
+  const recordPaymentToAgent = useCallback(async (agentId: string, payment: { amount: number; paymentDate: string; note?: string; paymentMethod?: string }) => {
+    const updated = await service.recordPaymentToAgent(agentId, payment);
+    setData((prev) => prev.map((entry) => (entry.id === updated.id ? updated : entry)));
+    return updated;
+  }, [service]);
   const listPaymentAgentLedger = useCallback(async (agentId?: string) => service.listPaymentAgentLedger(agentId), [service]);
-  const applyOrderSettlement = useCallback(async (order: Order) => { if (service.applyOrderSettlement) await service.applyOrderSettlement(order); await reload(); }, [reload, service]);
-  const reverseOrderSettlement = useCallback(async (order: Order) => { if (service.reverseOrderSettlement) await service.reverseOrderSettlement(order); await reload(); }, [reload, service]);
+  const applyOrderSettlement = useCallback(async (order: Order) => {
+    if (service.applyOrderSettlement) await service.applyOrderSettlement(order);
+  }, [service]);
+  const reverseOrderSettlement = useCallback(async (order: Order) => {
+    if (service.reverseOrderSettlement) await service.reverseOrderSettlement(order);
+  }, [service]);
   return { data, isLoading, error, isEmpty: !isLoading && data.length === 0, reload, upsertPaymentAgent, deletePaymentAgent, recalculateFromOrders, recordPaymentToAgent, listPaymentAgentLedger, applyOrderSettlement, reverseOrderSettlement };
 }

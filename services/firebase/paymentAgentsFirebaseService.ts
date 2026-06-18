@@ -1,5 +1,6 @@
 import { collection, deleteDoc, doc, getDoc, getDocs, runTransaction, setDoc } from "firebase/firestore";
 import { getFirestoreDb } from "@/lib/firebase/client";
+import { areBusinessValuesEqual } from "@/lib/firebase/noopWrite";
 import { paymentAgentFromFirestore, paymentAgentLedgerEntryToFirestore, paymentAgentToFirestore } from "@/lib/firebase/mappers";
 import { paymentAgentLedgerPath, paymentAgentsPath, paymentAgentPath } from "@/lib/firebase/paths";
 import type { PaymentAgentsService } from "@/services/contracts";
@@ -30,6 +31,11 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
     const id = agent.id || makeId();
     const existing = await this.getPaymentAgentById(id);
     const next: PaymentAgent = { ...agent, id, createdAt: existing?.createdAt || agent.createdAt || now, updatedAt: now, creditBalance: agent.creditBalance ?? agent.openingCreditBalance ?? 0, openingCreditBalance: agent.openingCreditBalance ?? 0, totalOrderAmount: agent.totalOrderAmount ?? 0, totalPaidAmount: agent.totalPaidAmount ?? 0, currentDuePayable: agent.currentDuePayable ?? 0 };
+    if (existing) {
+      if (areBusinessValuesEqual(paymentAgentToFirestore(existing), paymentAgentToFirestore(next))) {
+        return existing;
+      }
+    }
     await setDoc(doc(db, paymentAgentPath(BUSINESS_ID, id)), paymentAgentToFirestore(next), { merge: true });
     return next;
   },

@@ -1,6 +1,7 @@
 import { collection, deleteDoc, doc, getDoc, getDocs, runTransaction, setDoc } from "firebase/firestore";
 import { getFirestoreDb, requireFirebaseBusinessId } from "@/lib/firebase/client";
 import { customerPath, customersPath } from "@/lib/firebase/paths";
+import { areBusinessValuesEqual } from "@/lib/firebase/noopWrite";
 import type { Customer } from "@/lib/types";
 import type { CustomersService } from "@/services/contracts";
 import { customerLedgerPath } from "@/lib/firebase/paths";
@@ -34,7 +35,13 @@ logCustomer("upsert_customer_start", { incomingId: customer.id, name: customer.n
     const db = requireDb();
     const now = new Date().toISOString();
     const id = customer.id || makeId();
-    const next: Customer = { ...customer, id, normalizedName: normalizeCustomerName(customer.name || customer.displayName || ""), createdAt: customer.createdAt || now, updatedAt: now };
+    const existing = customer.id ? await this.getCustomerById(customer.id) : null;
+    const next: Customer = { ...customer, id, normalizedName: normalizeCustomerName(customer.name || customer.displayName || ""), createdAt: existing?.createdAt || customer.createdAt || now, updatedAt: now };
+    if (existing) {
+      if (areBusinessValuesEqual(customerToFirestore(existing), customerToFirestore(next))) {
+        return existing;
+      }
+    }
     try {
       await setDoc(doc(db, customerPath(bizId, id)), customerToFirestore(next), { merge: true });
 } catch (e) {

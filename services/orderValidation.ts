@@ -13,9 +13,6 @@ export type OrderValidationResult = {
   lineIssues: OrderLineValidationIssue[];
 };
 
-const hasProductIdentity = (line: Order["lines"][number]) =>
-  Boolean(line.marka?.trim() || joinLineDetails(line) || line.productPhotoUrl || line.photoUrl);
-
 const isMeaningfulLine = (line: Order["lines"][number]) =>
   Boolean(
       line.marka?.trim() ||
@@ -37,14 +34,6 @@ export const validateOrderForSave = (order: Order): OrderValidationResult => {
   if (meaningfulLines.length === 0) missingFields.push("At least one meaningful order line is required.");
 
   const lineIssues: OrderLineValidationIssue[] = [];
-  order.lines.forEach((line, idx) => {
-    if (!isMeaningfulLine(line)) return;
-    const issues: string[] = [];
-    if (!hasProductIdentity(line)) issues.push("MARKA, Details, or product image is required.");
-    if (!(Number(line.totalCtns) > 0)) issues.push("CTNs must be greater than 0.");
-    if (!(Number(line.pcsPerCtn) > 0)) issues.push("PCS/CTN must be greater than 0.");
-    if (issues.length) lineIssues.push({ lineId: line.id, lineNumber: idx + 1, issues });
-  });
 
   return { isValid: missingFields.length === 0 && lineIssues.length === 0, missingFields, lineIssues };
 };

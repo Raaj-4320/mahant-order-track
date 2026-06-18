@@ -35,7 +35,7 @@ type LedgerViewRow = {
 
 export default function PaymentAgentsPage() {
   const PAGE_SIZE = 100;
-  const { data: agents, isLoading: isPaymentAgentsLoading, upsertPaymentAgent, deletePaymentAgent, recordPaymentToAgent, listPaymentAgentLedger, reload: reloadPaymentAgents } = usePaymentAgents();
+  const { data: agents, isLoading: isPaymentAgentsLoading, upsertPaymentAgent, deletePaymentAgent, recordPaymentToAgent, listPaymentAgentLedger } = usePaymentAgents();
   const { data: customers } = useCustomers();
   const { orders, pushToast } = useStore();
   const { data: firebaseOrders } = useOrders();
@@ -340,7 +340,6 @@ export default function PaymentAgentsPage() {
         await deletePaymentAgent(deleteCtx.agentId);
         pushToast({ tone: "success", text: deleteCtx.riskDetected ? "Payment agent deleted. Historical orders and ledger entries were kept." : `Payment agent ${deleteCtx.agentName} deleted.` });
       }
-      await reloadPaymentAgents();
     } catch (e) {
       pushToast({ tone: "danger", text: e instanceof Error ? e.message : "Could not delete payment agent." });
     }

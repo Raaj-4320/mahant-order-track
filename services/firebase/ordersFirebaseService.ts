@@ -1,6 +1,7 @@
 import { collection, doc, getDoc, getDocs, query, runTransaction, setDoc, where } from "firebase/firestore";
 import { getFirestoreDb, requireFirebaseBusinessId } from "@/lib/firebase/client";
 import { orderFromFirestore, orderToFirestore, sanitizeFirestorePayload } from "@/lib/firebase/mappers";
+import { areBusinessValuesEqual } from "@/lib/firebase/noopWrite";
 import { orderNumberCounterPath, orderPath, ordersPath } from "@/lib/firebase/paths";
 import type { OrdersService } from "@/services/contracts";
 import type { Order } from "@/lib/types";
@@ -89,6 +90,12 @@ export const ordersFirebaseService: OrdersService = {
     const next: Order = { ...order, id, number, orderNumber: number, createdAt: existing?.createdAt || order.createdAt || now, updatedAt: now, savedAt: order.status === "saved" ? (order.savedAt || now) : order.savedAt } as Order;
     const mapped = orderToFirestore(next);
     const sanitized = sanitizeFirestorePayload(mapped);
+    if (existing) {
+      const existingSanitized = sanitizeFirestorePayload(orderToFirestore(existing));
+      if (areBusinessValuesEqual(existingSanitized.value, sanitized.value)) {
+        return existing;
+      }
+    }
     logDB("order_payload_sanitized", { orderId: id, removedUndefinedPaths: sanitized.removedUndefinedPaths });
 try {
       await setDoc(doc(db, orderPath(bizId, id)), sanitized.value, { merge: true });

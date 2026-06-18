@@ -40,7 +40,7 @@ const STATUS_OPTIONS_NO_DATE: Array<{ value: Order["status"]; label: string }> =
 export default function DashboardPage() {
   const PAGE_SIZE = 100;
   const { orders, upsertOrder, pushToast } = useStore();
-  const { data: remoteOrders, isLoading: ordersLoading, upsertOrder: upsertRemoteOrder, reload: reloadRemoteOrders } = useOrders();
+  const { data: remoteOrders, isLoading: ordersLoading, upsertOrder: upsertRemoteOrder } = useOrders();
   const { data: customers, isLoading: customersLoading } = useCustomers();
   const { data: paymentAgents, isLoading: paymentAgentsLoading, applyOrderSettlement, reverseOrderSettlement, recalculateFromOrders } = usePaymentAgents();
   const ordersSource = ordersDataSource();
@@ -168,8 +168,6 @@ try {
         await upsertRemoteOrder(updated);
         if (isOrderEligibleForCreditSettlement(updated)) await applyOrderSettlement(updated);
         else await reverseOrderSettlement(updated);
-        await reloadRemoteOrders();
-        const reloaded = (remoteOrders.find((item) => item.id === order.id) ?? updated);
 } else {
         upsertOrder(updated);
         await recalculateFromOrders(orders.filter((x) => x.id !== updated.id).concat(updated));

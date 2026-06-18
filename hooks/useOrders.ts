@@ -13,12 +13,9 @@ export function useOrders() {
   const getOrderById = useCallback(async (id: string) => service.getOrderById(id), [service]);
   const upsertOrder = useCallback(async (order: Order) => {
     const saved = await service.upsertOrder(order);
-    await reload();
-    const reloaded = await service.getOrderById(order.id);
-    if (reloaded) {
-}
+    setData((prev) => (prev.some((entry) => entry.id === saved.id) ? prev.map((entry) => (entry.id === saved.id ? saved : entry)) : [saved, ...prev]));
     return saved;
-  }, [service, reload]);
+  }, [service]);
   const autosaveDraft = useCallback(async (order: Order) => { const saved = await (service.autosaveDraft ? service.autosaveDraft(order) : service.upsertOrder({ ...order, status: "draft" })); setData((p) => p.some((x) => x.id === saved.id) ? p.map((x) => x.id === saved.id ? saved : x) : [saved, ...p]); return saved; }, [service]);
   const archiveOrder = useCallback(async (id: string) => { await service.archiveOrder(id); await reload(); }, [service, reload]);
   const peekNextOrderNumber = useCallback(async () => {

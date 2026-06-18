@@ -1,6 +1,7 @@
 import { collection, doc, getDoc, getDocs, setDoc } from "firebase/firestore";
 import { getFirestoreDb } from "@/lib/firebase/client";
 import { productFromFirestore, productToFirestore, sanitizeFirestorePayload } from "@/lib/firebase/mappers";
+import { areBusinessValuesEqual } from "@/lib/firebase/noopWrite";
 import { productPath, productsPath } from "@/lib/firebase/paths";
 import type { Product } from "@/lib/types";
 import type { ProductsService } from "@/services/contracts";
@@ -73,6 +74,19 @@ export const productsFirebaseService: ProductsService = {
         "sourceLineIds", "catalogKey", "generatedFromOrderLines", "lastSeenAt", "lastLineTotalPcs"
       ]
     });
+    if (existing) {
+      const existingMapped = productToFirestore(existing);
+      const existingSanitized = sanitizeFirestorePayload(existingMapped, {
+        keepNullPaths: [
+          "purchasePrice", "sellingPrice", "defaultRmbPerPcs", "stockQty", "lowStockLimit", "defaultDim",
+          "supplierId", "source", "sourceOrderId", "sourceOrderNumber", "sourceLineId", "sourceOrderIds",
+          "sourceLineIds", "catalogKey", "generatedFromOrderLines", "lastSeenAt", "lastLineTotalPcs"
+        ]
+      });
+      if (areBusinessValuesEqual(existingSanitized.value, sanitized)) {
+        return existing;
+      }
+    }
     if (removedUndefinedPaths.length) logDB("product_payload_sanitized", { productId: normalized.id, removedUndefinedPaths });
     await setDoc(doc(db, productPath(BUSINESS_ID, normalized.id)), sanitized, { merge: true });
     return normalized;
