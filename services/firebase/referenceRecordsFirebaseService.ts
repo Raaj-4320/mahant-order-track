@@ -1,6 +1,7 @@
 import { collection, doc, getDoc, getDocs, query, setDoc, where } from "firebase/firestore";
 import { getFirestoreDb, requireFirebaseBusinessId } from "@/lib/firebase/client";
 import { areBusinessValuesEqual } from "@/lib/firebase/noopWrite";
+import { measurePerfAsync, recordPerfNoopWrite } from "@/lib/perfDebug";
 import { referenceRecordFromFirestore, referenceRecordToFirestore, sanitizeFirestorePayload } from "@/lib/firebase/mappers";
 import { referenceRecordPath, referenceRecordsPath } from "@/lib/firebase/paths";
 import type { LifecycleMetadata, ReferenceRecord, ReferenceRecordType } from "@/lib/types";
@@ -26,13 +27,17 @@ export const referenceRecordsFirebaseService = {
   async listReferenceRecords(type?: ReferenceRecordType) {
     const db = requireDb();
     const base = collection(db, referenceRecordsPath(businessId()));
-    const snap = type ? await getDocs(query(base, where("type", "==", type))) : await getDocs(base);
+    const path = referenceRecordsPath(businessId());
+    const snap = type
+      ? await measurePerfAsync("firestore-read", "referenceRecords.listByType", { path, type }, () => getDocs(query(base, where("type", "==", type))))
+      : await measurePerfAsync("firestore-read", "referenceRecords.listAll", { path }, () => getDocs(base));
     return snap.docs.map((row) => referenceRecordFromFirestore({ id: row.id, ...(row.data() as Record<string, unknown>) }));
   },
 
   async getReferenceRecordById(id: string) {
     const db = requireDb();
-    const snap = await getDoc(doc(db, referenceRecordPath(businessId(), id)));
+    const path = referenceRecordPath(businessId(), id);
+    const snap = await measurePerfAsync("firestore-read", "referenceRecords.getById", { path, referenceId: id }, () => getDoc(doc(db, path)));
     if (!snap.exists()) return null;
     return referenceRecordFromFirestore({ id: snap.id, ...(snap.data() as Record<string, unknown>) });
   },
@@ -84,10 +89,11 @@ export const referenceRecordsFirebaseService = {
     if (existing) {
       const existingSanitized = sanitizeFirestorePayload(referenceRecordToFirestore(existing)).value as Record<string, unknown>;
       if (areBusinessValuesEqual(existingSanitized, nextSanitized)) {
+        recordPerfNoopWrite("referenceRecords.ensureReferenceRecord", { path: referenceRecordPath(businessId(), id), referenceId: id, type: input.type });
         return { record: existing, created: false };
       }
     }
-    await setDoc(doc(db, referenceRecordPath(businessId(), id)), nextSanitized, { merge: true });
+    await measurePerfAsync("firestore-write", "referenceRecords.ensureReferenceRecord", { path: referenceRecordPath(businessId(), id), referenceId: id, type: input.type }, () => setDoc(doc(db, referenceRecordPath(businessId(), id)), nextSanitized, { merge: true }));
     return { record, created: !existing };
   },
 
@@ -98,10 +104,11 @@ export const referenceRecordsFirebaseService = {
     if (existing) {
       const existingSanitized = sanitizeFirestorePayload(referenceRecordToFirestore(existing)).value as Record<string, unknown>;
       if (areBusinessValuesEqual(existingSanitized, nextSanitized)) {
+        recordPerfNoopWrite("referenceRecords.upsertReferenceRecord", { path: referenceRecordPath(businessId(), record.id), referenceId: record.id, type: record.type });
         return existing;
       }
     }
-    await setDoc(doc(db, referenceRecordPath(businessId(), record.id)), nextSanitized, { merge: true });
+    await measurePerfAsync("firestore-write", "referenceRecords.upsertReferenceRecord", { path: referenceRecordPath(businessId(), record.id), referenceId: record.id, type: record.type }, () => setDoc(doc(db, referenceRecordPath(businessId(), record.id)), nextSanitized, { merge: true }));
     return record;
   },
 };

@@ -4,6 +4,7 @@ import { customerFromFirestore, customerLedgerEntryFromFirestore, customerLedger
 import { customerLedgerPath, customerPath, customersPath, ordersPath } from "@/lib/firebase/paths";
 import type { Customer, CustomerLedgerEntry, Order } from "@/lib/types";
 import { orderFromFirestore } from "@/lib/firebase/mappers";
+import { measurePerfAsync, measurePerfSync, recordPerfEvent } from "@/lib/perfDebug";
 import { buildOrderReceivableEntry, buildOrderReceivableReversalEntry, getOrderCustomerReceivableAmount } from "@/services/settlement/customerReceivableLedger";
 import { buildCustomerSummaryFromLedger } from "@/services/customers/customerLedgerSummary";
 import { getCustomerCurrentReceivable, getCustomerStoreCredit, getCustomerTotalOrders, getCustomerTotalReceived, getCustomerTotalReceivable } from "@/services/customers/customerFinance";
@@ -16,8 +17,13 @@ export const customerLedgerFirebaseService = {
   async listCustomerLedgerEntries(customerId?: string): Promise<CustomerLedgerEntry[]> {
     const db = requireDb();
     const base = collection(db, customerLedgerPath(businessId()));
-    const snap = customerId ? await getDocs(query(base, where("customerId", "==", customerId))) : await getDocs(base);
-    return snap.docs.map((d) => customerLedgerEntryFromFirestore({ id: d.id, ...(d.data() as Record<string, unknown>) })).sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || ""));
+    const path = customerLedgerPath(businessId());
+    const snap = customerId
+      ? await measurePerfAsync("firestore-read", "customerLedger.listByCustomer", { path, customerId }, () => getDocs(query(base, where("customerId", "==", customerId))))
+      : await measurePerfAsync("firestore-read", "customerLedger.listAll", { path }, () => getDocs(base));
+    return measurePerfSync("calc", "customerLedger.sortEntries", { customerId: customerId || "all", count: snap.docs.length }, () =>
+      snap.docs.map((d) => customerLedgerEntryFromFirestore({ id: d.id, ...(d.data() as Record<string, unknown>) })).sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || "")),
+    );
   },
 
 
@@ -26,7 +32,7 @@ export const customerLedgerFirebaseService = {
     const db = requireDb();
     const bizId = businessId();
     const customerRef = doc(db, customerPath(bizId, customerId));
-    const customerSnap = await getDocs(query(collection(db, customersPath(bizId)), where("__name__", "==", customerId)));
+    const customerSnap = await measurePerfAsync("firestore-read", "customerLedger.recalculateCustomer.customer", { path: customersPath(bizId), customerId }, () => getDocs(query(collection(db, customersPath(bizId)), where("__name__", "==", customerId))));
     if (customerSnap.empty) throw new Error("Customer not found.");
     const customer = customerFromFirestore({ id: customerId, ...(customerSnap.docs[0].data() as Record<string, unknown>) });
     const ledger = await this.listCustomerLedgerEntries(customerId);
@@ -39,7 +45,7 @@ export const customerLedgerFirebaseService = {
 
   async recalculateAllCustomersFromLedger(): Promise<Customer[]> {
     const db = requireDb();
-    const snap = await getDocs(collection(db, customersPath(businessId())));
+    const snap = await measurePerfAsync("firestore-read", "customerLedger.recalculateAll.customers", { path: customersPath(businessId()) }, () => getDocs(collection(db, customersPath(businessId()))));
     const out: Customer[] = [];
     for (const d of snap.docs) {
       out.push(await this.recalculateCustomerFromLedger(d.id));
@@ -53,7 +59,7 @@ export const customerLedgerFirebaseService = {
     const db = requireDb();
     const bizId = businessId();
     logLedger("repair_start", { path: ordersPath(bizId) });
-    const ordersSnap = await getDocs(collection(db, ordersPath(bizId)));
+    const ordersSnap = await measurePerfAsync("firestore-read", "customerLedger.repair.orders", { path: ordersPath(bizId) }, () => getDocs(collection(db, ordersPath(bizId))));
     const savedOrders = ordersSnap.docs.map((d) => orderFromFirestore({ id: d.id, ...(d.data() as Record<string, unknown>) })).filter((o) => o.status === "saved");
     let created = 0;
 
@@ -67,6 +73,7 @@ export const customerLedgerFirebaseService = {
           const snap = await tx.get(ref);
           if (snap.exists()) continue;
           const entry = buildOrderReceivableEntry(order, line as any, line.customerId);
+          recordPerfEvent("firestore-write", "customerLedger.repair.createMissingEntry", { path: `${customerLedgerPath(bizId)}/${entry.id}`, orderId: order.id, customerId: line.customerId });
           tx.set(ref, customerLedgerEntryToFirestore(entry), { merge: true });
           created += 1;
         }
@@ -80,7 +87,7 @@ export const customerLedgerFirebaseService = {
   async reverseOrderCustomerReceivables(order: Order): Promise<void> {
     const db = requireDb();
     const bizId = businessId();
-    const active = await getDocs(query(collection(db, customerLedgerPath(bizId)), where("sourceOrderId", "==", order.id), where("type", "==", "order_receivable"), where("active", "==", true)));
+    const active = await measurePerfAsync("firestore-read", "customerLedger.reverse.activeEntries", { path: customerLedgerPath(bizId), orderId: order.id }, () => getDocs(query(collection(db, customerLedgerPath(bizId)), where("sourceOrderId", "==", order.id), where("type", "==", "order_receivable"), where("active", "==", true))));
     if (active.empty) return;
     await runTransaction(db, async (tx) => {
       for (const docSnap of active.docs) {
@@ -94,10 +101,13 @@ export const customerLedgerFirebaseService = {
           const nextOrderIds = (c.sourceOrderIds ?? []).filter((id) => id !== order.id);
           const totalOrders = Math.max(0, nextOrderIds.length || getCustomerTotalOrders(c) - 1);
           logLedger("customer_receivable_reverse_summary", { customerId: prev.customerId, before: { totalReceivableGenerated: getCustomerTotalReceivable(c), currentReceivable: getCustomerCurrentReceivable(c), totalReceived: getCustomerTotalReceived(c), storeCreditBalance: getCustomerStoreCredit(c), totalOrders: getCustomerTotalOrders(c) }, after: { totalReceivableGenerated, currentReceivable, totalReceived: getCustomerTotalReceived(c), storeCreditBalance: getCustomerStoreCredit(c), totalOrders } });
+          recordPerfEvent("firestore-write", "customerLedger.reverse.customer", { path: customerPath(bizId, prev.customerId), customerId: prev.customerId, orderId: order.id });
           tx.set(customerRef, customerToFirestore({ ...(c as Customer), id: prev.customerId, updatedAt: new Date().toISOString(), totalReceivableGenerated, currentReceivable, totalReceived: getCustomerTotalReceived(c), storeCreditBalance: getCustomerStoreCredit(c), totalOrders, sourceOrderIds: nextOrderIds, outstandingAmount: currentReceivable, totalSpent: totalReceivableGenerated }), { merge: true });
         }
         const reversal = buildOrderReceivableReversalEntry(order, prev);
+        recordPerfEvent("firestore-write", "customerLedger.reverse.reversal", { path: `${customerLedgerPath(bizId)}/${reversal.id}`, customerId: prev.customerId, orderId: order.id });
         tx.set(doc(db, customerLedgerPath(bizId), reversal.id), customerLedgerEntryToFirestore(reversal), { merge: true });
+        recordPerfEvent("firestore-write", "customerLedger.reverse.deactivateEntry", { path: `${customerLedgerPath(bizId)}/${prev.id}`, customerId: prev.customerId, orderId: order.id });
         tx.set(doc(db, customerLedgerPath(bizId), prev.id), { active: false, isReversed: true, updatedAt: new Date().toISOString() }, { merge: true });
       }
     });
@@ -129,9 +139,11 @@ export const customerLedgerFirebaseService = {
           const sourceOrderIds = Array.from(new Set([...(c.sourceOrderIds ?? []), order.id]));
           const totalOrders = Math.max(getCustomerTotalOrders(c), sourceOrderIds.length);
           logLedger("customer_receivable_apply_summary", { customerId: line.customerId, before: { totalReceivableGenerated: getCustomerTotalReceivable(c), currentReceivable: getCustomerCurrentReceivable(c), totalReceived: getCustomerTotalReceived(c), storeCreditBalance: getCustomerStoreCredit(c), totalOrders: getCustomerTotalOrders(c) }, after: { totalReceivableGenerated, currentReceivable, totalReceived: getCustomerTotalReceived(c), storeCreditBalance: getCustomerStoreCredit(c), totalOrders } });
+          recordPerfEvent("firestore-write", "customerLedger.apply.customer", { path: customerPath(bizId, line.customerId), customerId: line.customerId, orderId: order.id });
           tx.set(customerRef, customerToFirestore({ ...(c as Customer), id: line.customerId, updatedAt: new Date().toISOString(), totalReceivableGenerated, currentReceivable, totalReceived: getCustomerTotalReceived(c), storeCreditBalance: getCustomerStoreCredit(c), totalOrders, sourceOrderIds, outstandingAmount: currentReceivable, totalSpent: totalReceivableGenerated }), { merge: true });
         }
         logDB("customer_ledger_entry_write_start", { entryId: entry.id, customerId: line.customerId, path: customerLedgerPath(bizId) });
+        recordPerfEvent("firestore-write", "customerLedger.apply.entry", { path: `${customerLedgerPath(bizId)}/${entry.id}`, customerId: line.customerId, orderId: order.id });
         tx.set(doc(db, customerLedgerPath(bizId), entry.id), customerLedgerEntryToFirestore(entry), { merge: true });
         logDB("customer_ledger_entry_write_success", { entryId: entry.id, customerId: line.customerId });
       }

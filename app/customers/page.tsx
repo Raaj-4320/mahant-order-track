@@ -21,6 +21,7 @@ import { getOrderCustomerReceivableAmount } from "@/services/settlement/customer
 import { useStore } from "@/lib/store";
 import { ordersDataSource } from "@/lib/runtimeConfig";
 import { orderLifecycleService } from "@/services/orderLifecycleService";
+import { measurePerfSync } from "@/lib/perfDebug";
 
 const PAGE_SIZE = 100;
 
@@ -98,7 +99,7 @@ export default function CustomersPage() {
   const [deleteBusy, setDeleteBusy] = useState(false);
 
   const summaries = useMemo(() => {
-    return customers.map((customer) => {
+    return measurePerfSync("calc", "customersPage.summaries", { customersCount: customers.length, ordersCount: orders.length }, () => customers.map((customer) => {
       const ledgerRows = sortLedgerRowsNewestFirst(
         orders.flatMap((order) =>
           order.lines
@@ -176,7 +177,7 @@ export default function CustomersPage() {
         lastOrderImage: latestLine?.productImage || "",
         searchIndex,
       } satisfies CustomerSummaryRow;
-    });
+    }));
   }, [customers, orders, paymentAgents]);
 
   const filteredAndSorted = useMemo(() => {

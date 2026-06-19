@@ -1,5 +1,6 @@
 import { orderTotal, type Customer, type Order, type PaymentAgent, type PaymentAgentLedgerEntry } from "@/lib/types";
 import { getLineCustomerDisplay } from "@/services/customers/customerResolution";
+import { measurePerfSync } from "@/lib/perfDebug";
 
 const clamp = (value: number) => Math.max(0, Number.isFinite(value) ? value : 0);
 const normalize = (value?: string | null) => (value || "").trim().toLowerCase();
@@ -130,6 +131,7 @@ export const buildPaymentAgentAccountingSummary = (
   entries: PaymentAgentLedgerEntry[],
   customers: Customer[] = [],
 ): PaymentAgentAccountingSummary => {
+  return measurePerfSync("calc", "paymentAgentAccounting.buildSummary", { agentId: agent.id, ordersCount: orders.length, entriesCount: entries.length }, () => {
   const matchedOrders = orders.filter((order) => order.status !== "archived" && isOrderMatchedToPaymentAgent(order, agent));
   const matchedOrderIds = new Set(matchedOrders.map((order) => order.id));
   const matchedOrderNumbers = new Set(matchedOrders.map((order) => order.number || order.orderNumber).filter(Boolean));
@@ -202,6 +204,7 @@ export const buildPaymentAgentAccountingSummary = (
     totalOrderAmount,
     paymentApplied,
   };
+  });
 };
 
 export const buildPaymentAgentTransactionRows = (summary: PaymentAgentAccountingSummary): PaymentAgentAccountingTransactionRow[] => {

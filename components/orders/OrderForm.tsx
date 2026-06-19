@@ -37,9 +37,10 @@ type Props = {
   paymentAgents?: PaymentAgent[];
   showOrderInfo?: boolean;
   onPreviewImage?: (src: string) => void;
+  onCustomerValidityChange?: (lineId: string, issue: string | null) => void;
 };
 
-export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, wechatSuggestions = [], customerSuggestions = [], customers = [], paymentAgents = [], showOrderInfo = true, onPreviewImage }: Props) {
+export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, wechatSuggestions = [], customerSuggestions = [], customers = [], paymentAgents = [], showOrderInfo = true, onPreviewImage, onCustomerValidityChange }: Props) {
   const [paymentQuery, setPaymentQuery] = useState("");
   const [paymentOpen, setPaymentOpen] = useState(false);
 
@@ -182,6 +183,7 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
                   onChange={(patch) => updateLine(l.id, patch)}
                   customerSuggestions={customerSuggestions}
                   customers={customers}
+                  onCustomerValidityChange={onCustomerValidityChange}
                   onRemove={() => {
                     if (onRemoveLine) onRemoveLine(l.id);
                   }}

@@ -1,8 +1,9 @@
 import type { Customer, OrderLine } from "@/lib/types";
 import { createCustomerIdFromName, normalizeCustomerName } from "@/services/customers/customerIdentity";
 import { logCustomer } from "@/lib/logger";
+import { measurePerfAsync, measurePerfSync } from "@/lib/perfDebug";
 
-export const CUSTOMER_NOT_LINKED = "Not Linked";
+export const CUSTOMER_NOT_LINKED = "Not Set";
 export const CUSTOMER_DELETED = "Deleted Customer";
 export const CUSTOMER_INVALID = "Invalid Customer Reference";
 
@@ -32,10 +33,12 @@ export function getLineCustomerDisplay(
 }
 
 export function findCustomerByTypedName(customers: Customer[], typedName: string): Customer | null {
-  const normalized = normalizeCustomerName(typedName);
-  if (!normalized) return null;
-  const sorted = [...customers].sort((a, b) => a.id.localeCompare(b.id));
-  return sorted.find((c) => normalizeCustomerName(c.name || c.displayName || "") === normalized) ?? null;
+  return measurePerfSync("resolve", "customers.findCustomerByTypedName", { customersCount: customers.length }, () => {
+    const normalized = normalizeCustomerName(typedName);
+    if (!normalized) return null;
+    const sorted = [...customers].sort((a, b) => a.id.localeCompare(b.id));
+    return sorted.find((c) => normalizeCustomerName(c.name || c.displayName || "") === normalized) ?? null;
+  });
 }
 
 export function applyTypedCustomerToLine(line: OrderLine, typedName: string, customers: Customer[]): Partial<OrderLine> {
@@ -46,6 +49,7 @@ export function applyTypedCustomerToLine(line: OrderLine, typedName: string, cus
 }
 
 export async function resolveCustomersForOrderLines(lines: OrderLine[], customers: Customer[], nowIso: string): Promise<OrderLine[]> {
+return measurePerfAsync("resolve", "customers.resolveCustomersForOrderLines", { lineCount: lines.length, customersCount: customers.length }, async () => {
 logCustomer("resolve_order_customers_start", { lineCount: lines.length, knownCustomers: customers.length });
   const existing = new Map<string, Customer>();
   [...customers]
@@ -56,7 +60,7 @@ logCustomer("resolve_order_customers_start", { lineCount: lines.length, knownCus
     });
 
   const resolved: OrderLine[] = [];
-  for (const line of lines) {
+  for (const [index, line] of lines.entries()) {
     const typed = (line.customerName || line.customerSnapshot?.name || "").trim();
     if (!typed) {
       logCustomer("ensure_customer_skipped", { lineId: line.id, reason: "blank_name" });
@@ -70,10 +74,11 @@ logCustomer("resolve_order_customers_start", { lineCount: lines.length, knownCus
       resolved.push({ ...line, customerId: hit.id, customerName: hit.name, customerSnapshot: { id: hit.id, name: hit.name, code: hit.customerCode } });
       continue;
     }
-    logCustomer("ensure_customer_skipped", { lineId: line.id, reason: "unmatched_name_requires_explicit_selection", typed, normalized, nowIso, generatedIdPreview: createCustomerIdFromName(typed) });
-    resolved.push({ ...line, customerId: "", customerName: "", customerSnapshot: undefined });
+    logCustomer("ensure_customer_blocked", { lineId: line.id, reason: "unmatched_name_requires_explicit_selection", typed, normalized, nowIso, generatedIdPreview: createCustomerIdFromName(typed) });
+    throw new Error(`Line ${index + 1}: Choose a valid customer.`);
   }
 logCustomer("resolve_order_customers_success", { resolvedCount: resolved.length });
   return resolved;
+});
 }
 

@@ -27,6 +27,7 @@ import { joinLineDetails } from "@/lib/orderLineDetails";
 import { ordersDataSource } from "@/lib/runtimeConfig";
 import { orderLifecycleService } from "@/services/orderLifecycleService";
 import { getLineCustomerDisplay } from "@/services/customers/customerResolution";
+import { measurePerfSync } from "@/lib/perfDebug";
 
 type ProductForm = Omit<Product, "createdAt" | "updatedAt"> & { createdAt?: string; updatedAt?: string };
 
@@ -117,7 +118,7 @@ export default function ProductsPage() {
 
   const productTableRows = useMemo(
     () =>
-      rows.map((p) => {
+      measurePerfSync("calc", "productsPage.productTableRows", { productsCount: rows.length, ordersCount: orders.length }, () => rows.map((p) => {
         const sourceOrderIds = new Set(
           [p.sourceOrderId, ...(p.sourceOrderIds ?? [])].filter((value): value is string => Boolean(value)),
         );
@@ -195,7 +196,7 @@ export default function ProductsPage() {
           formatAmount(row.totalQty),
           formatAmount(row.ratePerPcs),
         ].join(" ").toLowerCase().includes(qValue);
-      }),
+      })),
     [rows, orders, paymentAgents, customers, status, category, q],
   );
   const totalPages = Math.max(1, Math.ceil(productTableRows.length / PAGE_SIZE));

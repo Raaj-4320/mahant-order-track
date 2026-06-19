@@ -3,25 +3,28 @@ import { getOrderPaymentAgentDisplay } from "@/lib/orderDisplay";
 import { orderTotal } from "@/lib/types";
 import type { DashboardStats } from "./contracts";
 import { getLineCustomerDisplay } from "@/services/customers/customerResolution";
+import { measurePerfSync } from "@/lib/perfDebug";
 
 const DASHBOARD_INCLUDED_STATUSES = ["saved", "packed", "received", "completed", "cancelled", "delayed"] as const;
 export const isDashboardOrder = (order: Order) => (DASHBOARD_INCLUDED_STATUSES as readonly string[]).includes(order.status);
 export const getDashboardIncludedStatuses = () => [...DASHBOARD_INCLUDED_STATUSES];
 
 export function getDashboardStats(orders: Order[]): DashboardStats {
-  const today = new Date().toISOString().slice(0, 10);
-  const dashboardOrders = orders.filter(isDashboardOrder);
-  return {
-    totalOrders: dashboardOrders.length,
-    totalOrderAmount: dashboardOrders.reduce((s, o) => s + orderTotal(o), 0),
-    ordersLoadingToday: dashboardOrders.filter((o) => o.loadingDate === today).length,
-    pendingPayments: dashboardOrders.filter((o) => o.paymentStatus === "pending" || o.paymentStatus === "partial").length,
-    delayedShipments: dashboardOrders.filter((o) => o.status === "delayed").length,
-  };
+  return measurePerfSync("calc", "selectors.getDashboardStats", { ordersCount: orders.length }, () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const dashboardOrders = orders.filter(isDashboardOrder);
+    return {
+      totalOrders: dashboardOrders.length,
+      totalOrderAmount: dashboardOrders.reduce((s, o) => s + orderTotal(o), 0),
+      ordersLoadingToday: dashboardOrders.filter((o) => o.loadingDate === today).length,
+      pendingPayments: dashboardOrders.filter((o) => o.paymentStatus === "pending" || o.paymentStatus === "partial").length,
+      delayedShipments: dashboardOrders.filter((o) => o.status === "delayed").length,
+    };
+  });
 }
 
 export function getDashboardRows(orders: Order[], _suppliers: Supplier[], customers: Customer[], paymentAgents: PaymentAgent[]): DashboardOrderRow[] {
-  return orders.filter(isDashboardOrder).map((o) => ({
+  return measurePerfSync("calc", "selectors.getDashboardRows", { ordersCount: orders.length, customersCount: customers.length, paymentAgentsCount: paymentAgents.length }, () => orders.filter(isDashboardOrder).map((o) => ({
     id: o.id,
     orderNumber: o.orderNumber || o.number,
     supplierSummary: "",
@@ -37,7 +40,7 @@ export function getDashboardRows(orders: Order[], _suppliers: Supplier[], custom
     totalCtns: o.lines.reduce((sum, l) => sum + (Number(l.totalCtns) || 0), 0),
     loadingDate: o.loadingDate,
     status: o.status,
-  }));
+  })));
 }
 
 export function getSupplierStats(suppliers: Supplier[], orders: Order[]) {

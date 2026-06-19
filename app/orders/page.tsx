@@ -5,7 +5,7 @@ import { useStore } from "@/lib/store";
 import { OrderForm, newLine } from "@/components/orders/OrderForm";
 import { OrderFooter } from "@/components/orders/OrderFooter";
 import { formatAmount, formatDate } from "@/lib/data";
-import { formatWholeMoney } from "@/lib/numbers";
+import { formatDisplayNumber, formatWholeMoney } from "@/lib/numbers";
 import { formatIndianDate } from "@/lib/dateFormat";
 import { Order, OrderNumberSeries, PaymentAgent, lineTotalPcs, lineTotalRmb, orderLinesTotal, orderShippingPrice, orderTotal } from "@/lib/types";
 import { syncOrderLinesToProducts, archiveProductsForOrder, archiveProductsForRemovedOrderLines } from "@/services/productCatalogSync";
@@ -20,7 +20,7 @@ import { hasAnyDraftContent, validateOrderForSave } from "@/services/orderValida
 import { OrderLinesDetailModal } from "@/components/orders/OrderLinesDetailModal";
 import { useCustomers } from "@/hooks/useCustomers";
 import { customerLedgerService } from "@/services/customerLedgerService";
-import { applyTypedCustomerToLine, getLineCustomerDisplay, getResolvedLineCustomerName, resolveCustomersForOrderLines } from "@/services/customers/customerResolution";
+import { applyTypedCustomerToLine, CUSTOMER_NOT_LINKED, findCustomerByTypedName, getLineCustomerDisplay, getResolvedLineCustomerName, resolveCustomersForOrderLines } from "@/services/customers/customerResolution";
 import { logCustomer, logDB, logError, logOrder, logPageAccess, logDataFlow } from "@/lib/logger";
 import { BadgePercent, Boxes, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Eye, Filter, IndianRupee, LayoutGrid, List, MessageCircleMore, Moon, Package2, Search, ShoppingBag, SquarePen, Sun, Trash2, UserRound, WalletCards, X } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -41,9 +41,11 @@ import { getMeaningfulOrderLines } from "@/services/orderValidation";
 import { buildSeriesPrefix, deriveOrderSeriesFields, formatSeriesOrderNumber, getSeriesSuggestion, normalizeSeriesLabel, orderNumberExists, parseOrderNumber } from "@/lib/orderNumberSeries";
 import { getOrderNumberSeriesService } from "@/services/orderNumberSeriesService";
 import { getPaymentAgentsService } from "@/services/paymentAgentsService";
+import { measurePerfAsync, measurePerfSync, runPerfAction } from "@/lib/perfDebug";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const LAST_SELECTED_ORDER_SERIES_KEY = "orders:lastSelectedSeriesId";
+const LAST_SELECTED_ORDER_CATEGORY_KEY = "orders:lastSelectedCategory";
 const PAGE_SIZE = 100;
 const SAVE_AUDIT_ENABLED = process.env.NODE_ENV !== "production";
 const createEmptyDraft = (_orders: Order[], reservedOrderNumber = ""): Order => ({
@@ -100,6 +102,11 @@ type OutsideEditState = {
   lineId?: string;
   value: string;
   saving: boolean;
+  customerSelection?: {
+    customerId: string;
+    customerName: string;
+    customerSnapshot?: Order["lines"][number]["customerSnapshot"];
+  } | null;
 };
 type FlatHistoryRow = {
   key: string;
@@ -184,6 +191,8 @@ const summarizeOrderForLog = (o: Order) => ({
 const normalizePaymentAgentValue = (value?: string) => (value || "").trim().toLowerCase();
 const hasLinkedPaymentAgent = (order: Pick<Order, "paymentBy" | "paymentAgentId">) =>
   Boolean(order.paymentBy.trim() || order.paymentAgentId.trim());
+const hasLinkedCustomerInOrder = (order: Pick<Order, "lines">) =>
+  order.lines.some((line) => Boolean(line.customerId?.trim()));
 const normalizeEditableOrderNumber = (value?: string) => {
   const trimmed = (value || "").trim();
   if (!trimmed) return "";
@@ -197,6 +206,10 @@ const normalizeEditableOrderNumber = (value?: string) => {
 const getStoredSelectedSeriesId = () => {
   if (typeof window === "undefined") return "";
   return window.localStorage.getItem(LAST_SELECTED_ORDER_SERIES_KEY) || "";
+};
+const getStoredSelectedCategory = () => {
+  if (typeof window === "undefined") return "";
+  return window.localStorage.getItem(LAST_SELECTED_ORDER_CATEGORY_KEY) || "";
 };
 
 export default function OrdersPage() {
@@ -251,6 +264,7 @@ export default function OrdersPage() {
   const [headerPaymentQuery, setHeaderPaymentQuery] = useState("");
   const [headerPaymentOpen, setHeaderPaymentOpen] = useState(false);
   const [headerWechatOpen, setHeaderWechatOpen] = useState(false);
+  const [popupCustomerIssues, setPopupCustomerIssues] = useState<Record<string, string | null>>({});
   const [previewImage, setPreviewImage] = useState<{ src: string; alt: string; caption?: string } | null>(null);
   const [rowEdits, setRowEdits] = useState<Record<string, RowEditState>>({});
   const [outsideEdits, setOutsideEdits] = useState<Record<string, OutsideEditState>>({});
@@ -266,7 +280,7 @@ export default function OrdersPage() {
   const { theme, toggle } = useTheme();
 
   const activeOrders = useMemo(() => (isFirebaseOrdersMode ? firebaseOrders : orders).filter((o) => o.status !== "archived"), [isFirebaseOrdersMode, firebaseOrders, orders]);
-  const { data: orderSeries, isLoading: isOrderSeriesLoading, createSeries: createOrderSeries, syncSeriesFromOrder, reload: reloadOrderSeries } = useOrderNumberSeries(activeOrders);
+  const { data: orderSeries, isLoading: isOrderSeriesLoading, createSeries: createOrderSeries, reload: reloadOrderSeries } = useOrderNumberSeries(activeOrders);
   const lineTotal = useMemo(() => orderLinesTotal(draft), [draft]);
   const total = useMemo(() => orderTotal(draft), [draft]);
   const orderCategoryTabs = useMemo(() => {
@@ -284,7 +298,7 @@ export default function OrdersPage() {
   const effectiveOrderCategory = selectedOrderCategory || orderCategoryTabs[0] || "";
   const filteredOrders = useMemo(
     () =>
-      activeOrders.filter((order) => {
+      measurePerfSync("calc", "orders.filteredOrders", { ordersCount: activeOrders.length, query, statusFilter: filters.status }, () => activeOrders.filter((order) => {
         const q = query.toLowerCase().trim();
         const parsedOrderNumber = parseOrderNumber(order.number || order.orderNumber);
         const payment = getOrderPaymentAgentDisplay(order, paymentAgents).value;
@@ -323,12 +337,13 @@ export default function OrdersPage() {
           .join(" ")
           .toLowerCase();
         return searchable.includes(q);
-      }),
+      })),
     [activeOrders, effectiveOrderCategory, filters, query, paymentAgents],
   );
   const sortedOrders = useMemo(() => {
-    const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
-    return [...filteredOrders].sort((left, right) => {
+    return measurePerfSync("calc", "orders.sortedOrders", { ordersCount: filteredOrders.length, category: effectiveOrderCategory || "all" }, () => {
+      const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+      return [...filteredOrders].sort((left, right) => {
       if (effectiveOrderCategory) {
         const leftParsed = parseOrderNumber(left.number || left.orderNumber);
         const rightParsed = parseOrderNumber(right.number || right.orderNumber);
@@ -343,7 +358,8 @@ export default function OrdersPage() {
       const leftParsed = parseOrderNumber(left.number || left.orderNumber);
       const numericDiff = (rightParsed?.numericNumber ?? Number.NEGATIVE_INFINITY) - (leftParsed?.numericNumber ?? Number.NEGATIVE_INFINITY);
       if (numericDiff !== 0) return numericDiff;
-      return collator.compare(right.number || right.orderNumber || "", left.number || left.orderNumber || "");
+        return collator.compare(right.number || right.orderNumber || "", left.number || left.orderNumber || "");
+      });
     });
   }, [effectiveOrderCategory, filteredOrders]);
   const pickerOrders = useMemo(() => {
@@ -360,13 +376,13 @@ export default function OrdersPage() {
       return collator.compare(right.number || right.orderNumber || "", left.number || left.orderNumber || "");
     });
   }, [activeOrders]);
-  const history = useMemo<FlatHistoryRow[]>(() => sortedOrders.flatMap<FlatHistoryRow>((order) => {
+  const history = useMemo<FlatHistoryRow[]>(() => measurePerfSync("calc", "orders.historyRows", { ordersCount: sortedOrders.length }, () => sortedOrders.flatMap<FlatHistoryRow>((order) => {
     const paymentMeta = getOrderPaymentAgentDisplay(order, paymentAgents);
     const orderLines = (order.lines || []).filter((line) => meaningfulLine(line));
     if (orderLines.length === 0) return [{ key: `${order.id}::fallback`, order, line: null, extraLines: [], paymentMeta }];
     const [firstLine, ...extraLines] = orderLines;
     return [{ key: `${order.id}::${firstLine.id || "first"}`, order, line: firstLine, extraLines, paymentMeta }];
-  }), [sortedOrders, paymentAgents]);
+  })), [sortedOrders, paymentAgents]);
   const totalPages = Math.max(1, Math.ceil(history.length / rowsPerPage));
   const pagedHistory = useMemo(() => history.slice((currentPage - 1) * rowsPerPage, currentPage * rowsPerPage), [history, currentPage, rowsPerPage]);
 
@@ -405,7 +421,7 @@ export default function OrdersPage() {
   const customerSuggestions = useMemo(() => {
     const fromCustomerRows = customers.map((c) => c.name?.trim()).filter(Boolean) as string[];
     const fromOrders = activeOrders.flatMap((o) => o.lines.map((l) => getResolvedLineCustomerName(l))).filter(Boolean) as string[];
-    return Array.from(new Set([...fromCustomerRows, ...fromOrders])).slice(0, 20);
+    return Array.from(new Set([...fromCustomerRows, ...fromOrders]));
   }, [customers, activeOrders]);
   const selectedPaymentAgentId = draft.paymentAgentId || draft.paymentBy;
   const selectedPaymentAgent = resolveOrderPaymentAgent(draft, paymentAgents);
@@ -477,10 +493,22 @@ export default function OrdersPage() {
       if (selectedOrderCategory) setSelectedOrderCategory("");
       return;
     }
+    if (!selectedOrderCategory) {
+      const storedCategory = getStoredSelectedCategory();
+      if (storedCategory && orderCategoryTabs.includes(storedCategory)) {
+        setSelectedOrderCategory(storedCategory);
+        return;
+      }
+    }
     if (!selectedOrderCategory || !orderCategoryTabs.includes(selectedOrderCategory)) {
       setSelectedOrderCategory(orderCategoryTabs[0]);
     }
   }, [orderCategoryTabs, selectedOrderCategory]);
+
+  useEffect(() => {
+    if (!selectedOrderCategory || typeof window === "undefined") return;
+    window.localStorage.setItem(LAST_SELECTED_ORDER_CATEGORY_KEY, selectedOrderCategory);
+  }, [selectedOrderCategory]);
 
   const onUploadingChange = (isUploading: boolean) => setActiveUploads((p) => Math.max(0, p + (isUploading ? 1 : -1)));
 
@@ -687,11 +715,11 @@ export default function OrdersPage() {
   };
   const getOutsideEditValue = (order: Order): OutsideEditState => {
     const pending = outsideEdits[order.id];
-    return pending ?? { activeField: null, lineId: undefined, value: "", saving: false };
+    return pending ?? { activeField: null, lineId: undefined, value: "", saving: false, customerSelection: null };
   };
   const setOutsideEditValue = (orderId: string, patch: Partial<OutsideEditState>) => {
     setOutsideEdits((prev) => {
-      const current = prev[orderId] ?? { activeField: null, lineId: undefined, value: "", saving: false };
+      const current = prev[orderId] ?? { activeField: null, lineId: undefined, value: "", saving: false, customerSelection: null };
       return { ...prev, [orderId]: { ...current, ...patch } };
     });
   };
@@ -703,6 +731,13 @@ export default function OrdersPage() {
         lineId: line?.id,
         value: getOutsideFieldValue(order, field, line),
         saving: false,
+        customerSelection: field === "customer" && line
+          ? {
+              customerId: line.customerId?.trim() || "",
+              customerName: line.customerName?.trim() || line.customerSnapshot?.name?.trim() || "",
+              customerSnapshot: line.customerSnapshot,
+            }
+          : null,
       },
     }));
   };
@@ -748,11 +783,16 @@ export default function OrdersPage() {
     }
     if (!line) return false;
     if (field === "customer") {
-      const resolved = trimmedValue ? applyTypedCustomerToLine(line, trimmedValue, customers) : { customerId: "", customerName: "", customerSnapshot: undefined };
+      const currentOutsideEdit = outsideEdits[order.id];
+      const resolved = !trimmedValue || trimmedValue === CUSTOMER_NOT_LINKED
+        ? { customerId: "", customerName: "", customerSnapshot: undefined }
+        : currentOutsideEdit?.customerSelection
+          ? currentOutsideEdit.customerSelection
+          : applyTypedCustomerToLine(line, trimmedValue, customers);
       const currentCustomerId = line.customerId?.trim() || "";
       const currentCustomerName = normalizePaymentAgentValue(line.customerName || "");
       const nextCustomerId = resolved.customerId?.trim() || "";
-      const nextCustomerName = normalizePaymentAgentValue(resolved.customerName || trimmedValue);
+      const nextCustomerName = normalizePaymentAgentValue(resolved.customerName || "");
       return currentCustomerId !== nextCustomerId || currentCustomerName !== nextCustomerName;
     }
     if (field === "marka") {
@@ -771,6 +811,27 @@ export default function OrdersPage() {
       return (rawValue === "" ? 0 : Number(rawValue)) !== (Number(line.rmbPerPcs) || 0);
     }
     return false;
+  };
+  const hasComposerChanges = () => {
+    if (editingOrderId) {
+      if (!editingOrder) return false;
+      const baseline = {
+        ...editingOrder,
+        wechatId: (editingOrder.wechatId || "").trim(),
+        number: normalizeEditableOrderNumber(editingOrder.number || editingOrder.orderNumber),
+        orderNumber: normalizeEditableOrderNumber(editingOrder.orderNumber || editingOrder.number),
+        lines: (editingOrder.lines || []).map((line) => seedDetailBoxesFromLegacy(line)),
+      };
+      const current = {
+        ...draft,
+        wechatId: (draft.wechatId || "").trim(),
+        number: normalizeEditableOrderNumber(draft.number || draft.orderNumber),
+        orderNumber: normalizeEditableOrderNumber(draft.orderNumber || draft.number),
+        lines: (draft.lines || []).map((line) => seedDetailBoxesFromLegacy(line)),
+      };
+      return JSON.stringify(current) !== JSON.stringify(baseline);
+    }
+    return hasAnyDraftContent(draft);
   };
   const resolveStatusOptions = (order: Order, rowValue: RowEditState) => {
     const options = rowValue.loadingDate ? STATUS_OPTIONS_WITH_DATE : STATUS_OPTIONS_NO_DATE;
@@ -835,50 +896,138 @@ try {
     }
   };
 
-  const persistOutsideEditedOrder = async (previousOrder: Order, nextOrder: Order) => {
-    if (isFirebaseOrdersMode) {
-      await upsertFirebaseOrder(nextOrder as any);
-      const paymentAgentsService = getPaymentAgentsService();
-      const backgroundTasks: Promise<unknown>[] = [];
-      if (nextOrder.paymentAgentId || nextOrder.paymentBy) backgroundTasks.push(paymentAgentsService.applyOrderSettlement?.(nextOrder) ?? Promise.resolve());
-      else backgroundTasks.push(paymentAgentsService.reverseOrderSettlement?.(nextOrder) ?? Promise.resolve());
-      if (nextOrder.status === "saved") backgroundTasks.push(syncOrderLinesToProducts(nextOrder));
-      backgroundTasks.push(customerLedgerService.applyOrderCustomerReceivables(nextOrder));
-      backgroundTasks.push(
-        orderLifecycleService.syncOrderLifecycleMetadata(nextOrder, {
+  const runOutsideEditBackgroundSync = async (previousOrder: Order, nextOrder: Order) => {
+    if (!isFirebaseOrdersMode) return;
+
+    const paymentAgentsService = getPaymentAgentsService();
+    const orderNumberSeriesService = getOrderNumberSeriesService();
+    const mergedOrders = activeOrders.some((entry) => entry.id === nextOrder.id)
+      ? activeOrders.map((entry) => (entry.id === nextOrder.id ? nextOrder : entry))
+      : [nextOrder, ...activeOrders];
+    const orderNumberChanged = normalizeEditableOrderNumber(previousOrder.number || previousOrder.orderNumber)
+      !== normalizeEditableOrderNumber(nextOrder.number || nextOrder.orderNumber);
+    const shouldRefreshCustomers = hasLinkedCustomerInOrder(previousOrder) || hasLinkedCustomerInOrder(nextOrder);
+    const shouldRefreshPaymentAgents = hasLinkedPaymentAgent(previousOrder) || hasLinkedPaymentAgent(nextOrder);
+    const warnings: string[] = [];
+    const syncTasks: Promise<void>[] = [];
+
+    if (orderNumberChanged) {
+      syncTasks.push((async () => {
+        try {
+          await measurePerfAsync("sync", "orders.outsideEdit.syncOrderSeries", { orderId: nextOrder.id }, () => orderNumberSeriesService.syncOrderNumberSeriesFromOrder(nextOrder, mergedOrders));
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          warnings.push(`Order series sync failed: ${message}`);
+          logError("outside_edit_order_series_sync_failure", { orderId: nextOrder.id, error: message });
+        }
+      })());
+    }
+
+    syncTasks.push((async () => {
+      try {
+        if (nextOrder.paymentAgentId || nextOrder.paymentBy) {
+          await measurePerfAsync("sync", "orders.outsideEdit.applyPaymentAgentSettlement", { orderId: nextOrder.id, paymentAgentId: nextOrder.paymentAgentId || nextOrder.paymentBy || "" }, () => paymentAgentsService.applyOrderSettlement?.(nextOrder) ?? Promise.resolve());
+        } else if (previousOrder.paymentAgentId || previousOrder.paymentBy) {
+          await measurePerfAsync("sync", "orders.outsideEdit.reversePaymentAgentSettlement", { orderId: nextOrder.id }, () => paymentAgentsService.reverseOrderSettlement?.(nextOrder) ?? Promise.resolve());
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        warnings.push(`Payment-agent settlement failed: ${message}`);
+        logError("outside_edit_payment_agent_sync_failure", { orderId: nextOrder.id, error: message });
+      }
+    })());
+
+    if (nextOrder.status === "saved") {
+      syncTasks.push((async () => {
+        try {
+          const sync = await measurePerfAsync("sync", "orders.outsideEdit.syncOrderLinesToProducts", { orderId: nextOrder.id }, () => syncOrderLinesToProducts(nextOrder));
+          if (sync.failed > 0) warnings.push(`Product sync failed for ${sync.failed} line(s).`);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          warnings.push(`Product sync failed: ${message}`);
+          logError("outside_edit_product_sync_failure", { orderId: nextOrder.id, error: message });
+        }
+      })());
+    }
+
+    syncTasks.push((async () => {
+      try {
+        await measurePerfAsync("sync", "orders.outsideEdit.applyCustomerReceivables", { orderId: nextOrder.id }, () => customerLedgerService.applyOrderCustomerReceivables(nextOrder));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        warnings.push(`Customer receivable update failed: ${message}`);
+        logError("outside_edit_customer_receivable_sync_failure", { orderId: nextOrder.id, error: message });
+      }
+    })());
+
+    syncTasks.push((async () => {
+      try {
+        await measurePerfAsync("sync", "orders.outsideEdit.syncLifecycleMetadata", { orderId: nextOrder.id }, () => orderLifecycleService.syncOrderLifecycleMetadata(nextOrder, {
           knownCustomerIds: new Set(customers.map((customer) => customer.id)),
           knownPaymentAgentIds: new Set(paymentAgents.map((agent) => agent.id)),
-        }),
-      );
-      await Promise.allSettled(backgroundTasks);
-      await Promise.allSettled([reloadFirebaseOrders(), reloadCustomers(), reloadPaymentAgents()]);
-      return;
+        }));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        warnings.push(`Lifecycle sync failed: ${message}`);
+        logError("outside_edit_lifecycle_sync_failure", { orderId: nextOrder.id, error: message });
+      }
+    })());
+
+    await Promise.allSettled(syncTasks);
+
+    const refreshTasks: Promise<unknown>[] = [];
+    if (shouldRefreshCustomers) {
+      refreshTasks.push(measurePerfAsync("reload", "orders.outsideEdit.reloadCustomers", { orderId: nextOrder.id }, () => reloadCustomers()));
+    }
+    if (shouldRefreshPaymentAgents) {
+      refreshTasks.push(measurePerfAsync("reload", "orders.outsideEdit.reloadPaymentAgents", { orderId: nextOrder.id }, () => reloadPaymentAgents()));
+    }
+    if (orderNumberChanged) {
+      refreshTasks.push(measurePerfAsync("reload", "orders.outsideEdit.reloadOrderSeries", { orderId: nextOrder.id }, () => reloadOrderSeries()));
+    }
+    await Promise.allSettled(refreshTasks);
+
+    if (warnings.length > 0) {
+      pushToast({ tone: "info", text: `Order updated, but ${warnings[0]}` });
+    }
+  };
+
+  const persistOutsideEditedOrder = async (nextOrder: Order) => {
+    if (isFirebaseOrdersMode) {
+      return upsertFirebaseOrder(nextOrder as any);
     }
 
     upsertOrder(nextOrder);
     const mergedOrders = orders.filter((entry) => entry.id !== nextOrder.id).concat(nextOrder);
     await recalculateFromOrders(mergedOrders);
+    return nextOrder;
   };
 
   const saveOutsideField = async (order: Order, field: OutsideEditField, line?: Order["lines"][number] | null) => {
-    const current = getOutsideEditValue(order);
-    if (current.saving) return;
-    const targetLineId = line?.id || current.lineId;
-    const targetLine = targetLineId ? order.lines.find((entry) => entry.id === targetLineId) ?? null : null;
-    const rawValue = current.value;
-    if (!hasOutsideFieldChanged(order, field, rawValue, targetLine)) {
-      cancelOutsideField(order.id);
-      return;
-    }
-    const trimmedValue = rawValue.trim();
-    const nextOrder: Order = {
-      ...order,
-      lines: order.lines.map((entry) => ({ ...entry })),
-    };
+    return runPerfAction("outside-edit-save", { orderId: order.id, field, lineId: line?.id || null }, async () => {
+      const current = getOutsideEditValue(order);
+      if (current.saving) return;
+      const targetLineId = line?.id || current.lineId;
+      const targetLine = targetLineId ? order.lines.find((entry) => entry.id === targetLineId) ?? null : null;
+      const rawValue = current.value;
+      if (!hasOutsideFieldChanged(order, field, rawValue, targetLine)) {
+        cancelOutsideField(order.id);
+        return;
+      }
+      const trimmedValue = rawValue.trim();
+      const clearingCustomer = field === "customer" && trimmedValue === CUSTOMER_NOT_LINKED;
+      if (!clearingCustomer && !trimmedValue) {
+        cancelOutsideField(order.id);
+        return;
+      }
+      const nextOrder: Order = {
+        ...order,
+        lines: order.lines.map((entry) => ({ ...entry })),
+      };
 
-    setOutsideEditValue(order.id, { saving: true });
+      setOutsideEditValue(order.id, { saving: true });
 
-    try {
+      try {
       if (field === "orderNumber") {
         const nextNumber = normalizeEditableOrderNumber(trimmedValue);
         if (!nextNumber) throw new Error("Order number is required.");
@@ -920,7 +1069,22 @@ try {
         const nextLine = nextOrder.lines.find((entry) => entry.id === targetLine.id);
         if (!nextLine) throw new Error("Order line not found.");
         if (field === "customer") {
-          Object.assign(nextLine, trimmedValue ? applyTypedCustomerToLine(nextLine, trimmedValue, customers) : { customerId: "", customerName: "", customerSnapshot: undefined });
+          if (clearingCustomer) {
+            Object.assign(nextLine, { customerId: "", customerName: "", customerSnapshot: undefined });
+          } else {
+            const selectedCustomer = current.customerSelection;
+            if (selectedCustomer?.customerId) {
+              Object.assign(nextLine, {
+                customerId: selectedCustomer.customerId,
+                customerName: selectedCustomer.customerName,
+                customerSnapshot: selectedCustomer.customerSnapshot,
+              });
+            } else {
+              const matchedCustomer = findCustomerByTypedName(customers, trimmedValue);
+              if (!matchedCustomer) throw new Error("Choose a valid customer.");
+              Object.assign(nextLine, applyTypedCustomerToLine(nextLine, matchedCustomer.name, customers));
+            }
+          }
         } else if (field === "marka") {
           nextLine.marka = rawValue;
         } else if (field === "details") {
@@ -938,7 +1102,7 @@ try {
       }
 
       nextOrder.updatedAt = new Date().toISOString();
-      await persistOutsideEditedOrder(order, nextOrder);
+      const savedOrder = await measurePerfAsync("sync", "orders.persistOutsideEditedOrder", { orderId: order.id, field }, () => persistOutsideEditedOrder(nextOrder));
       cancelOutsideField(order.id);
       const successLabels: Record<OutsideEditField, string> = {
         orderNumber: "Order number updated.",
@@ -952,15 +1116,24 @@ try {
         rate: "Rate updated.",
         shipping: "Shipping updated.",
       };
-      pushToast({ tone: "success", text: successLabels[field] });
+      pushToast({ tone: "success", text: isFirebaseOrdersMode ? `${successLabels[field]} Related data is syncing in background.` : successLabels[field] });
+      if (isFirebaseOrdersMode && savedOrder) {
+        void runOutsideEditBackgroundSync(order, savedOrder).catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          logError("outside_edit_background_sync_failure", { orderId: savedOrder.id, error: message });
+          pushToast({ tone: "info", text: "Order updated, but background sync failed." });
+        });
+      }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setOutsideEditValue(order.id, { saving: false });
-      pushToast({ tone: "danger", text: `${field} update failed: ${message}` });
-    }
+        const message = error instanceof Error ? error.message : String(error);
+        setOutsideEditValue(order.id, { saving: false });
+        pushToast({ tone: "danger", text: `${field} update failed: ${message}` });
+      }
+    });
   };
 
   const onSave = async (status: Order["status"], forceDraft = false) => {
+    return runPerfAction("full-order-save", { orderId: draft.id, status, mode: editingOrderId ? "edit" : "create" }, async () => {
     const saveAudit = createSaveTimingProfile(status === "draft" ? "draft-save" : editingOrderId ? "edit-save" : "new-order-save", {
       orderId: draft.id,
       mode: editingOrderId ? "edit" : "create",
@@ -1039,7 +1212,7 @@ try {
         setOrderSaveState("idle");
         saveAudit.flush("save:error", { stage: "order_write", message });
         pushToast({ tone: "danger", text: message });
-        return;
+      return;
       }
       setEditingOrderId(null);
       setRemovedLineIds([]);
@@ -1049,6 +1222,7 @@ try {
       setHasAttemptedFinalSave(false);
       setShowDraftIncompleteConfirm(false);
       setValidationWarning({ visible: false, items: [] });
+      setPopupCustomerIssues({});
       setOrderSaveState("idle");
       saveAudit.mark("ui:modalClosed");
       logDataFlow("Orders", JSON.stringify({ event: "draft_save_completed", orderId: draftOrder.id, persistedOrderNumber: draftOrder.number || draftOrder.orderNumber || "" }, null, 2));
@@ -1058,6 +1232,18 @@ try {
 
     setHasAttemptedFinalSave(true);
     logOrder("save_validation_result", { isValid: validation.isValid, missing: validation.missingFields.length, lineIssues: validation.lineIssues.length });
+    const popupCustomerValidationIssues = Object.entries(popupCustomerIssues)
+      .filter(([, issue]) => Boolean(issue))
+      .map(([lineId, issue]) => {
+        const lineIndex = draft.lines.findIndex((line) => line.id === lineId);
+        return `Line ${lineIndex >= 0 ? lineIndex + 1 : "?"}: ${issue}`;
+      });
+    if (popupCustomerValidationIssues.length > 0) {
+      setOrderSaveState("idle");
+      setValidationWarning({ visible: true, items: popupCustomerValidationIssues });
+      saveAudit.flush("save:blocked", { stage: "popup_customer_validation", issues: popupCustomerValidationIssues.length });
+      return;
+    }
     if (!validation.isValid) {
       const missingItems = [
         ...validation.missingFields.map((item) => `${item}.`),
@@ -1218,7 +1404,7 @@ try {
         }
 
         try {
-          const sync = await syncOrderLinesToProducts(savedOrder);
+          const sync = await measurePerfAsync("sync", "orders.syncOrderLinesToProducts", { orderId: savedOrder.id }, () => syncOrderLinesToProducts(savedOrder));
           result.productsSynced = sync.failed === 0;
           result.productSyncFailures = sync.failures.map((f) => ({ lineId: f.lineId, reason: f.reason, errorCode: f.errorCode, errorMessage: f.errorMessage }));
           if (!result.productsSynced) result.warnings.push(`Product sync failed for ${sync.failed} line(s).`);
@@ -1234,7 +1420,7 @@ try {
         syncTasks.push((async () => {
           saveAudit.mark("paymentAgentLedger:start");
           try {
-            await paymentAgentsService.applyOrderSettlement?.(savedOrder);
+            await measurePerfAsync("sync", "orders.applyPaymentAgentSettlement", { orderId: savedOrder.id, paymentAgentId: savedOrder.paymentAgentId || savedOrder.paymentBy || "" }, () => paymentAgentsService.applyOrderSettlement?.(savedOrder) ?? Promise.resolve());
             result.paymentSettlementApplied = true;
             logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: savedOrder.id, mode: result.mode, step: "apply_payment_settlement", success: true }, null, 2));
           } catch (e) {
@@ -1250,7 +1436,7 @@ try {
       syncTasks.push((async () => {
         saveAudit.mark("customerLedger:start");
         try {
-          await customerLedgerService.applyOrderCustomerReceivables(savedOrder as any);
+          await measurePerfAsync("sync", "orders.applyCustomerReceivables", { orderId: savedOrder.id }, () => customerLedgerService.applyOrderCustomerReceivables(savedOrder as any));
           result.customerReceivablesApplied = true;
           logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: savedOrder.id, mode: result.mode, step: "apply_customer_receivables", success: true }, null, 2));
         } catch (e) {
@@ -1266,10 +1452,10 @@ try {
         syncTasks.push((async () => {
           saveAudit.mark("lifecycleSync:start");
           try {
-            savedOrder = { ...savedOrder, ...((await orderLifecycleService.syncOrderLifecycleMetadata(savedOrder, {
+            savedOrder = { ...savedOrder, ...((await measurePerfAsync("sync", "orders.syncLifecycleMetadata", { orderId: savedOrder.id }, () => orderLifecycleService.syncOrderLifecycleMetadata(savedOrder, {
               knownCustomerIds: knownCustomerIdsBeforeSave,
               knownPaymentAgentIds: knownPaymentAgentIdsBeforeSave,
-            })) || {}) };
+            }))) || {}) };
             logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: savedOrder.id, mode: result.mode, step: "sync_lifecycle_metadata", success: true }, null, 2));
           } catch (e) {
             result.warnings.push(`Lifecycle sync failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -1285,13 +1471,13 @@ try {
       saveAudit.mark("stateRefresh:start");
       const refreshTasks: Promise<unknown>[] = [];
       if (isFirebaseOrdersMode) {
-        refreshTasks.push(reloadFirebaseOrders());
+        refreshTasks.push(measurePerfAsync("reload", "orders.reloadFirebaseOrders", { orderId: savedOrder.id }, () => reloadFirebaseOrders()));
       } else {
-        refreshTasks.push(recalculateFromOrders(mergedOrders));
+        refreshTasks.push(measurePerfAsync("reload", "orders.recalculatePaymentAgentsFromOrders", { orderId: savedOrder.id, ordersCount: mergedOrders.length }, () => recalculateFromOrders(mergedOrders)));
       }
-      refreshTasks.push(reloadCustomers());
-      refreshTasks.push(reloadPaymentAgents());
-      refreshTasks.push(reloadOrderSeries());
+      refreshTasks.push(measurePerfAsync("reload", "orders.reloadCustomers", { orderId: savedOrder.id }, () => reloadCustomers()));
+      refreshTasks.push(measurePerfAsync("reload", "orders.reloadPaymentAgents", { orderId: savedOrder.id }, () => reloadPaymentAgents()));
+      refreshTasks.push(measurePerfAsync("reload", "orders.reloadOrderSeries", { orderId: savedOrder.id }, () => reloadOrderSeries()));
       await Promise.allSettled(refreshTasks);
       saveAudit.mark("stateRefresh:end");
       logDataFlow("Orders", JSON.stringify({ event: "order_side_effects_completed", orderId: savedOrder.id, orderNumber: savedOrder.number, ...result }, null, 2));
@@ -1312,6 +1498,7 @@ try {
       saveAudit.flush("save:error", { stage: "background_sync", message: error instanceof Error ? error.message : String(error) });
     });
     return;
+    });
   };
 
   const resetOrderComposer = (notify = true) => {
@@ -1327,11 +1514,16 @@ try {
     setShowDraftIncompleteConfirm(false);
     setShowExitConfirm(false);
     setValidationWarning({ visible: false, items: [] });
+    setPopupCustomerIssues({});
     if (notify) pushToast({ tone: "info", text: "Draft reset to new order." });
   };
 
   const requestExitComposer = () => {
     if (!isOrderModalOpen) return;
+    if (!hasComposerChanges()) {
+      resetOrderComposer(false);
+      return;
+    }
     setShowExitConfirm(true);
   };
 
@@ -1348,6 +1540,7 @@ try {
     setShowDraftIncompleteConfirm(false);
     setShowExitConfirm(false);
     setValidationWarning({ visible: false, items: [] });
+    setPopupCustomerIssues({});
     setMode("edit");
   };
   const startAdd = async () => {
@@ -1368,6 +1561,7 @@ try {
     setShowDraftIncompleteConfirm(false);
     setShowExitConfirm(false);
     setValidationWarning({ visible: false, items: [] });
+    setPopupCustomerIssues({});
     setMode("add");
     logDataFlow("Orders", JSON.stringify({ event: "add_order_fresh_form_opened", orderId: nextDraft.id, orderNumber: nextDraft.number || nextDraft.orderNumber }, null, 2));
   };
@@ -1375,6 +1569,7 @@ try {
   const draftTotalPages = Math.max(1, Math.ceil(drafts.length / PAGE_SIZE));
   const pagedDrafts = useMemo(() => drafts.slice((draftPage - 1) * PAGE_SIZE, draftPage * PAGE_SIZE), [drafts, draftPage]);
   const formatPlainAmount = (value: number) => formatAmount(value);
+  const formatPlainNumber = (value: number) => formatDisplayNumber(value, { maxFractionDigits: 6 });
   const formatFinalAmount = (value: number) => formatWholeMoney(value);
   const getPaymentAgentMeta = (order: Order) => getOrderPaymentAgentDisplay(order, paymentAgents);
   const getLineCtns = (line: Order["lines"][number]) => Number(line.totalCtns) || 0;
@@ -1383,7 +1578,6 @@ try {
   const getLineRate = (line: Order["lines"][number]) => Number(line.rmbPerPcs) || 0;
   const getLineAmount = (line: Order["lines"][number]) => lineTotalRmb(line);
   const getOrderTotalCtns = (order: Order) => (order.lines || []).reduce((sum, line) => sum + getLineCtns(line), 0);
-  const getOrderLinesAmount = (order: Order) => orderLinesTotal(order);
   const getOrderTotalAmount = (order: Order) => orderTotal(order);
   const getOrderShippingAmount = (order: Order) => orderShippingPrice(order);
   const getFirstDraftPhoto = (order: Order) => order.lines.find((line) => line.productPhotoUrl || line.photoUrl)?.productPhotoUrl || order.lines.find((line) => line.productPhotoUrl || line.photoUrl)?.photoUrl || "";
@@ -1406,6 +1600,8 @@ try {
     return candidate.productPhotoUrl || candidate.productImage || candidate.image || candidate.photoUrl || "";
   };
   const getDisplayWechatId = (order: Order) => order.wechatId?.trim() || "Not Set";
+  const isMissingCustomerDisplay = (value: string) =>
+    value === CUSTOMER_NOT_LINKED || value === "Deleted Customer" || value === "Invalid Customer Reference";
   const getVisibleLineDetails = (line: Order["lines"][number]) => {
     const parts = getLineDetailsParts(line);
     const values = [parts.detail1, parts.detail2, parts.detail3].map((part) => part.trim()).filter(Boolean);
@@ -1414,9 +1610,6 @@ try {
   };
   const getCardCustomerValue = (line: Order["lines"][number] | null) => {
     return line ? getLineCustomerDisplay(line, customers) : "—";
-  };
-  const getHistoryRowTone = (loadingDate?: string) => {
-    return "bg-[var(--bg-card)]";
   };
   const isLineMatchedByQuery = (line: Order["lines"][number]) => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -1440,6 +1633,21 @@ try {
     if (nextValue === "" || /^\d*\.?\d*$/.test(nextValue)) {
       setOutsideEditValue(orderId, { value: nextValue });
     }
+  };
+  const getOutsideEditTargetLine = (order: Order) => {
+    const outsideEdit = getOutsideEditValue(order);
+    if (!outsideEdit.lineId) return null;
+    return order.lines.find((entry) => entry.id === outsideEdit.lineId) ?? null;
+  };
+  const isOutsideEditDirty = (order: Order) => {
+    const outsideEdit = getOutsideEditValue(order);
+    if (!outsideEdit.activeField) return false;
+    return hasOutsideFieldChanged(order, outsideEdit.activeField, outsideEdit.value, getOutsideEditTargetLine(order));
+  };
+  const saveActiveOutsideEdit = async (order: Order) => {
+    const outsideEdit = getOutsideEditValue(order);
+    if (!outsideEdit.activeField) return;
+    await saveOutsideField(order, outsideEdit.activeField, getOutsideEditTargetLine(order));
   };
   const renderOutsideEditableField = ({
     order,
@@ -1473,20 +1681,26 @@ try {
     const outsideEdit = getOutsideEditValue(order);
     const editing = isOutsideFieldEditing(order, field, line);
     if (editing) {
+      const normalizedValue = outsideEdit.value.trim().toLowerCase();
+      const customerOptions = field === "customer"
+        ? listOptions.filter((option) => option && option.toLowerCase().includes(normalizedValue)).slice(0, 4)
+        : [];
       return (
-        <>
+        <div className="relative">
           <Input
             value={outsideEdit.value}
-            type={type}
+            type={numeric ? "text" : type}
             inputMode={inputMode}
-            list={listId}
+            list={field === "customer" ? undefined : listId}
             autoFocus
             placeholder={placeholder}
-            className={inputClassName}
+            className={cn(inputClassName, numeric && "[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none", field === "customer" && "pr-8")}
+            leadingIcon={field === "customer" ? <UserRound size={14} /> : undefined}
+            compact={field === "customer"}
             onChange={(event) => {
               const nextValue = event.target.value;
               if (numeric) updateOutsideDecimalValue(order.id, nextValue);
-              else setOutsideEditValue(order.id, { value: nextValue });
+              else setOutsideEditValue(order.id, { value: nextValue, customerSelection: field === "customer" ? null : undefined });
             }}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
@@ -1500,12 +1714,57 @@ try {
             }}
             onBlur={() => {
               if (!outsideEdit.saving) {
-                void saveOutsideField(order, field, line);
+                window.setTimeout(() => cancelOutsideField(order.id), 120);
               }
             }}
           />
-          {listId && listOptions.length > 0 ? <datalist id={listId}>{listOptions.map((option) => <option key={option} value={option} />)}</datalist> : null}
-        </>
+          {field === "customer" && (customerOptions.length > 0 || outsideEdit.value.trim().length === 0) ? (
+            <div className="absolute z-20 mt-1 w-full rounded-lg border border-border bg-bg-card shadow-card">
+              <div className="border-b border-border/70 px-2 py-1">
+                <button
+                  type="button"
+                  className="block w-full rounded-md px-1 py-1 text-left text-[11.5px] font-medium text-[var(--danger)] transition-colors hover:bg-[var(--danger)]/10"
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    setOutsideEditValue(order.id, {
+                      value: CUSTOMER_NOT_LINKED,
+                      customerSelection: { customerId: "", customerName: "", customerSnapshot: undefined },
+                    });
+                  }}
+                >
+                  Clear customer
+                </button>
+              </div>
+              {customerOptions.map((option) => {
+                const optionKey = `${order.id}-${line?.id || "order"}-${option}`;
+                return (
+                  <button
+                    key={optionKey}
+                    type="button"
+                    className="block w-full px-2 py-1 text-left text-[12px] text-fg transition-colors hover:bg-bg-subtle"
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      const matchedCustomer = findCustomerByTypedName(customers, option);
+                      setOutsideEditValue(order.id, {
+                        value: option,
+                        customerSelection: matchedCustomer
+                          ? {
+                              customerId: matchedCustomer.id,
+                              customerName: matchedCustomer.name,
+                              customerSnapshot: { id: matchedCustomer.id, name: matchedCustomer.name, code: matchedCustomer.customerCode },
+                            }
+                          : null,
+                      });
+                    }}
+                  >
+                    {option}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+          {field !== "customer" && listId && listOptions.length > 0 ? <datalist id={listId}>{listOptions.map((option) => <option key={option} value={option} />)}</datalist> : null}
+        </div>
       );
     }
     return (
@@ -1541,7 +1800,7 @@ try {
     });
     return Array.from(groups.entries()).sort((a, b) => b[0].localeCompare(a[0]));
   }, [pagedHistory]);
-const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 58px 62px 76px 72px 88px 96px minmax(108px,0.85fr) 108px minmax(108px,0.8fr) 104px";
+const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 58px 62px 76px 72px 118px minmax(108px,0.85fr) 108px minmax(108px,0.8fr) 104px";
   const fmtOrderDate = (order: Order) => {
     const raw = order.date || order.createdAt || order.updatedAt;
     if (!raw) return "—";
@@ -1555,6 +1814,11 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
     if (editingOrderId && originalLineIds.has(lineId)) {
       setRemovedLineIds((prev) => (prev.includes(lineId) ? prev : [...prev, lineId]));
     }
+    setPopupCustomerIssues((prev) => {
+      const next = { ...prev };
+      delete next[lineId];
+      return next;
+    });
     setDraft((d) => ({ ...d, lines: d.lines.filter((l) => l.id !== lineId) }));
   };
 
@@ -1701,7 +1965,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                     <td>{o.wechatId?.trim() ? <span>{o.wechatId.trim()}</span> : renderDraftMissing()}</td>
                     <td>{paymentMeta.isMissing ? renderDraftMissing() : <span>{paymentMeta.value}</span>}</td>
                     <td>{marka ? <span>{marka}</span> : renderDraftMissing()}</td>
-                    <td>{(totalPcs > 0 || totalCtns > 0) ? <span>{totalPcs.toLocaleString()} PCS / {totalCtns.toLocaleString()} CTNS</span> : renderDraftMissing()}</td>
+                    <td>{(totalPcs > 0 || totalCtns > 0) ? <span>{formatPlainNumber(totalPcs)} PCS / {formatPlainNumber(totalCtns)} CTNS</span> : renderDraftMissing()}</td>
                     <td className="tabular-nums">{totalAmount > 0 ? <span>{formatFinalAmount(totalAmount)}</span> : renderDraftMissing()}</td>
                     <td className="px-4"><div className="flex justify-end gap-2"><Button size="sm" variant="secondary" onClick={async () => { logDataFlow("Orders", JSON.stringify({ event: "complete_draft_opened", orderId: o.id, orderNumber: o.number || o.orderNumber }, null, 2)); await startEdit(o); }}>Continue</Button><Button size="sm" variant="secondary" onClick={() => removeOrder(o)}>Delete</Button></div></td>
                   </tr>;
@@ -1729,6 +1993,8 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
               const amount = getOrderTotalAmount(order);
               const shippingAmount = getOrderShippingAmount(order);
               const customerValue = getCardCustomerValue(line);
+              const customerMissing = isMissingCustomerDisplay(customerValue);
+              const outsideEditDirty = isOutsideEditDirty(order);
               const expanded = isOrderExpanded(row);
               return <div
                 key={row.key}
@@ -1765,7 +2031,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                             displayValue: customerValue || "—",
                             placeholder: "Set customer",
                             title: customerValue,
-                            buttonClassName: "block w-full rounded-xl px-2 py-1 text-left text-[21px] font-bold leading-tight transition-colors hover:bg-white/70",
+                            buttonClassName: cn("block w-full rounded-xl px-2 py-1 text-left text-[21px] font-bold leading-tight transition-colors hover:bg-white/70", customerMissing && "text-[var(--danger)]"),
                             inputClassName: "h-10 min-w-0 text-[15px] font-semibold",
                             listId: `outside-customer-${order.id}-${line.id}`,
                             listOptions: customerSuggestions,
@@ -1838,6 +2104,17 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                           </span>
                         )}
                       </div>
+                      {outsideEditDirty ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          className="h-11 rounded-full px-5 text-[15px] font-bold"
+                          onMouseDown={(event) => event.preventDefault()}
+                          onClick={() => { void saveActiveOutsideEdit(order); }}
+                        >
+                          Save
+                        </Button>
+                      ) : null}
                       <button type="button" title="View" aria-label="View" className="grid h-[52px] w-[52px] place-items-center rounded-2xl border border-[#e5e7eb] bg-white/95 text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:bg-white" onClick={() => setViewOrder(order)}><Eye size={22} /></button>
                       <button type="button" title="Edit" aria-label="Edit" className="grid h-[52px] w-[52px] place-items-center rounded-2xl border border-[#e5e7eb] bg-white/95 text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:bg-white" onClick={() => startEdit(order)}><SquarePen size={22} /></button>
                       <button type="button" title="Delete" aria-label="Delete" className="grid h-[52px] w-[52px] place-items-center rounded-2xl border border-rose-100 bg-white/95 text-rose-600 shadow-[0_6px_18px_rgba(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:bg-rose-50" onClick={() => removeOrder(order)}><Trash2 size={22} /></button>
@@ -1897,7 +2174,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                           line: extraLine,
                           displayValue: getCardCustomerValue(extraLine),
                           placeholder: "Set customer",
-                          buttonClassName: "block w-full rounded-md px-1 py-0.5 text-center text-[13px] font-semibold transition-colors hover:bg-white/70",
+                          buttonClassName: cn("block w-full rounded-md px-1 py-0.5 text-center text-[13px] font-semibold transition-colors hover:bg-white/70", isMissingCustomerDisplay(getCardCustomerValue(extraLine)) && "text-[var(--danger)]"),
                           inputClassName: "h-8 min-w-0 text-[12px]",
                           listId: `outside-customer-${order.id}-${extraLine.id}`,
                           listOptions: customerSuggestions,
@@ -1912,7 +2189,6 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                         { label: "PCS/CTN", value: formatPlainAmount(pcsPerCtn), editableField: "pcsPerCtn" as const, icon: <Boxes size={21} />, tint: "bg-orange-100 text-orange-700", valueClass: "text-slate-950" },
                         { label: "TOTAL PCS", value: formatPlainAmount(totalPcs), editableField: null, icon: <ShoppingBag size={21} />, tint: "bg-sky-100 text-sky-700", valueClass: "text-slate-950" },
                         { label: "RATE", value: formatPlainAmount(rate), editableField: "rate" as const, icon: <BadgePercent size={21} />, tint: "bg-rose-100 text-rose-700", valueClass: "text-slate-950" },
-                        { label: "SHIPPING", value: formatFinalAmount(shippingAmount), editableField: "shipping" as const, icon: <IndianRupee size={23} />, tint: "bg-rose-100 text-rose-700", valueClass: shippingAmount > 0 ? "text-rose-600 text-[30px]" : "text-[var(--danger)] text-[30px]" },
                         { label: "TOTAL AMOUNT", value: formatFinalAmount(amount), editableField: null, icon: <IndianRupee size={23} />, tint: "bg-emerald-100 text-emerald-700", valueClass: amount > 0 ? "text-emerald-700 text-[30px]" : "text-[var(--danger)] text-[30px]" },
                       ].map((stat, index) => (
                       <div key={`${row.key}-${stat.label}`} className={cn("flex min-w-0 items-center gap-4 rounded-2xl lg:rounded-none", index < 6 && "lg:pr-4", index < 5 && "lg:border-r lg:border-[#e8ebef]")}>
@@ -1922,7 +2198,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                         <div className="min-w-0 text-center">
                           <div className="text-[13px] font-semibold uppercase tracking-[0.14em] text-slate-400">{stat.label}</div>
                           <div className={cn("mt-1 text-[25px] font-extrabold leading-none", stat.valueClass)}>
-                            {stat.editableField && (stat.editableField === "shipping" || line)
+                            {stat.editableField && line
                               ? renderOutsideEditableField({
                                   order,
                                   field: stat.editableField,
@@ -1931,11 +2207,28 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                                   placeholder: `Set ${stat.label.toLowerCase()}`,
                                   buttonClassName: "block w-full rounded-xl px-1 py-1 text-center transition-colors hover:bg-white/70",
                                   inputClassName: "h-10 min-w-0 text-center text-[14px] font-semibold",
-                                  type: "number",
                                   inputMode: "decimal",
                                   numeric: true,
                                 })
-                              : stat.value}
+                              : stat.label === "TOTAL AMOUNT" ? (
+                                <div className="space-y-1">
+                                  {shippingAmount > 0 || isOutsideFieldEditing(order, "shipping") ? (
+                                    <div className="text-[14px] font-semibold text-rose-600">
+                                      {renderOutsideEditableField({
+                                        order,
+                                        field: "shipping",
+                                        displayValue: formatFinalAmount(shippingAmount),
+                                        placeholder: "Set shipping",
+                                        buttonClassName: "block w-full rounded-xl px-1 py-0.5 text-center transition-colors hover:bg-white/70",
+                                        inputClassName: "h-8 min-w-0 text-center text-[14px] font-semibold",
+                                        inputMode: "decimal",
+                                        numeric: true,
+                                      })}
+                                    </div>
+                                  ) : null}
+                                  <div>{stat.value}</div>
+                                </div>
+                              ) : stat.value}
                           </div>
                         </div>
                       </div>
@@ -2010,8 +2303,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                 <div className="px-1 py-1.5 text-center leading-[1.05]"><div>PCS/</div><div>CTN</div></div>
                 <div className="px-1 py-1.5 text-center">Total Pieces</div>
                 <div className="px-1 py-1.5 text-center">Price/Pc</div>
-                <div className="px-1 py-1.5 text-center">Shipping</div>
-                <div className="px-1 py-1.5 text-right">Main Total Amount</div>
+                <div className="px-1 py-1.5 text-center">Main Total Amount</div>
                 <div className="px-1 py-1.5 text-center">Customer</div>
                 <div className="px-1 py-1.5 text-center">Loading Date</div>
                 <div className="px-1 py-1.5 text-center">Paid By</div>
@@ -2038,6 +2330,8 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                   const marka = selectedLine?.marka?.trim() || "—";
                   const customerName = getCardCustomerValue(selectedLine);
                   const hasMultipleLines = orderLines.length > 1;
+                  const customerMissing = isMissingCustomerDisplay(customerName);
+                  const outsideEditDirty = isOutsideEditDirty(order);
 
                   return <div key={row.key} className="rounded-lg border border-border/70 bg-bg-card">
                     <div className={rowClass} style={{ gridTemplateColumns: historyGridTemplate }}>
@@ -2048,8 +2342,8 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                             field: "orderNumber",
                             displayValue: order.number || order.orderNumber || "Draft",
                             placeholder: "Set order number",
-                            buttonClassName: "block w-full rounded-md px-1 py-1 text-center text-[17px] font-bold leading-tight transition-colors hover:bg-bg-subtle",
-                            inputClassName: "h-8 min-w-0 text-[12px] font-semibold",
+                            buttonClassName: "block w-full rounded-md px-1 py-1 text-center text-[18px] font-bold leading-tight transition-colors hover:bg-bg-subtle",
+                            inputClassName: "h-8 min-w-0 text-[13px] font-semibold",
                           })}
                         </div>
                       </div>
@@ -2059,8 +2353,8 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                           field: "wechat",
                           displayValue: getDisplayWechatId(order),
                           placeholder: "Set WeChat ID",
-                          buttonClassName: cn("block w-full rounded-md px-1 py-1 text-center text-[13.5px] font-semibold leading-tight transition-colors hover:bg-bg-subtle", !order.wechatId?.trim() && "text-[var(--danger)]"),
-                          inputClassName: "h-8 min-w-0 text-[12px]",
+                          buttonClassName: cn("block w-full rounded-md px-1 py-1 text-center text-[14.5px] font-semibold leading-tight transition-colors hover:bg-bg-subtle", !order.wechatId?.trim() && "text-[var(--danger)]"),
+                          inputClassName: "h-8 min-w-0 text-[13px]",
                           listId: `outside-wechat-${order.id}`,
                           listOptions: wechatSuggestions,
                         })}
@@ -2106,36 +2400,34 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                           ) : null}
                         </div>
                       </div>
-                      <div className="px-0.5 py-1.5 text-center text-[13.5px] font-semibold tabular-nums">
+                      <div className="px-0.5 py-1.5 text-center text-[14.5px] font-semibold tabular-nums">
                         {selectedLine ? renderOutsideEditableField({
                           order,
                           field: "totalCtns",
                           line: selectedLine,
-                          displayValue: ctns.toLocaleString(),
+                          displayValue: formatPlainNumber(ctns),
                           placeholder: "Set CTNs",
                           buttonClassName: "block w-full rounded-md px-1 py-1 text-center transition-colors hover:bg-bg-subtle",
-                          inputClassName: "h-8 min-w-0 text-center text-[12px]",
-                          type: "number",
+                          inputClassName: "h-8 min-w-0 text-center text-[13px]",
                           inputMode: "decimal",
                           numeric: true,
-                        }) : ctns.toLocaleString()}
+                        }) : formatPlainNumber(ctns)}
                       </div>
-                      <div className="px-0.5 py-1.5 text-center text-[13.5px] font-semibold tabular-nums">
+                      <div className="px-0.5 py-1.5 text-center text-[14.5px] font-semibold tabular-nums">
                         {selectedLine ? renderOutsideEditableField({
                           order,
                           field: "pcsPerCtn",
                           line: selectedLine,
-                          displayValue: pcsPerCtn.toLocaleString(),
+                          displayValue: formatPlainNumber(pcsPerCtn),
                           placeholder: "Set PCS/CTN",
                           buttonClassName: "block w-full rounded-md px-1 py-1 text-center transition-colors hover:bg-bg-subtle",
-                          inputClassName: "h-8 min-w-0 text-center text-[12px]",
-                          type: "number",
+                          inputClassName: "h-8 min-w-0 text-center text-[13px]",
                           inputMode: "decimal",
                           numeric: true,
-                        }) : pcsPerCtn.toLocaleString()}
+                        }) : formatPlainNumber(pcsPerCtn)}
                       </div>
-                      <div className="px-0.5 py-1.5 text-center text-[13.5px] font-semibold tabular-nums">{totalPcs.toLocaleString()}</div>
-                      <div className="px-0.5 py-1.5 text-center text-[14px] font-semibold tabular-nums">
+                      <div className="px-0.5 py-1.5 text-center text-[14.5px] font-semibold tabular-nums">{formatPlainNumber(totalPcs)}</div>
+                      <div className="px-0.5 py-1.5 text-center text-[15px] font-semibold tabular-nums">
                         {selectedLine ? renderOutsideEditableField({
                           order,
                           field: "rate",
@@ -2143,34 +2435,38 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                           displayValue: formatPlainAmount(rate),
                           placeholder: "Set rate",
                           buttonClassName: "block w-full rounded-md px-1 py-1 text-center transition-colors hover:bg-bg-subtle",
-                          inputClassName: "h-8 min-w-0 text-center text-[12px]",
-                          type: "number",
+                          inputClassName: "h-8 min-w-0 text-center text-[13px]",
                           inputMode: "decimal",
                           numeric: true,
                         }) : formatPlainAmount(rate)}
                       </div>
-                      <div className={cn("px-0.5 py-1.5 text-center text-[14px] font-semibold tabular-nums", shippingAmount > 0 ? "text-rose-600" : "text-[var(--danger)]")}>
-                        {renderOutsideEditableField({
-                          order,
-                          field: "shipping",
-                          displayValue: formatFinalAmount(shippingAmount),
-                          placeholder: "Set shipping",
-                          buttonClassName: "block w-full rounded-md px-1 py-1 text-center transition-colors hover:bg-bg-subtle",
-                          inputClassName: "h-8 min-w-0 text-center text-[12px]",
-                          type: "number",
-                          inputMode: "decimal",
-                          numeric: true,
-                        })}
+                      <div className="px-0.5 py-1.5 tabular-nums">
+                        <div className="flex flex-col items-center justify-center gap-0.5 text-center">
+                          {shippingAmount > 0 || isOutsideFieldEditing(order, "shipping") ? (
+                            <div className="text-[14px] font-semibold leading-none text-rose-600">
+                              {renderOutsideEditableField({
+                                order,
+                                field: "shipping",
+                                displayValue: formatFinalAmount(shippingAmount),
+                                placeholder: "Set shipping",
+                                buttonClassName: "block w-full rounded-md px-1 py-0.5 text-center transition-colors hover:bg-bg-subtle",
+                                inputClassName: "h-7 min-w-0 text-center text-[14px]",
+                                inputMode: "decimal",
+                                numeric: true,
+                              })}
+                            </div>
+                          ) : null}
+                          <div className={cn("text-[16px] font-bold leading-none", amount > 0 ? "text-fg" : "text-[var(--danger)]")}>{formatFinalAmount(amount)}</div>
+                        </div>
                       </div>
-                      <div className={cn("px-0.5 py-1.5 text-right text-[15px] font-bold tabular-nums", amount > 0 ? "text-fg" : "text-[var(--danger)]")}>{formatFinalAmount(amount)}</div>
-                      <div className="min-w-0 px-1 py-1.5"><div className="block w-full min-w-0 truncate text-center text-[13.5px] font-semibold leading-tight" title={customerName}>{selectedLine ? renderOutsideEditableField({
+                      <div className="min-w-0 px-1 py-1.5"><div className={cn("block w-full min-w-0 truncate text-center text-[14.5px] font-semibold leading-tight", customerMissing && "text-[var(--danger)]")} title={customerName}>{selectedLine ? renderOutsideEditableField({
                         order,
                         field: "customer",
                         line: selectedLine,
                         displayValue: customerName,
                         placeholder: "Set customer",
-                        buttonClassName: "block w-full rounded-md px-1 py-1 text-center text-[13.5px] font-semibold leading-tight transition-colors hover:bg-bg-subtle",
-                        inputClassName: "h-8 min-w-0 text-[12px]",
+                        buttonClassName: cn("block w-full rounded-md px-1 py-1 text-center text-[14.5px] font-semibold leading-tight transition-colors hover:bg-bg-subtle", customerMissing && "text-[var(--danger)]"),
+                        inputClassName: "h-8 min-w-0 text-[13px]",
                         listId: `outside-customer-${order.id}-${selectedLine.id}`,
                         listOptions: customerSuggestions,
                       }) : customerName}</div></div>
@@ -2186,14 +2482,25 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                           field: "payment",
                           displayValue: paymentName,
                           placeholder: "Set Paid By",
-                          buttonClassName: cn("block w-full rounded-md px-1 py-1 text-center text-[13.5px] font-semibold leading-tight transition-colors hover:bg-bg-subtle", paymentMeta.isMissing && "text-[var(--danger)]"),
-                          inputClassName: "h-8 min-w-0 text-[12px]",
+                          buttonClassName: cn("block w-full rounded-md px-1 py-1 text-center text-[14.5px] font-semibold leading-tight transition-colors hover:bg-bg-subtle", paymentMeta.isMissing && "text-[var(--danger)]"),
+                          inputClassName: "h-8 min-w-0 text-[13px]",
                           listId: `outside-payment-${order.id}`,
                           listOptions: paymentAgents.map((agent) => agent.name),
                         })}
                       </div>
                       <div className="px-0.5 py-1.5">
                         <div className="flex justify-center gap-0.5 whitespace-nowrap">
+                          {outsideEditDirty ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              className="mr-1 h-[28px] rounded-md px-2.5 text-[11px] font-semibold"
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() => { void saveActiveOutsideEdit(order); }}
+                            >
+                              Save
+                            </Button>
+                          ) : null}
                           <button type="button" title="View" aria-label="View" className="grid h-[28px] w-[28px] place-items-center rounded-md text-fg transition-colors hover:bg-bg-subtle" onClick={() => setViewOrder(order)}><Eye size={14} /></button>
                           <button type="button" title="Edit" aria-label="Edit" className="grid h-[28px] w-[28px] place-items-center rounded-md text-fg transition-colors hover:bg-bg-subtle" onClick={() => startEdit(order)}><SquarePen size={14} /></button>
                           <button type="button" title="Delete" aria-label="Delete" className="grid h-[28px] w-[28px] place-items-center rounded-md text-[var(--danger)] transition-colors hover:bg-[var(--danger)]/10" onClick={() => removeOrder(order)}><Trash2 size={14} /></button>
@@ -2238,7 +2545,7 @@ setHeaderPaymentQuery(next); setHeaderPaymentOpen(true); setDraft((d)=>({...d,pa
             </div>
           </div> : null}
           <div className="min-h-0 flex-1 overflow-y-auto">
-            <OrderForm showOrderInfo={false} draft={draft} setDraft={(u) => setDraft((d) => u(d))} paymentAgents={paymentAgents} customers={customers} onUploadingChange={onUploadingChange} onRemoveLine={handleRemoveLine} wechatSuggestions={wechatSuggestions.filter((w) => draft.wechatId.trim() ? w.toLowerCase().includes(draft.wechatId.trim().toLowerCase()) : false)} customerSuggestions={customerSuggestions} onPreviewImage={(src) => setPreviewImage({ src, alt: "Order line photo preview" })} />
+            <OrderForm showOrderInfo={false} draft={draft} setDraft={(u) => setDraft((d) => u(d))} paymentAgents={paymentAgents} customers={customers} onUploadingChange={onUploadingChange} onRemoveLine={handleRemoveLine} wechatSuggestions={wechatSuggestions.filter((w) => draft.wechatId.trim() ? w.toLowerCase().includes(draft.wechatId.trim().toLowerCase()) : false)} customerSuggestions={customerSuggestions} onPreviewImage={(src) => setPreviewImage({ src, alt: "Order line photo preview" })} onCustomerValidityChange={(lineId, issue) => setPopupCustomerIssues((prev) => ({ ...prev, [lineId]: issue }))} />
           </div>
           <OrderFooter lineTotal={lineTotal} shippingPrice={getOrderShippingAmount(draft)} total={total} onSaveDraft={() => onSave("draft")} onSaveOrder={() => onSave("saved")} onViewDetails={() => setViewOrder(draft)} saveOrderLabel={orderSaveState === "saving" ? "Saving Order..." : (editingOrderId ? "Save Changes" : "Save Order")} saveDraftLabel={orderSaveState === "saving" ? "Saving Draft..." : "Save as Draft"} disableSaveDraft={orderSaveState !== "idle"} disableSaveOrder={orderSaveState !== "idle"} paymentAgent={selectedPaymentAgent} settlement={settlement} paidNow={draft.paidToPaymentAgentNow ?? 0} onPaidNowChange={(value) => setDraft((d) => ({ ...d, paidToPaymentAgentNow: Math.max(0, Number(value) || 0) }))} onShippingPriceChange={(value) => setDraft((d) => ({ ...d, shippingPrice: value }))} />
         </div>

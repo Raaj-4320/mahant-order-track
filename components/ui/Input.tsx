@@ -14,9 +14,15 @@ export const Input = forwardRef<HTMLInputElement, Props>(function Input(
   { leadingIcon, trailingIcon, className, containerClassName, compact, ...rest },
   ref
 ) {
+  const handleWheel: InputHTMLAttributes<HTMLInputElement>["onWheel"] = (event) => {
+    if (rest.type === "number") {
+      event.currentTarget.blur();
+    }
+    rest.onWheel?.(event);
+  };
   const base = compact ? "field-input-sm" : "field-input";
   if (!leadingIcon && !trailingIcon) {
-    return <input ref={ref} className={cn(base, className)} {...rest} />;
+    return <input ref={ref} className={cn(base, className)} {...rest} onWheel={handleWheel} />;
   }
   const padL = compact ? "pl-7" : "pl-9";
   const padR = compact ? "pr-7" : "pr-9";
@@ -33,6 +39,7 @@ export const Input = forwardRef<HTMLInputElement, Props>(function Input(
         ref={ref}
         className={cn(base, leadingIcon && padL, trailingIcon && padR, className)}
         {...rest}
+        onWheel={handleWheel}
       />
       {trailingIcon && (
         <span className={cn("absolute inset-y-0 flex items-center text-fg-subtle", offsetR)}>

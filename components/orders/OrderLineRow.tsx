@@ -3,12 +3,14 @@
 import { Trash2 } from "lucide-react";
 import { Customer, OrderLine, lineTotalPcs, lineTotalRmb } from "@/lib/types";
 import { Input } from "@/components/ui/Input";
-import { applyTypedCustomerToLine } from "@/services/customers/customerResolution";
+import { applyTypedCustomerToLine, CUSTOMER_NOT_LINKED, findCustomerByTypedName } from "@/services/customers/customerResolution";
 import { PhotoUpload } from "./PhotoUpload";
 import { useEffect, useMemo, useState } from "react";
 import { getLineDetailsParts } from "@/lib/orderLineDetails";
 import { formatAmount } from "@/lib/data";
 import { formatWholeMoney } from "@/lib/numbers";
+import { cn } from "@/lib/cn";
+import { UserRound } from "lucide-react";
 
 type Props = {
   line: OrderLine;
@@ -18,25 +20,29 @@ type Props = {
   customerSuggestions?: string[];
   customers?: Customer[];
   onPreviewImage?: (src: string) => void;
+  onCustomerValidityChange?: (lineId: string, issue: string | null) => void;
 };
 
 // Columns: pic+dim | product | marka | details | ctns | pcs/ctn | total pcs | rmb/pcs | line total | customer | action
 export const LINE_GRID =
   "grid grid-cols-[72px_72px_minmax(0,0.6fr)_minmax(0,0.6fr)_56px_76px_60px_76px_132px_minmax(0,0.5fr)_28px] items-center gap-1.5";
 
-export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, customerSuggestions = [], customers = [], onPreviewImage }: Props) {
+export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, customerSuggestions = [], customers = [], onPreviewImage, onCustomerValidityChange }: Props) {
   const pcs = lineTotalPcs(line);
   const totalRmb = lineTotalRmb(line);
   const detailParts = getLineDetailsParts(line);
-  const customerQuery = (line.customerName || "").trim().toLowerCase();
   const [customerOpen, setCustomerOpen] = useState(false);
+  const [customerInput, setCustomerInput] = useState(line.customerName || line.customerSnapshot?.name || "");
   const [totalCtnsInput, setTotalCtnsInput] = useState(line.totalCtns ? String(line.totalCtns) : "");
   const [pcsPerCtnInput, setPcsPerCtnInput] = useState(line.pcsPerCtn ? String(line.pcsPerCtn) : "");
   const [rateInput, setRateInput] = useState(line.rmbPerPcs ? String(line.rmbPerPcs) : "");
+  const currentCustomerLabel = line.customerName || line.customerSnapshot?.name || "";
+  const normalizedCustomerInput = customerInput.trim().toLowerCase();
+  const matchedTypedCustomer = useMemo(() => findCustomerByTypedName(customers, customerInput), [customers, customerInput]);
 
   const topCustomerSuggestions = useMemo(
-    () => customerSuggestions.filter((name) => !customerQuery || name.toLowerCase().includes(customerQuery)).slice(0, 4),
-    [customerSuggestions, customerQuery]
+    () => customerSuggestions.filter((name) => !normalizedCustomerInput || name.toLowerCase().includes(normalizedCustomerInput)).slice(0, 4),
+    [customerSuggestions, normalizedCustomerInput]
   );
 
   useEffect(() => {
@@ -51,6 +57,22 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
     setRateInput(line.rmbPerPcs ? String(line.rmbPerPcs) : "");
   }, [line.rmbPerPcs]);
 
+  useEffect(() => {
+    if (!customerOpen) {
+      setCustomerInput(line.customerName || line.customerSnapshot?.name || "");
+    }
+  }, [line.customerName, line.customerSnapshot?.name, customerOpen]);
+
+  useEffect(() => {
+    if (!onCustomerValidityChange) return;
+    const trimmed = customerInput.trim();
+    if (!trimmed || trimmed === CUSTOMER_NOT_LINKED || matchedTypedCustomer || trimmed === currentCustomerLabel.trim()) {
+      onCustomerValidityChange(line.id, null);
+      return;
+    }
+    onCustomerValidityChange(line.id, "Choose a valid customer.");
+  }, [customerInput, matchedTypedCustomer, currentCustomerLabel, line.id, onCustomerValidityChange]);
+
   const handleDecimalInput = (nextValue: string, commit: (value: number) => void, setValue: (value: string) => void) => {
     if (nextValue === "" || /^\d*\.?\d*$/.test(nextValue)) {
       setValue(nextValue);
@@ -60,6 +82,18 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
 
   const normalizeDecimalInput = (value: number, setValue: (next: string) => void) => {
     setValue(value ? String(value) : "");
+  };
+
+  const applyCustomerSelection = (name: string) => {
+    onChange(applyTypedCustomerToLine(line, name, customers));
+    setCustomerInput(name);
+    setCustomerOpen(false);
+  };
+
+  const clearCustomerSelection = () => {
+    onChange({ customerId: "", customerName: "", customerSnapshot: undefined });
+    setCustomerInput(CUSTOMER_NOT_LINKED);
+    setCustomerOpen(false);
   };
 
   return (
@@ -144,7 +178,59 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
         <span className={totalRmb > 0 ? "text-fg" : "text-[var(--danger)]"}>{formatWholeMoney(totalRmb)}</span>
       </div>
 
-      <div className="relative"><Input compact value={line.customerName ?? ""} onFocus={() => setCustomerOpen(true)} onBlur={() => window.setTimeout(() => setCustomerOpen(false), 120)} onChange={(e) => { onChange(applyTypedCustomerToLine(line, e.target.value, customers)); setCustomerOpen(true); }} placeholder="Customer" />{customerOpen && topCustomerSuggestions.length > 0 ? <div className="absolute z-20 mt-1 w-full rounded-lg border border-border bg-bg-card shadow-card">{topCustomerSuggestions.map((name) => <button key={name} type="button" className="block w-full px-2 py-1 text-left text-[12px] hover:bg-bg-subtle" onMouseDown={(e)=>{e.preventDefault(); onChange(applyTypedCustomerToLine(line, name, customers)); setCustomerOpen(false);}}>{name}</button>)}</div> : null}</div>
+      <div className="relative">
+        <Input
+          compact
+          value={customerInput}
+          leadingIcon={<UserRound size={14} />}
+          onFocus={() => setCustomerOpen(true)}
+          onBlur={() => window.setTimeout(() => {
+            setCustomerOpen(false);
+            if (!customerInput.trim() && line.customerId?.trim()) {
+              setCustomerInput(currentCustomerLabel);
+            }
+          }, 120)}
+          onChange={(e) => {
+            const nextValue = e.target.value;
+            setCustomerInput(nextValue);
+            const matched = findCustomerByTypedName(customers, nextValue);
+            if (matched) {
+              onChange(applyTypedCustomerToLine(line, matched.name, customers));
+            }
+            setCustomerOpen(true);
+          }}
+          placeholder="Customer"
+        />
+        {customerOpen && (topCustomerSuggestions.length > 0 || customerInput.trim().length === 0) ? (
+          <div className="absolute z-20 mt-1 w-full rounded-lg border border-border bg-bg-card shadow-card">
+            <div className="border-b border-border/70 px-2 py-1">
+              <button
+                type="button"
+                className="block w-full rounded-md px-1 py-1 text-left text-[11.5px] font-medium text-[var(--danger)] transition-colors hover:bg-[var(--danger)]/10"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  clearCustomerSelection();
+                }}
+              >
+                Clear customer
+              </button>
+            </div>
+            {topCustomerSuggestions.map((name) => (
+              <button
+                key={name}
+                type="button"
+                className={cn("block w-full px-2 py-1 text-left text-[12px] transition-colors hover:bg-bg-subtle", matchedTypedCustomer?.name === name ? "bg-bg-subtle" : "text-fg")}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  applyCustomerSelection(name);
+                }}
+              >
+                {name}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
 
       <button
         onClick={onRemove}

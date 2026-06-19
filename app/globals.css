@@ -163,12 +163,20 @@ input:focus, select:focus, textarea:focus, button:focus {
 }
 
 
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button,
 .no-spinner::-webkit-outer-spin-button,
 .no-spinner::-webkit-inner-spin-button {
   -webkit-appearance: none;
   margin: 0;
 }
 
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
 .no-spinner[type=number] {
   -moz-appearance: textfield;
+  appearance: textfield;
 }

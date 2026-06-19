@@ -35,6 +35,7 @@ export const formatDisplayNumber = (
   return rounded.toLocaleString("en-US", {
     minimumFractionDigits: options?.minFractionDigits ?? 0,
     maximumFractionDigits: options?.maxFractionDigits ?? DEFAULT_PRECISION,
+    useGrouping: false,
   });
 };
 
@@ -53,10 +54,12 @@ export const formatMoney = (value: number | string | undefined | null) =>
   floorMoney(value).toLocaleString("en-US", {
     minimumFractionDigits: 0,
     maximumFractionDigits: MONEY_PRECISION,
+    useGrouping: false,
   });
 
 export const formatWholeMoney = (value: number | string | undefined | null) =>
   floorWholeMoney(value).toLocaleString("en-US", {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
+    useGrouping: false,
   });

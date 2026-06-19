@@ -1,6 +1,7 @@
 import { collection, deleteDoc, doc, getDoc, getDocs, runTransaction, setDoc } from "firebase/firestore";
 import { getFirestoreDb } from "@/lib/firebase/client";
 import { areBusinessValuesEqual } from "@/lib/firebase/noopWrite";
+import { measurePerfAsync, recordPerfEvent, recordPerfNoopWrite } from "@/lib/perfDebug";
 import { paymentAgentFromFirestore, paymentAgentLedgerEntryToFirestore, paymentAgentToFirestore } from "@/lib/firebase/mappers";
 import { paymentAgentLedgerPath, paymentAgentsPath, paymentAgentPath } from "@/lib/firebase/paths";
 import type { PaymentAgentsService } from "@/services/contracts";
@@ -16,12 +17,14 @@ const clamp = (n: number) => Math.max(0, Number.isFinite(n) ? n : 0);
 export const paymentAgentsFirebaseService: PaymentAgentsService = {
   async listPaymentAgents() {
     const db = requireDb();
-    const snap = await getDocs(collection(db, paymentAgentsPath(BUSINESS_ID)));
+    const path = paymentAgentsPath(BUSINESS_ID);
+    const snap = await measurePerfAsync("firestore-read", "paymentAgents.listPaymentAgents", { path }, () => getDocs(collection(db, path)));
     return snap.docs.map((d) => paymentAgentFromFirestore({ id: d.id, ...(d.data() as Record<string, unknown>) })).sort((a, b) => a.name.localeCompare(b.name));
   },
   async getPaymentAgentById(id) {
     const db = requireDb();
-    const snap = await getDoc(doc(db, paymentAgentPath(BUSINESS_ID, id)));
+    const path = paymentAgentPath(BUSINESS_ID, id);
+    const snap = await measurePerfAsync("firestore-read", "paymentAgents.getPaymentAgentById", { path, agentId: id }, () => getDoc(doc(db, path)));
     if (!snap.exists()) return null;
     return paymentAgentFromFirestore({ id: snap.id, ...(snap.data() as Record<string, unknown>) });
   },
@@ -33,10 +36,11 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
     const next: PaymentAgent = { ...agent, id, createdAt: existing?.createdAt || agent.createdAt || now, updatedAt: now, creditBalance: agent.creditBalance ?? agent.openingCreditBalance ?? 0, openingCreditBalance: agent.openingCreditBalance ?? 0, totalOrderAmount: agent.totalOrderAmount ?? 0, totalPaidAmount: agent.totalPaidAmount ?? 0, currentDuePayable: agent.currentDuePayable ?? 0 };
     if (existing) {
       if (areBusinessValuesEqual(paymentAgentToFirestore(existing), paymentAgentToFirestore(next))) {
+        recordPerfNoopWrite("paymentAgents.upsertPaymentAgent", { path: paymentAgentPath(BUSINESS_ID, id), agentId: id });
         return existing;
       }
     }
-    await setDoc(doc(db, paymentAgentPath(BUSINESS_ID, id)), paymentAgentToFirestore(next), { merge: true });
+    await measurePerfAsync("firestore-write", "paymentAgents.upsertPaymentAgent", { path: paymentAgentPath(BUSINESS_ID, id), agentId: id }, () => setDoc(doc(db, paymentAgentPath(BUSINESS_ID, id)), paymentAgentToFirestore(next), { merge: true }));
     return next;
   },
   async recordPaymentToAgent(agentId, payment) {
@@ -54,7 +58,9 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
       const dueReduced = Math.min(due, amount);
       const creditCreated = Math.max(0, amount - dueReduced);
       const updated: PaymentAgent = { ...current, currentDuePayable: due - dueReduced, creditBalance: Math.max(0, (current.creditBalance ?? 0) + creditCreated), totalPaidAmount: Math.max(0, (current.totalPaidAmount ?? 0) + amount), updatedAt: now };
+      recordPerfEvent("firestore-write", "paymentAgents.recordPaymentToAgent.agent", { path: paymentAgentPath(BUSINESS_ID, agentId), agentId });
       tx.set(agentRef, paymentAgentToFirestore(updated), { merge: true });
+      recordPerfEvent("firestore-write", "paymentAgents.recordPaymentToAgent.ledger", { path: `${paymentAgentLedgerPath(BUSINESS_ID)}/${ledgerRef.id}`, agentId });
       tx.set(ledgerRef, paymentAgentLedgerEntryToFirestore({ id: ledgerRef.id, agentId, type: "agent_payment", amount, dueReduced, creditCreated, note: payment.note, paymentMethod: payment.paymentMethod, paymentDate: payment.paymentDate || now, createdAt: now }));
       return updated;
     });
@@ -69,7 +75,7 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
   async deletePaymentAgent(id: string) {
     const existing = await this.getPaymentAgentById(id);
     if (!existing) throw new Error("Payment agent not found.");
-    await deleteDoc(doc(requireDb(), paymentAgentPath(BUSINESS_ID, id)));
+    await measurePerfAsync("firestore-write", "paymentAgents.deletePaymentAgent", { path: paymentAgentPath(BUSINESS_ID, id), agentId: id }, () => deleteDoc(doc(requireDb(), paymentAgentPath(BUSINESS_ID, id))));
   },
   async applyOrderSettlement(order) {
     if (!order.paymentAgentSettlementSnapshot) return;
@@ -110,6 +116,7 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
             currentDuePayable: clamp((oldAgent.currentDuePayable ?? 0) - clamp(existing.remainingPayable ?? 0)),
             updatedAt: now,
           };
+          recordPerfEvent("firestore-write", "paymentAgents.applyOrderSettlement.oldAgent", { path: paymentAgentPath(BUSINESS_ID, existing.agentId), orderId: order.id });
           tx.set(oldAgentRef, paymentAgentToFirestore(oldUpdated), { merge: true });
         } else {
           updated = {
@@ -123,7 +130,9 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
         }
         const reversalRef = doc(db, paymentAgentLedgerPath(BUSINESS_ID), `order-settlement-reversal-${existing.id}`);
         const reversal = buildOrderSettlementReversalEntry(order, existing);
+        recordPerfEvent("firestore-write", "paymentAgents.applyOrderSettlement.reversal", { path: `${paymentAgentLedgerPath(BUSINESS_ID)}/${reversalRef.id}`, orderId: order.id });
         tx.set(reversalRef, paymentAgentLedgerEntryToFirestore({ ...reversal, id: reversalRef.id, createdAt: now, updatedAt: now }), { merge: true });
+        recordPerfEvent("firestore-write", "paymentAgents.applyOrderSettlement.deactivateExisting", { path: `${paymentAgentLedgerPath(BUSINESS_ID)}/${existing.id}`, orderId: order.id });
         tx.set(doc(db, paymentAgentLedgerPath(BUSINESS_ID), existing.id), { active: false, isReversed: true, updatedAt: now }, { merge: true });
       }
       updated = {
@@ -134,7 +143,9 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
         currentDuePayable: clamp((updated.currentDuePayable ?? 0) + clamp(nextEntry.remainingPayable ?? 0)),
         updatedAt: now,
       };
+      recordPerfEvent("firestore-write", "paymentAgents.applyOrderSettlement.agent", { path: paymentAgentPath(BUSINESS_ID, agentId), orderId: order.id });
       tx.set(agentRef, paymentAgentToFirestore(updated), { merge: true });
+      recordPerfEvent("firestore-write", "paymentAgents.applyOrderSettlement.settlement", { path: `${paymentAgentLedgerPath(BUSINESS_ID)}/${settlementRef.id}`, orderId: order.id });
       tx.set(settlementRef, paymentAgentLedgerEntryToFirestore({ ...nextEntry, id: settlementRef.id, createdAt: now, updatedAt: now }), { merge: true });
     });
   },
@@ -162,10 +173,13 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
         currentDuePayable: clamp((current.currentDuePayable ?? 0) - clamp(existing.remainingPayable ?? 0)),
         updatedAt: now,
       };
+      recordPerfEvent("firestore-write", "paymentAgents.reverseOrderSettlement.agent", { path: paymentAgentPath(BUSINESS_ID, agentId), orderId: order.id });
       tx.set(agentRef, paymentAgentToFirestore(updated), { merge: true });
       const reversalRef = doc(db, paymentAgentLedgerPath(BUSINESS_ID), `order-settlement-reversal-${existing.id}`);
       const reversal = buildOrderSettlementReversalEntry(order, existing as any);
+      recordPerfEvent("firestore-write", "paymentAgents.reverseOrderSettlement.reversal", { path: `${paymentAgentLedgerPath(BUSINESS_ID)}/${reversalRef.id}`, orderId: order.id });
       tx.set(reversalRef, paymentAgentLedgerEntryToFirestore({ ...reversal, id: reversalRef.id, createdAt: now, updatedAt: now }), { merge: true });
+      recordPerfEvent("firestore-write", "paymentAgents.reverseOrderSettlement.deactivateExisting", { path: `${paymentAgentLedgerPath(BUSINESS_ID)}/${existing.id}`, orderId: order.id });
       tx.set(doc(db, paymentAgentLedgerPath(BUSINESS_ID), existing.id), { active: false, isReversed: true, updatedAt: now }, { merge: true });
     });
   },

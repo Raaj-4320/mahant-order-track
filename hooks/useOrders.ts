@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Order } from "@/lib/types";
+import { measurePerfAsync } from "@/lib/perfDebug";
 import { getOrdersService } from "@/services/ordersService";
 
 export function useOrders() {
@@ -8,9 +9,8 @@ export function useOrders() {
   const [data, setData] = useState<Order[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const reload = useCallback(async () => { setIsLoading(true); setError(null); try { setData(await service.listOrders()); } catch (e) { setError(e instanceof Error ? e.message : "Failed to load orders"); } finally { setIsLoading(false); } }, [service]);
+  const reload = useCallback(async () => { setIsLoading(true); setError(null); try { setData(await measurePerfAsync("reload", "useOrders.reload", undefined, () => service.listOrders())); } catch (e) { setError(e instanceof Error ? e.message : "Failed to load orders"); } finally { setIsLoading(false); } }, [service]);
   useEffect(() => { reload(); }, [reload]);
-  const getOrderById = useCallback(async (id: string) => service.getOrderById(id), [service]);
   const upsertOrder = useCallback(async (order: Order) => {
     const saved = await service.upsertOrder(order);
     setData((prev) => (prev.some((entry) => entry.id === saved.id) ? prev.map((entry) => (entry.id === saved.id ? saved : entry)) : [saved, ...prev]));
@@ -27,6 +27,6 @@ export function useOrders() {
     return service.allocateNextOrderNumber();
   }, [service]);
   const draftOrders = useMemo(() => data.filter((o) => o.status === "draft"), [data]);
-  return { data, isLoading, error, isEmpty: !isLoading && data.length === 0, reload, getOrderById, upsertOrder, autosaveDraft, archiveOrder, draftOrders, peekNextOrderNumber, allocateNextOrderNumber };
+  return { data, isLoading, error, isEmpty: !isLoading && data.length === 0, reload, upsertOrder, autosaveDraft, archiveOrder, draftOrders, peekNextOrderNumber, allocateNextOrderNumber };
 }
 

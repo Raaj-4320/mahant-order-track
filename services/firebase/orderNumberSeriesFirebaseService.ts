@@ -3,6 +3,7 @@ import type { Order, OrderNumberSeries } from "@/lib/types";
 import type { OrderNumberSeriesService } from "@/services/contracts";
 import { backfillSeriesFromOrders, createSeriesRecord, formatSeriesOrderNumber, mergeOrderSeries, orderNumberExists, parseOrderNumber } from "@/lib/orderNumberSeries";
 import { getFirestoreDb, requireFirebaseBusinessId } from "@/lib/firebase/client";
+import { measurePerfAsync, measurePerfSync, recordPerfEvent, recordPerfNoopWrite } from "@/lib/perfDebug";
 import { orderNumberSeriesDocPath, orderNumberSeriesPath } from "@/lib/firebase/paths";
 
 const requireDb = () => {
@@ -37,9 +38,10 @@ export const orderNumberSeriesFirebaseService: OrderNumberSeriesService = {
   async listOrderNumberSeries(orders = []) {
     const db = requireDb();
     const businessId = requireFirebaseBusinessId();
-    const snapshot = await getDocs(collection(db, orderNumberSeriesPath(businessId)));
+    const path = orderNumberSeriesPath(businessId);
+    const snapshot = await measurePerfAsync("firestore-read", "orderSeries.list", { path }, () => getDocs(collection(db, path)));
     const stored = snapshot.docs.map((docSnap) => normalizeSeriesDoc({ id: docSnap.id, ...(docSnap.data() as Record<string, unknown>) }));
-    const derived = backfillSeriesFromOrders(orders);
+    const derived = measurePerfSync("calc", "orderSeries.backfillFromOrders", { ordersCount: orders.length }, () => backfillSeriesFromOrders(orders));
     return mergeOrderSeries(stored, derived);
   },
   async createOrderNumberSeries(input, orders = []) {
@@ -53,7 +55,7 @@ export const orderNumberSeriesFirebaseService: OrderNumberSeriesService = {
     if (orderNumberExists(orders, formatSeriesOrderNumber(record.prefix, record.nextNumber))) {
       throw new Error("This order number already exists. Choose another starting number.");
     }
-    await setDoc(doc(db, orderNumberSeriesDocPath(businessId, record.id)), record, { merge: true });
+    await measurePerfAsync("firestore-write", "orderSeries.create", { path: orderNumberSeriesDocPath(businessId, record.id), seriesId: record.id }, () => setDoc(doc(db, orderNumberSeriesDocPath(businessId, record.id)), record, { merge: true }));
     return record;
   },
   async syncOrderNumberSeriesFromOrder(order, orders = []) {
@@ -86,8 +88,10 @@ export const orderNumberSeriesFirebaseService: OrderNumberSeriesService = {
         updated.isDefault === base.isDefault &&
         updated.isActive === base.isActive
       ) {
+        recordPerfNoopWrite("orderSeries.syncFromOrder", { path: orderNumberSeriesDocPath(businessId, existing.id), seriesId: existing.id, orderId: order.id });
         return base;
       }
+      recordPerfEvent("firestore-write", "orderSeries.syncFromOrder", { path: orderNumberSeriesDocPath(businessId, existing.id), seriesId: existing.id, orderId: order.id });
       transaction.set(seriesRef, updated, { merge: true });
       return updated;
     });

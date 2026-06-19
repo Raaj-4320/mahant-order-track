@@ -2,6 +2,7 @@ import { collection, doc, getDoc, getDocs, query, runTransaction, setDoc, where 
 import { getFirestoreDb, requireFirebaseBusinessId } from "@/lib/firebase/client";
 import { orderFromFirestore, orderToFirestore, sanitizeFirestorePayload } from "@/lib/firebase/mappers";
 import { areBusinessValuesEqual } from "@/lib/firebase/noopWrite";
+import { measurePerfAsync, recordPerfNoopWrite } from "@/lib/perfDebug";
 import { orderNumberCounterPath, orderPath, ordersPath } from "@/lib/firebase/paths";
 import type { OrdersService } from "@/services/contracts";
 import type { Order } from "@/lib/types";
@@ -23,12 +24,14 @@ function parseOrderNo(value?: string | null): number | null {
 export const ordersFirebaseService: OrdersService = {
   async listOrders() {
     const db = requireDb();
-    const snap = await getDocs(collection(db, ordersPath(businessId())));
+    const path = ordersPath(businessId());
+    const snap = await measurePerfAsync("firestore-read", "orders.listOrders", { path }, () => getDocs(collection(db, path)));
     return snap.docs.map((d) => orderFromFirestore({ id: d.id, ...(d.data() as Record<string, unknown>) })).sort((a, b) => (b.updatedAt || b.date || "").localeCompare(a.updatedAt || a.date || ""));
   },
   async getOrderById(id) {
     const db = requireDb();
-    const snap = await getDoc(doc(db, orderPath(businessId(), id)));
+    const path = orderPath(businessId(), id);
+    const snap = await measurePerfAsync("firestore-read", "orders.getOrderById", { path, orderId: id }, () => getDoc(doc(db, path)));
     if (!snap.exists()) return null;
     return orderFromFirestore({ id: snap.id, ...(snap.data() as Record<string, unknown>) });
   },
@@ -37,13 +40,13 @@ export const ordersFirebaseService: OrdersService = {
     const db = requireDb();
     const bizId = businessId();
     const counterRef = doc(db, orderNumberCounterPath(bizId));
-    const counterSnap = await getDoc(counterRef);
+    const counterSnap = await measurePerfAsync("firestore-read", "orders.peekNextOrderNumber.counter", { path: orderNumberCounterPath(bizId) }, () => getDoc(counterRef));
     if (counterSnap.exists()) {
       const maybeNext = Number((counterSnap.data() as any).nextNumber);
       const next = Number.isFinite(maybeNext) && maybeNext >= 301 ? maybeNext : 301;
       return `YY-${next}`;
     }
-    const allOrders = await getDocs(collection(db, ordersPath(bizId)));
+    const allOrders = await measurePerfAsync("firestore-read", "orders.peekNextOrderNumber.orders", { path: ordersPath(bizId) }, () => getDocs(collection(db, ordersPath(bizId))));
     let maxExisting = 300;
     for (const d of allOrders.docs) {
       const data = d.data() as any;
@@ -65,7 +68,7 @@ export const ordersFirebaseService: OrdersService = {
         const maybeNext = Number((counterSnap.data() as any).nextNumber);
         next = Number.isFinite(maybeNext) && maybeNext >= 301 ? maybeNext : 301;
       } else {
-        const allOrders = await getDocs(collection(db, ordersPath(bizId)));
+        const allOrders = await measurePerfAsync("firestore-read", "orders.allocateNextOrderNumber.orders", { path: ordersPath(bizId) }, () => getDocs(collection(db, ordersPath(bizId))));
         let maxExisting = 300;
         for (const d of allOrders.docs) {
           const data = d.data() as any;
@@ -93,12 +96,13 @@ export const ordersFirebaseService: OrdersService = {
     if (existing) {
       const existingSanitized = sanitizeFirestorePayload(orderToFirestore(existing));
       if (areBusinessValuesEqual(existingSanitized.value, sanitized.value)) {
+        recordPerfNoopWrite("orders.upsertOrder", { path: orderPath(bizId, id), orderId: id });
         return existing;
       }
     }
     logDB("order_payload_sanitized", { orderId: id, removedUndefinedPaths: sanitized.removedUndefinedPaths });
 try {
-      await setDoc(doc(db, orderPath(bizId, id)), sanitized.value, { merge: true });
+      await measurePerfAsync("firestore-write", "orders.upsertOrder", { path: orderPath(bizId, id), orderId: id, status: order.status }, () => setDoc(doc(db, orderPath(bizId, id)), sanitized.value, { merge: true }));
 } catch (e: any) {
 logError("upsert_order_failure", { orderId: id, status: order.status, errorCode: e?.code ?? undefined, errorMessage: e?.message ?? String(e), removedUndefinedPaths: sanitized.removedUndefinedPaths });
       throw e;
@@ -113,7 +117,7 @@ logError("upsert_order_failure", { orderId: id, status: order.status, errorCode:
   async listDraftOrders() {
     const db = requireDb();
     const q = query(collection(db, ordersPath(businessId())), where("status", "==", "draft"));
-    const snap = await getDocs(q);
+    const snap = await measurePerfAsync("firestore-read", "orders.listDraftOrders", { path: ordersPath(businessId()), status: "draft" }, () => getDocs(q));
     return snap.docs.map((d) => orderFromFirestore({ id: d.id, ...(d.data() as Record<string, unknown>) }));
   },
   async autosaveDraft(order: Order) {

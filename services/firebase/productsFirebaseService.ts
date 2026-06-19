@@ -2,6 +2,7 @@ import { collection, doc, getDoc, getDocs, setDoc } from "firebase/firestore";
 import { getFirestoreDb } from "@/lib/firebase/client";
 import { productFromFirestore, productToFirestore, sanitizeFirestorePayload } from "@/lib/firebase/mappers";
 import { areBusinessValuesEqual } from "@/lib/firebase/noopWrite";
+import { measurePerfAsync, recordPerfNoopWrite } from "@/lib/perfDebug";
 import { productPath, productsPath } from "@/lib/firebase/paths";
 import type { Product } from "@/lib/types";
 import type { ProductsService } from "@/services/contracts";
@@ -45,14 +46,16 @@ export const productsFirebaseService: ProductsService = {
   async listProducts() {
     logDB("list_products_start", { path: productsPath(BUSINESS_ID), businessId: BUSINESS_ID });
     const db = requireDb();
-    const snapshot = await getDocs(collection(db, productsPath(BUSINESS_ID)));
+    const path = productsPath(BUSINESS_ID);
+    const snapshot = await measurePerfAsync("firestore-read", "products.listProducts", { path }, () => getDocs(collection(db, path)));
     const rows = snapshot.docs.map((d) => productFromFirestore({ id: d.id, ...(d.data() as Record<string, unknown>) }));
     logDB("list_products_success", { path: productsPath(BUSINESS_ID), businessId: BUSINESS_ID, count: rows.length });
     return rows;
   },
   async getProductById(id: string) {
     const db = requireDb();
-    const snapshot = await getDoc(doc(db, productPath(BUSINESS_ID, id)));
+    const path = productPath(BUSINESS_ID, id);
+    const snapshot = await measurePerfAsync("firestore-read", "products.getProductById", { path, productId: id }, () => getDoc(doc(db, path)));
     if (!snapshot.exists()) return null;
     return productFromFirestore({ id: snapshot.id, ...(snapshot.data() as Record<string, unknown>) });
   },
@@ -84,11 +87,12 @@ export const productsFirebaseService: ProductsService = {
         ]
       });
       if (areBusinessValuesEqual(existingSanitized.value, sanitized)) {
+        recordPerfNoopWrite("products.upsertProduct", { path: productPath(BUSINESS_ID, normalized.id), productId: normalized.id });
         return existing;
       }
     }
     if (removedUndefinedPaths.length) logDB("product_payload_sanitized", { productId: normalized.id, removedUndefinedPaths });
-    await setDoc(doc(db, productPath(BUSINESS_ID, normalized.id)), sanitized, { merge: true });
+    await measurePerfAsync("firestore-write", "products.upsertProduct", { path: productPath(BUSINESS_ID, normalized.id), productId: normalized.id }, () => setDoc(doc(db, productPath(BUSINESS_ID, normalized.id)), sanitized, { merge: true }));
     return normalized;
   },
 };

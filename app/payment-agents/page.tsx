@@ -20,6 +20,7 @@ import { openStatementPdfPrint } from "@/services/statementPdf";
 import { orderLifecycleService } from "@/services/orderLifecycleService";
 import { buildPaymentAgentAccountingSummary, buildPaymentAgentOrderRows, buildPaymentAgentPaymentRows, buildPaymentAgentTransactionRows } from "@/services/settlement/paymentAgentAccounting";
 import { getLineCustomerDisplay } from "@/services/customers/customerResolution";
+import { measurePerfSync } from "@/lib/perfDebug";
 
 const ALL_LEDGER_ROWS_KEY = "__all__";
 type LedgerViewRow = {
@@ -80,6 +81,7 @@ export default function PaymentAgentsPage() {
   }, [ledgerRows, listPaymentAgentLedger]);
 
   const rows = useMemo(() => {
+    return measurePerfSync("calc", "paymentAgentsPage.rows", { agentsCount: agents.length, ordersCount: sourceOrders.length, ledgerCount: (ledgerRows[ALL_LEDGER_ROWS_KEY] || []).length }, () => {
     const allLedger = ledgerRows[ALL_LEDGER_ROWS_KEY] || [];
     return agents.map((agent) => {
       const summary = buildPaymentAgentAccountingSummary(agent, sourceOrders, allLedger, customers);
@@ -106,6 +108,7 @@ export default function PaymentAgentsPage() {
         ...summary,
         searchText,
       };
+    });
     });
   }, [agents, ledgerRows, sourceOrders, customers]);
 

@@ -293,7 +293,7 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
                   <th className="border border-border px-2 py-2.5 text-[14px] whitespace-nowrap">DETAILS</th>
                   <th className="border border-border px-1.5 py-2 text-[14px] leading-tight whitespace-nowrap"><TwoLineHeader zh="箱数" en="CTN" /></th>
                   <th className="border border-border px-1.5 py-2 text-[14px] leading-tight whitespace-nowrap"><TwoLineHeader zh="件/箱" en="PCS/CTN" /></th>
-                  <th className="border border-border px-1.5 py-2 text-[14px] leading-tight whitespace-nowrap">TOTAL Pieces</th>
+                  <th className="border border-border px-1.5 py-2 text-[14px] leading-tight whitespace-nowrap"><TwoLineHeader zh="TOTAL" en="PIECES" /></th>
                   <th className="border border-border px-1.5 py-2 text-[13px] leading-tight whitespace-nowrap"><TwoLineHeader zh="单价" en="PRICE/PC" /></th>
                   <th className="border border-border px-1.5 py-2 text-[13px] leading-tight whitespace-nowrap"><TwoLineHeader zh="金额" en="AMOUNT" /></th>
                   <th className="border border-border px-1.5 py-2 text-[15px] leading-tight whitespace-nowrap" data-export-hidden="true">COPY</th>

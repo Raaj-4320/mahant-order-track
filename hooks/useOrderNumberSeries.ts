@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { Order, OrderNumberSeries } from "@/lib/types";
+import type { OrderNumberSeries } from "@/lib/types";
+import { measurePerfAsync } from "@/lib/perfDebug";
 import { getOrderNumberSeriesService } from "@/services/orderNumberSeriesService";
 
 export function useOrderNumberSeries(orders: Order[]) {
@@ -14,7 +15,7 @@ export function useOrderNumberSeries(orders: Order[]) {
     setIsLoading(true);
     setError(null);
     try {
-      setData(await service.listOrderNumberSeries(orders));
+      setData(await measurePerfAsync("reload", "useOrderNumberSeries.reload", { ordersCount: orders.length }, () => service.listOrderNumberSeries(orders)));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load order number series");
     } finally {
@@ -32,11 +33,5 @@ export function useOrderNumberSeries(orders: Order[]) {
     return created;
   }, [service, orders, reload]);
 
-  const syncSeriesFromOrder = useCallback(async (order: Order, nextOrders?: Order[]) => {
-    const updated = await service.syncOrderNumberSeriesFromOrder(order, nextOrders ?? orders);
-    await reload();
-    return updated;
-  }, [service, orders, reload]);
-
-  return { data, isLoading, error, reload, createSeries, syncSeriesFromOrder };
+  return { data, isLoading, error, reload, createSeries };
 }

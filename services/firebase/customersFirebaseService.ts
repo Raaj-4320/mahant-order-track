@@ -2,6 +2,7 @@ import { collection, deleteDoc, doc, getDoc, getDocs, runTransaction, setDoc } f
 import { getFirestoreDb, requireFirebaseBusinessId } from "@/lib/firebase/client";
 import { customerPath, customersPath } from "@/lib/firebase/paths";
 import { areBusinessValuesEqual } from "@/lib/firebase/noopWrite";
+import { measurePerfAsync, recordPerfEvent, recordPerfNoopWrite } from "@/lib/perfDebug";
 import type { Customer } from "@/lib/types";
 import type { CustomersService } from "@/services/contracts";
 import { customerLedgerPath } from "@/lib/firebase/paths";
@@ -19,13 +20,15 @@ const requireDb = () => { const db = getFirestoreDb(); if (!db) throw new Error(
 export const customersFirebaseService: CustomersService = {
   async listCustomers() {
     const db = requireDb();
-    const snap = await getDocs(collection(db, customersPath(businessId())));
+    const path = customersPath(businessId());
+    const snap = await measurePerfAsync("firestore-read", "customers.listCustomers", { path }, () => getDocs(collection(db, path)));
     const rows = snap.docs.map((d) => customerFromFirestore({ id: d.id, ...(d.data() as Record<string, unknown>) }));
     return rows;
   },
   async getCustomerById(id) {
     const db = requireDb();
-    const snap = await getDoc(doc(db, customerPath(businessId(), id)));
+    const path = customerPath(businessId(), id);
+    const snap = await measurePerfAsync("firestore-read", "customers.getCustomerById", { path, customerId: id }, () => getDoc(doc(db, path)));
     if (!snap.exists()) return null;
     return customerFromFirestore({ id: snap.id, ...(snap.data() as Record<string, unknown>) });
   },
@@ -39,11 +42,12 @@ logCustomer("upsert_customer_start", { incomingId: customer.id, name: customer.n
     const next: Customer = { ...customer, id, normalizedName: normalizeCustomerName(customer.name || customer.displayName || ""), createdAt: existing?.createdAt || customer.createdAt || now, updatedAt: now };
     if (existing) {
       if (areBusinessValuesEqual(customerToFirestore(existing), customerToFirestore(next))) {
+        recordPerfNoopWrite("customers.upsertCustomer", { path: customerPath(bizId, id), customerId: id });
         return existing;
       }
     }
     try {
-      await setDoc(doc(db, customerPath(bizId, id)), customerToFirestore(next), { merge: true });
+      await measurePerfAsync("firestore-write", "customers.upsertCustomer", { path: customerPath(bizId, id), customerId: id }, () => setDoc(doc(db, customerPath(bizId, id)), customerToFirestore(next), { merge: true }));
 } catch (e) {
 throw e;
     }
@@ -72,10 +76,12 @@ throw e;
       const totalReceivableGenerated = getCustomerTotalReceivable(customer);
 
       const entry = buildCustomerPaymentEntry(customer, { amount, paymentDate: input.paymentDate, note: input.note }, { receivableReduced, creditCreated, newCurrentReceivable, newStoreCreditBalance });
+      recordPerfEvent("firestore-write", "customers.recordPaymentToCustomer.ledgerEntry", { path: `${customerLedgerPath(bizId)}/${entry.id}`, customerId });
       tx.set(doc(db, customerLedgerPath(bizId), entry.id), customerLedgerEntryToFirestore(entry), { merge: true });
 
       logCustomer("customer_payment_update_summary", { customerId, before: { currentReceivable, totalReceivableGenerated, totalReceived: getCustomerTotalReceived(customer), storeCreditBalance }, after: { currentReceivable: newCurrentReceivable, totalReceivableGenerated, totalReceived, storeCreditBalance: newStoreCreditBalance } });
       const next: Customer = { ...customer, updatedAt: new Date().toISOString(), totalReceivableGenerated, totalReceived, storeCreditBalance: newStoreCreditBalance, currentReceivable: newCurrentReceivable, outstandingAmount: newCurrentReceivable, totalSpent: totalReceivableGenerated };
+      recordPerfEvent("firestore-write", "customers.recordPaymentToCustomer.customer", { path: customerPath(bizId, customerId), customerId });
       tx.set(ref, customerToFirestore(next), { merge: true });
       return next;
     });
@@ -87,7 +93,7 @@ const existing = await this.getCustomerById(id);
     if (!existing) throw new Error("Customer not found.");
     const bizId = businessId();
     try {
-      await deleteDoc(doc(requireDb(), customerPath(bizId, id)));
+      await measurePerfAsync("firestore-write", "customers.deleteCustomer", { path: customerPath(bizId, id), customerId: id }, () => deleteDoc(doc(requireDb(), customerPath(bizId, id))));
 } catch (e: unknown) {
 throw e;
     }

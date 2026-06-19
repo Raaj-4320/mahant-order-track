@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Order, PaymentAgent } from "@/lib/types";
+import { measurePerfAsync } from "@/lib/perfDebug";
 import { getPaymentAgentsService } from "@/services/paymentAgentsService";
 import { paymentAgentsDataSourceSelection } from "@/lib/runtimeConfig";
 
@@ -13,7 +14,7 @@ export function usePaymentAgents() {
     setIsLoading(true);
     setError(null);
     try {
-      const next = await service.listPaymentAgents();
+      const next = await measurePerfAsync("reload", "usePaymentAgents.reload", undefined, () => service.listPaymentAgents());
       setData(next);
     } catch (e) {
       const message = e instanceof Error ? e.message : "Failed to load payment agents";

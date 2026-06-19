@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Customer } from "@/lib/types";
+import { measurePerfAsync } from "@/lib/perfDebug";
 import { getCustomersService } from "@/services/customersService";
 
 export function useCustomers() {
@@ -9,9 +10,9 @@ export function useCustomers() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const reload = useCallback(async () => {
-setIsLoading(true); setError(null);
+    setIsLoading(true); setError(null);
     try {
-      const rows = await service.listCustomers();
+      const rows = await measurePerfAsync("reload", "useCustomers.reload", undefined, () => service.listCustomers());
       setData(rows);
 } catch (e) {
       const message = e instanceof Error ? e.message : "Failed to load customers";

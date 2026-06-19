@@ -109,8 +109,9 @@ export function OrderFooter({
                   }
                 }}
                 onBlur={() => setShippingInput(shippingPrice ? String(shippingPrice) : "")}
+                onWheel={(event) => event.currentTarget.blur()}
                 className={cn(
-                  "mt-0.5 h-8 w-28 rounded-md border border-border bg-bg-card px-2 text-[14px] font-semibold tabular-nums outline-none transition-colors focus:border-brand",
+                  "no-spinner mt-0.5 h-8 w-28 rounded-md border border-border bg-bg-card px-2 text-[14px] font-semibold tabular-nums outline-none transition-colors focus:border-brand",
                   shippingPrice > 0 ? "text-fg" : "text-rose-600",
                 )}
                 placeholder="0"

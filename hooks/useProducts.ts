@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Product } from "@/lib/types";
 import { getProductsService } from "@/services/productsService";
 import { logDB, logError } from "@/lib/logger";
+import { measurePerfAsync } from "@/lib/perfDebug";
 
 export function useProducts() {
   const service = useMemo(() => getProductsService(), []);
@@ -13,7 +14,7 @@ export function useProducts() {
   const reload = useCallback(async () => {
     setIsLoading(true); setError(null);
     logDB("list_products_start", {});
-    try { const rows = await service.listProducts(); setData(rows); logDB("list_products_success", { count: rows.length }); }
+    try { const rows = await measurePerfAsync("reload", "useProducts.reload", undefined, () => service.listProducts()); setData(rows); logDB("list_products_success", { count: rows.length }); }
     catch (e) { setError(e instanceof Error ? e.message : "Failed to load products"); logError("list_products_failure", { error: e instanceof Error ? e.message : String(e) }); }
     finally { setIsLoading(false); }
   }, [service]);
