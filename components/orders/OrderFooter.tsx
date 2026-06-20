@@ -87,8 +87,8 @@ export function OrderFooter({
   }, [shippingPrice]);
 
   return (
-    <footer className="border-t border-border/70 bg-bg-card px-3 py-1.5">
-      <div className="space-y-2">
+    <footer className="border-t border-border/70 bg-bg-card px-3 py-1">
+      <div className="space-y-1.5">
         <PaymentAgentSplitsEditor
           splits={paymentAgentSplits}
           paymentAgents={paymentAgents}
@@ -96,8 +96,8 @@ export function OrderFooter({
           onChange={onPaymentAgentSplitsChange}
         />
 
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
-          <div className="flex flex-wrap items-center gap-1 sm:gap-1.5">
+        <div className="flex flex-wrap items-end justify-between gap-2 pt-0.5">
+          <div className="flex flex-wrap items-end gap-1.5">
             <Metric label="Lines" value={fmtFinal(lineTotal)} zeroDanger />
             <div className="px-1.5 py-0.5">
               <div className="text-[10px] uppercase tracking-wide text-fg-subtle">Shipping</div>
@@ -116,7 +116,7 @@ export function OrderFooter({
                 onBlur={() => setShippingInput(shippingPrice ? String(shippingPrice) : "")}
                 onWheel={(event) => event.currentTarget.blur()}
                 className={cn(
-                  "no-spinner mt-0.5 h-8 w-24 rounded-lg border border-border/60 bg-bg-card px-2 text-[12px] font-medium tabular-nums outline-none transition-colors focus:border-brand",
+                  "no-spinner mt-0.5 h-8 w-20 rounded-lg border border-border/60 bg-bg-card px-2 text-[12px] font-medium tabular-nums outline-none transition-colors focus:border-brand",
                   shippingPrice > 0 ? "text-fg" : "text-rose-600",
                 )}
                 placeholder="0"

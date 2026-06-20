@@ -66,8 +66,8 @@ export function PaymentAgentHeaderPicker({
   };
 
   return (
-    <div className="flex flex-wrap items-start gap-x-3 gap-y-1.5">
-      <span className="pt-2 text-[11.5px] text-fg-muted">Payment By</span>
+    <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
+      <span className="pt-2 text-[11px] font-medium text-fg-muted">Payment By</span>
       <div className="flex min-w-0 flex-1 flex-wrap items-start gap-2">
         {splits.map((split, index) => {
           const query = queries[split.id] ?? "";
@@ -83,8 +83,8 @@ export function PaymentAgentHeaderPicker({
             .slice(0, 6);
 
           return (
-            <div key={split.id} className="w-[168px] max-w-full">
-              <div className="flex items-center gap-1.5">
+            <div key={split.id} className="w-[196px] shrink-0">
+              <div className="flex items-center gap-1">
                 <div className="relative min-w-0 flex-1">
                   <Input
                     value={query}
@@ -103,14 +103,14 @@ export function PaymentAgentHeaderPicker({
                       }));
                     }}
                     placeholder={index === 0 ? "Search payment agent" : "Add another payment agent"}
-                    className="h-10 rounded-xl border-border/60 bg-bg-card px-3 text-[12px] shadow-none"
+                    className="h-10 rounded-xl border-border/60 bg-bg-card px-3 pr-8 text-[12px] shadow-none"
                   />
                   {query || split.paymentAgentId || split.paymentBy ? (
                     <button
                       type="button"
                       aria-label="Clear payment agent"
                       title="Clear payment agent"
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-[10.5px] font-medium text-fg-subtle transition-colors hover:text-fg"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-medium text-fg-subtle transition-colors hover:text-fg"
                       onMouseDown={(event) => {
                         event.preventDefault();
                         setQueries((current) => ({ ...current, [split.id]: "" }));
@@ -128,13 +128,13 @@ export function PaymentAgentHeaderPicker({
                     </button>
                   ) : null}
                   {openRowId === split.id ? (
-                    <div className="absolute left-0 right-0 top-full z-40 mt-1 overflow-hidden rounded-lg border border-border/70 bg-bg-card shadow-card">
+                    <div className="absolute left-0 right-0 top-full z-40 mt-1 overflow-hidden rounded-xl border border-border/70 bg-bg-card shadow-card">
                       {suggestions.length > 0 ? (
                         suggestions.map((agent) => (
                           <button
                             key={agent.id}
                             type="button"
-                            className="block w-full border-b border-border/50 px-2.5 py-1.5 text-left text-[11.5px] text-fg last:border-b-0 hover:bg-bg-subtle"
+                            className="block w-full border-b border-border/50 px-3 py-2 text-left text-[11.5px] text-fg last:border-b-0 hover:bg-bg-subtle"
                             onMouseDown={(event) => {
                               event.preventDefault();
                               setOpenRowId(null);
@@ -159,18 +159,18 @@ export function PaymentAgentHeaderPicker({
                 </div>
 
                 {splits.length > 1 ? (
-                  <button type="button" aria-label="Remove payment agent" title="Remove payment agent" className="shrink-0 pt-0.5 text-[11px] font-medium text-fg-subtle hover:text-fg" onClick={() => onRemove(split.id)}>x</button>
+                  <button type="button" aria-label="Remove payment agent" title="Remove payment agent" className="grid h-10 w-8 shrink-0 place-items-center rounded-xl border border-border/60 bg-bg-card text-[11px] font-medium text-fg-subtle transition-colors hover:border-border hover:text-fg" onClick={() => onRemove(split.id)}>x</button>
                 ) : null}
               </div>
 
-              <div className="mt-0.5 truncate text-[10px] leading-tight text-fg-subtle">
-                {resolvedAgent ? `Credit left: ${formatAmount(resolvedAgent.creditBalance ?? 0)}` : getPaymentAgentNote(resolvedAgent, query)}
+              <div className="mt-1 truncate pl-1 text-[10px] leading-none text-fg-subtle">
+                {resolvedAgent ? `Credit: ${formatAmount(resolvedAgent.creditBalance ?? 0)}` : getPaymentAgentNote(resolvedAgent, query)}
               </div>
             </div>
           );
         })}
 
-        <Button type="button" size="sm" variant="secondary" className="h-10 whitespace-nowrap rounded-xl border-border/60 px-3 text-[12px] shadow-none" onClick={onAdd}>
+        <Button type="button" size="sm" variant="secondary" className="h-10 whitespace-nowrap rounded-xl border-border/60 px-4 text-[12px] shadow-none" onClick={onAdd}>
           + Add Payment Agent
         </Button>
       </div>

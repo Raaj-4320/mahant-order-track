@@ -62,8 +62,8 @@ export function PaymentAgentSplitsEditor({
   };
 
   return (
-    <div className="space-y-1">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border/45 pb-1 text-[11.5px]">
+    <div className="space-y-0.5">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 border-b border-border/35 pb-0.5 text-[11px]">
         <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-fg-subtle">Distribution</span>
         <span className="font-medium text-fg">Total: {fmt(totalAmount)}</span>
         <span className="font-medium text-fg">Assigned: {fmt(totalAssigned)}</span>
@@ -74,12 +74,12 @@ export function PaymentAgentSplitsEditor({
       </div>
 
       {visibleSplits.length === 0 ? (
-        <div className="py-1 text-[11px] text-fg-subtle">No payment agent selected</div>
+        <div className="py-0.5 text-[11px] text-fg-subtle">No payment agent selected</div>
       ) : null}
 
       <div className="space-y-0.5">
         {visibleSplits.length > 0 ? (
-          <div className="grid grid-cols-[minmax(160px,1.35fr)_90px_90px_92px_92px] items-center gap-2 px-1 text-[10px] font-medium uppercase tracking-wide text-fg-subtle">
+          <div className="grid grid-cols-[minmax(136px,1fr)_78px_78px_78px_78px] items-center gap-1.5 px-1 text-[10px] font-medium uppercase tracking-wide text-fg-subtle">
             <span>Agent Name</span>
             <span>Assigned</span>
             <span>Paid Now</span>
@@ -101,10 +101,9 @@ export function PaymentAgentSplitsEditor({
           const label = getSplitLabel(split) || "Select payment agent above";
 
           return (
-            <div key={split.id} className="grid grid-cols-[minmax(160px,1.35fr)_90px_90px_92px_92px] items-center gap-2 border-b border-border/25 py-1 last:border-b-0">
-              <div className="min-w-0">
+            <div key={split.id} className="grid grid-cols-[minmax(136px,1fr)_78px_78px_78px_78px] items-center gap-1.5 border-b border-border/20 py-0.5 last:border-b-0">
+              <div className="min-w-0 pr-1">
                 <div className="truncate text-[12px] font-medium text-fg">{label}</div>
-                <div className="truncate text-[10px] text-fg-subtle">{index === 0 ? "Primary" : `Agent ${index + 1}`}</div>
               </div>
 
               <label className="block">

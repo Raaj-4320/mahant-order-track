@@ -73,7 +73,7 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
   }, [selectedLabel, draft.paymentAgentSnapshot?.name, draft.paymentByName, draft.paymentAgentName, draft.paymentBy, paymentOpen]);
 
   return (
-    <div className="flex min-h-0 flex-col gap-2 px-3 py-2">
+    <div className="flex flex-col gap-1.5 px-3 py-1.5">
       {showOrderInfo ? (
         <section className="card p-3.5">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-[minmax(180px,0.7fr)_minmax(145px,0.55fr)_minmax(145px,0.55fr)_minmax(150px,0.55fr)_minmax(180px,0.7fr)]">
@@ -157,8 +157,8 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
         </section>
       ) : null}
 
-      <section className={showOrderInfo ? "card overflow-visible" : "min-h-0 overflow-visible"}>
-        <div className="overflow-x-auto overflow-y-visible px-1 py-0.5">
+      <section className={showOrderInfo ? "card overflow-visible" : "overflow-visible"}>
+        <div className={showOrderInfo ? "overflow-x-auto overflow-y-visible px-1 py-0.5" : "max-h-[48vh] overflow-x-auto overflow-y-auto px-1 py-0.5"}>
           <div className="flex justify-end px-1 pb-0.5 text-[10.5px] text-fg-subtle">{draft.lines.length} line{draft.lines.length === 1 ? "" : "s"}</div>
           <div className="min-w-[960px]">
             <div className={`${LINE_GRID} border-b border-border/60 px-1.5 py-1 text-[11px] font-medium uppercase tracking-wide text-fg-subtle`}>
@@ -196,7 +196,7 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
 
             <button
               onClick={addLine}
-              className="mt-1 w-full rounded-md border border-dashed border-border/70 bg-transparent py-1.5 text-[12px] text-fg-muted transition-colors hover:bg-bg-subtle hover:text-fg flex items-center justify-center gap-1.5"
+              className="mt-0.5 flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border/70 bg-transparent py-1.5 text-[12px] text-fg-muted transition-colors hover:bg-bg-subtle hover:text-fg"
             >
               <Plus size={14} />
               Add New Line

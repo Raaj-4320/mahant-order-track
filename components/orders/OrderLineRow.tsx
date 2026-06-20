@@ -25,7 +25,7 @@ type Props = {
 
 // Columns: pic+dim | product | marka | details | ctns | pcs/ctn | total pcs | rmb/pcs | line total | customer | action
 export const LINE_GRID =
-  "grid grid-cols-[64px_64px_minmax(0,0.58fr)_minmax(0,0.62fr)_54px_72px_58px_72px_112px_minmax(0,0.48fr)_24px] items-center gap-1";
+  "grid grid-cols-[58px_58px_minmax(0,0.56fr)_minmax(0,0.64fr)_52px_68px_56px_68px_112px_minmax(0,0.52fr)_22px] items-center gap-1";
 
 export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, customerSuggestions = [], customers = [], onPreviewImage, onCustomerValidityChange }: Props) {
   const pcs = lineTotalPcs(line);
@@ -92,7 +92,7 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
 
   return (
     <div
-      className={`${LINE_GRID} rounded-md px-1.5 py-1 text-[12.75px] transition-colors hover:bg-bg-subtle/40`}
+      className={`${LINE_GRID} rounded-md px-1 py-0.5 text-[12.5px] transition-colors hover:bg-bg-subtle/35`}
     >
       <PhotoUpload
         compact
@@ -168,7 +168,7 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
         onWheel={(e) => (e.currentTarget as HTMLInputElement).blur()}
       />
 
-      <div className="rounded-md border border-border/50 bg-bg-subtle/60 px-1.5 py-1 text-center tabular-nums leading-tight text-[13px] font-semibold">
+      <div className="rounded-md border border-border/40 bg-bg-subtle/55 px-1.5 py-0.5 text-center tabular-nums leading-tight text-[13px] font-semibold">
         <span className={totalRmb > 0 ? "text-fg" : "text-[var(--danger)]"}>{formatWholeMoney(totalRmb)}</span>
       </div>
 

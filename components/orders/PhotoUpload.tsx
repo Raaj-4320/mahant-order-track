@@ -128,7 +128,7 @@ export function PhotoUpload({
     }
   };
 
-  const boxClasses = compact ? "h-[60px] w-full max-w-[64px] rounded-md" : "h-[72px] w-full max-w-[110px] rounded-lg";
+  const boxClasses = compact ? "h-[56px] w-full max-w-[58px] rounded-md" : "h-[72px] w-full max-w-[110px] rounded-lg";
 
   useEffect(() => () => { clearLocalPreview(); }, []);
 
@@ -161,7 +161,7 @@ export function PhotoUpload({
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
         className={cn(
-          "group relative grid cursor-default place-items-center overflow-hidden border border-dashed border-border bg-bg-subtle text-fg-subtle transition-all",
+          "group relative grid cursor-default place-items-center overflow-hidden border border-dashed border-border/70 bg-bg-subtle/80 text-fg-subtle transition-all",
           boxClasses,
           "hover:border-fg-subtle hover:bg-bg",
           (dragOver || focused) && "border-fg ring-2 ring-fg/15",
