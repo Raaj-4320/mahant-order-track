@@ -60,8 +60,8 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
 
   const buildLineCopyText = (line: Order["lines"][number]) => {
     const qtyPerCtn = line.pcsPerCtn || 0;
-    const markaTitle = line.marka?.trim() || "—";
-    return `外套编织袋唛头一 正一侧唛头如下:\n\n${markaTitle}\n\nQty/Ctn - ${qtyPerCtn} PCS\n\nGW: 待填\n\nMEAS: 待填\n\n(${orderNo || "—"})`;
+    const markaTitle = line.marka?.trim() || "-";
+    return `外套编织袋唛头一 正一侧唛头如下:\n\n${markaTitle}\n\nQTY - ${qtyPerCtn} PCS\n\nGW :填毛重\n\nMEAS:填外箱尺寸\n\n(${orderNo || "-"})`;
   };
 
   const copyText = async (text: string, key: string) => {
