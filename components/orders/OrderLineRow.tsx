@@ -3,7 +3,7 @@
 import { Trash2 } from "lucide-react";
 import { Customer, OrderLine, lineTotalPcs, lineTotalRmb } from "@/lib/types";
 import { Input } from "@/components/ui/Input";
-import { applyTypedCustomerToLine, CUSTOMER_NOT_LINKED, findCustomerByTypedName } from "@/services/customers/customerResolution";
+import { applyTypedCustomerToLine, findCustomerByTypedName } from "@/services/customers/customerResolution";
 import { PhotoUpload } from "./PhotoUpload";
 import { useEffect, useMemo, useState } from "react";
 import { getLineDetailsParts } from "@/lib/orderLineDetails";
@@ -66,11 +66,11 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
   useEffect(() => {
     if (!onCustomerValidityChange) return;
     const trimmed = customerInput.trim();
-    if (!trimmed || trimmed === CUSTOMER_NOT_LINKED || matchedTypedCustomer || trimmed === currentCustomerLabel.trim()) {
+    if (!trimmed || matchedTypedCustomer || trimmed === currentCustomerLabel.trim()) {
       onCustomerValidityChange(line.id, null);
       return;
     }
-    onCustomerValidityChange(line.id, "Choose a valid customer.");
+    onCustomerValidityChange(line.id, null);
   }, [customerInput, matchedTypedCustomer, currentCustomerLabel, line.id, onCustomerValidityChange]);
 
   const handleDecimalInput = (nextValue: string, commit: (value: number) => void, setValue: (value: string) => void) => {
@@ -87,12 +87,6 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
   const applyCustomerSelection = (name: string) => {
     onChange(applyTypedCustomerToLine(line, name, customers));
     setCustomerInput(name);
-    setCustomerOpen(false);
-  };
-
-  const clearCustomerSelection = () => {
-    onChange({ customerId: "", customerName: "", customerSnapshot: undefined });
-    setCustomerInput(CUSTOMER_NOT_LINKED);
     setCustomerOpen(false);
   };
 
@@ -178,7 +172,7 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
         <span className={totalRmb > 0 ? "text-fg" : "text-[var(--danger)]"}>{formatWholeMoney(totalRmb)}</span>
       </div>
 
-      <div className="relative">
+      <div className="relative z-30">
         <Input
           compact
           value={customerInput}
@@ -186,40 +180,29 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
           onFocus={() => setCustomerOpen(true)}
           onBlur={() => window.setTimeout(() => {
             setCustomerOpen(false);
-            if (!customerInput.trim() && line.customerId?.trim()) {
-              setCustomerInput(currentCustomerLabel);
-            }
           }, 120)}
           onChange={(e) => {
             const nextValue = e.target.value;
             setCustomerInput(nextValue);
-            const matched = findCustomerByTypedName(customers, nextValue);
-            if (matched) {
-              onChange(applyTypedCustomerToLine(line, matched.name, customers));
+            if (!nextValue.trim()) {
+              onChange({ customerId: "", customerName: "", customerSnapshot: undefined });
+              setCustomerOpen(true);
+              return;
             }
+            onChange(applyTypedCustomerToLine(line, nextValue, customers));
             setCustomerOpen(true);
           }}
           placeholder="Customer"
         />
-        {customerOpen && (topCustomerSuggestions.length > 0 || customerInput.trim().length === 0) ? (
-          <div className="absolute z-20 mt-1 w-full rounded-lg border border-border bg-bg-card shadow-card">
-            <div className="border-b border-border/70 px-2 py-1">
-              <button
-                type="button"
-                className="block w-full rounded-md px-1 py-1 text-left text-[11.5px] font-medium text-[var(--danger)] transition-colors hover:bg-[var(--danger)]/10"
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  clearCustomerSelection();
-                }}
-              >
-                Clear customer
-              </button>
-            </div>
-            {topCustomerSuggestions.map((name) => (
+        {customerOpen ? (
+          <div className="absolute left-0 top-full z-50 mt-1 max-h-44 w-full overflow-auto rounded-xl border border-black/10 bg-white shadow-[0_12px_30px_rgba(15,23,42,0.12)]">
+            {topCustomerSuggestions.length === 0 ? (
+              <div className="px-3 py-2 text-[11.5px] text-slate-500">No matching customer</div>
+            ) : topCustomerSuggestions.map((name) => (
               <button
                 key={name}
                 type="button"
-                className={cn("block w-full px-2 py-1 text-left text-[12px] transition-colors hover:bg-bg-subtle", matchedTypedCustomer?.name === name ? "bg-bg-subtle" : "text-fg")}
+                className={cn("block w-full px-3 py-2 text-left text-[12.5px] transition-colors hover:bg-slate-50", matchedTypedCustomer?.name === name ? "bg-slate-50 text-slate-900" : "text-slate-700")}
                 onMouseDown={(e) => {
                   e.preventDefault();
                   applyCustomerSelection(name);

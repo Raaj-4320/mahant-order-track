@@ -24,6 +24,7 @@ import { orderLifecycleService } from "@/services/orderLifecycleService";
 import { measurePerfSync } from "@/lib/perfDebug";
 
 const PAGE_SIZE = 100;
+const CUSTOMER_DELETE_AUDIT_ENABLED = process.env.NODE_ENV !== "production";
 
 type CustomerLedgerRow = {
   customerId: string;
@@ -80,6 +81,15 @@ const sortLedgerRowsNewestFirst = (rows: CustomerLedgerRow[]) =>
   });
 
 const formatTotalAmount = (value: number) => formatWholeMoney(value);
+const isActiveCustomer = (customer: Customer) => customer.status !== "inactive" && customer.lifecycle?.status !== "deleted";
+
+const logCustomerDeleteAudit = (payload: Record<string, unknown>) => {
+  if (!CUSTOMER_DELETE_AUDIT_ENABLED) return;
+  console.log("[customer-delete-audit]", JSON.stringify({
+    timestamp: new Date().toISOString(),
+    ...payload,
+  }, null, 2));
+};
 
 export default function CustomersPage() {
   const { data: customers, isLoading, error, reload: reloadCustomers } = useCustomers();
@@ -99,7 +109,9 @@ export default function CustomersPage() {
   const [deleteBusy, setDeleteBusy] = useState(false);
 
   const summaries = useMemo(() => {
-    return measurePerfSync("calc", "customersPage.summaries", { customersCount: customers.length, ordersCount: orders.length }, () => customers.map((customer) => {
+    return measurePerfSync("calc", "customersPage.summaries", { customersCount: customers.length, ordersCount: orders.length }, () => customers
+      .filter(isActiveCustomer)
+      .map((customer) => {
       const ledgerRows = sortLedgerRowsNewestFirst(
         orders.flatMap((order) =>
           order.lines
@@ -342,18 +354,68 @@ export default function CustomersPage() {
 
   const removeCustomer = async () => {
     if (!pendingDeleteCustomer || deleteBusy) return;
+    logCustomerDeleteAudit({
+      step: "confirm-delete-clicked",
+      customerId: pendingDeleteCustomer.id,
+      customerName: pendingDeleteCustomer.displayName || pendingDeleteCustomer.name || pendingDeleteCustomer.id,
+      customerSource: pendingDeleteCustomer.source || "manual",
+      lifecycleStatus: pendingDeleteCustomer.lifecycle?.status || "active",
+      createdByOrder: pendingDeleteCustomer.lifecycle?.createdByOrder ?? false,
+    });
     setDeleteBusy(true);
     try {
-      await orderLifecycleService.safeDeleteCustomer(pendingDeleteCustomer.id, "customers-page");
-      await reloadCustomers();
+      const recycleEntry = await orderLifecycleService.safeDeleteCustomer(pendingDeleteCustomer.id, "customers-page");
+      const refreshedCustomers = await reloadCustomers();
+      if (!refreshedCustomers) {
+        throw new Error("Customer recycle succeeded, but refreshing the customers list failed.");
+      }
+      const stillVisible = refreshedCustomers.some((customer) => customer.id === pendingDeleteCustomer.id && isActiveCustomer(customer));
+      if (stillVisible) {
+        throw new Error("Customer recycle completed in service, but the active customers list did not update.");
+      }
+      logCustomerDeleteAudit({
+        step: "delete-success",
+        customerId: pendingDeleteCustomer.id,
+        customerName: pendingDeleteCustomer.displayName || pendingDeleteCustomer.name || pendingDeleteCustomer.id,
+        customerSource: pendingDeleteCustomer.source || "manual",
+        lifecycleStatus: "deleted",
+        createdByOrder: pendingDeleteCustomer.lifecycle?.createdByOrder ?? false,
+        decision: "allow",
+        reason: "customer_moved_to_recycle_bin",
+        recycleEntryId: recycleEntry?.id || null,
+      });
       pushToast({ tone: "success", text: "Customer moved to Recycle Bin." });
       setPendingDeleteCustomer(null);
     } catch (error) {
+      logCustomerDeleteAudit({
+        step: "delete-failure",
+        customerId: pendingDeleteCustomer.id,
+        customerName: pendingDeleteCustomer.displayName || pendingDeleteCustomer.name || pendingDeleteCustomer.id,
+        customerSource: pendingDeleteCustomer.source || "manual",
+        lifecycleStatus: pendingDeleteCustomer.lifecycle?.status || "active",
+        createdByOrder: pendingDeleteCustomer.lifecycle?.createdByOrder ?? false,
+        decision: "block",
+        reason: error instanceof Error ? error.message : "Could not delete customer.",
+      });
       pushToast({ tone: "danger", text: error instanceof Error ? error.message : "Could not delete customer." });
     } finally {
       setDeleteBusy(false);
     }
   };
+
+  useEffect(() => {
+    if (!pendingDeleteCustomer) return;
+    logCustomerDeleteAudit({
+      step: "before-confirmation-modal-opens",
+      customerId: pendingDeleteCustomer.id,
+      customerName: pendingDeleteCustomer.displayName || pendingDeleteCustomer.name || pendingDeleteCustomer.id,
+      customerSource: pendingDeleteCustomer.source || "manual",
+      lifecycleStatus: pendingDeleteCustomer.lifecycle?.status || "active",
+      createdByOrder: pendingDeleteCustomer.lifecycle?.createdByOrder ?? false,
+      decision: "allow",
+      reason: "confirmation_modal_opened",
+    });
+  }, [pendingDeleteCustomer]);
 
   return (
     <div className="flex h-screen min-h-0 flex-col">
@@ -457,7 +519,17 @@ export default function CustomersPage() {
                               title="Delete Customer"
                               aria-label="Delete Customer"
                               className="grid h-8 w-8 place-items-center rounded-md border border-border bg-bg-card text-[var(--danger)] transition-colors hover:bg-[var(--danger)]/10"
-                              onClick={() => setPendingDeleteCustomer(row.customer)}
+                              onClick={() => {
+                                logCustomerDeleteAudit({
+                                  step: "delete-button-clicked",
+                                  customerId: row.customer.id,
+                                  customerName: row.customer.displayName || row.customer.name || row.customer.id,
+                                  customerSource: row.customer.source || "manual",
+                                  lifecycleStatus: row.customer.lifecycle?.status || "active",
+                                  createdByOrder: row.customer.lifecycle?.createdByOrder ?? false,
+                                });
+                                setPendingDeleteCustomer(row.customer);
+                              }}
                             >
                               <Trash2 size={15} />
                             </button>

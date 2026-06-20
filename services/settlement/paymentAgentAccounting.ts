@@ -1,10 +1,12 @@
 import { orderTotal, type Customer, type Order, type PaymentAgent, type PaymentAgentLedgerEntry } from "@/lib/types";
 import { getLineCustomerDisplay } from "@/services/customers/customerResolution";
 import { measurePerfSync } from "@/lib/perfDebug";
+import { isPaymentAgentActive, resolveOrderPaymentAgentMatch } from "@/lib/orderDisplay";
 
 const clamp = (value: number) => Math.max(0, Number.isFinite(value) ? value : 0);
-const normalize = (value?: string | null) => (value || "").trim().toLowerCase();
 const entryTime = (entry: PaymentAgentLedgerEntry) => entry.paymentDate || entry.updatedAt || entry.createdAt || "";
+const PAYMENT_AGENT_ACCOUNTING_AUDIT_ENABLED = process.env.NODE_ENV !== "production";
+const warnedAccountingKeys = new Set<string>();
 
 export type PaymentAgentAccountingTransactionType =
   | "Advance Given"
@@ -110,19 +112,27 @@ const getOrderCustomerSummary = (order?: Order | null, customers: Customer[] = [
   return names.length > 0 ? names.join(", ") : "—";
 };
 
+const warnAccounting = (key: string, message: string, meta: Record<string, unknown>) => {
+  if (!PAYMENT_AGENT_ACCOUNTING_AUDIT_ENABLED) return;
+  if (warnedAccountingKeys.has(key)) return;
+  warnedAccountingKeys.add(key);
+  console.warn(`[PaymentAgent Accounting Audit] ${message}`, meta);
+};
+
 export const isOrderMatchedToPaymentAgent = (order: Order, agent: PaymentAgent) => {
-  const agentName = normalize(agent.name);
-  const references = [
-    order.paymentAgentId,
-    order.paymentAgentSnapshot?.id,
-    order.paymentBy,
-    order.paymentAgentSnapshot?.name,
-    (order as Order & { paymentByName?: string }).paymentByName,
-    (order as Order & { paymentAgentName?: string }).paymentAgentName,
-  ]
-    .filter(Boolean)
-    .map((value) => String(value).trim());
-  return references.includes(agent.id) || references.some((value) => normalize(value) === agentName);
+  const resolution = resolveOrderPaymentAgentMatch(order, [agent]);
+  if (resolution.agent?.id === agent.id) {
+    if (resolution.isLegacyNameFallback) {
+      warnAccounting(
+        `legacy-name-fallback:${order.id}:${agent.id}`,
+        "Legacy payment-agent name fallback matched an order during accounting summary.",
+        { orderId: order.id, paymentAgentId: agent.id, orderNumber: order.number || order.orderNumber || "" },
+      );
+    }
+    return true;
+  }
+  if (resolution.matchType === "blocked" || !isPaymentAgentActive(agent)) return false;
+  return false;
 };
 
 export const buildPaymentAgentAccountingSummary = (
@@ -143,8 +153,25 @@ export const buildPaymentAgentAccountingSummary = (
     return byAgentId || byOrderId || byOrderNumber;
   });
 
+  const activeSettlementSourceEntries = matchedEntries.filter((entry) => entry.type === "order_settlement" && isEntryActive(entry));
+  const activeSettlementGroups = new Map<string, PaymentAgentLedgerEntry[]>();
+  activeSettlementSourceEntries.forEach((entry) => {
+    const key = entry.sourceOrderId || entry.sourceOrderNumber || entry.id;
+    const existing = activeSettlementGroups.get(key) ?? [];
+    existing.push(entry);
+    activeSettlementGroups.set(key, existing);
+  });
+  activeSettlementGroups.forEach((group, key) => {
+    if (group.length > 1) {
+      warnAccounting(
+        `multiple-active-settlements:${agent.id}:${key}`,
+        "Multiple active settlement entries exist for one order.",
+        { paymentAgentId: agent.id, settlementKey: key, entryIds: group.map((entry) => entry.id) },
+      );
+    }
+  });
   const activeSettlementEntries = pickLatestByKey(
-    matchedEntries.filter((entry) => entry.type === "order_settlement" && isEntryActive(entry)),
+    activeSettlementSourceEntries,
     (entry) => entry.sourceOrderId || entry.sourceOrderNumber || entry.id,
   );
 
@@ -180,12 +207,65 @@ export const buildPaymentAgentAccountingSummary = (
   const paymentApplied = activePaymentEntries.reduce((sum, entry) => sum + clamp(entry.dueReduced ?? 0), 0);
   const duePending = Math.max(0, grossDue - paymentApplied);
   const paymentsMade = activePaymentEntries.filter((entry) => entry.type === "agent_payment").reduce((sum, entry) => sum + clamp(entry.amount), 0);
+  const settlementPaidNowTotal = netSettlementEntries.reduce((sum, entry) => sum + clamp(entry.paidNow ?? 0), 0);
+  const derivedTotalPaidAmount = settlementPaidNowTotal + paymentsMade;
 
   const legacyCreditFallback =
     totalAdvanced === 0 && totalUsed === 0 && duePending === 0 && paymentApplied === 0
       ? clamp(agent.creditBalance ?? 0)
       : 0;
   const creditLeft = legacyCreditFallback > 0 ? legacyCreditFallback : Math.max(0, totalAdvanced - totalUsed);
+
+  matchedOrders.forEach((order) => {
+    const settlement = order.paymentAgentSettlementSnapshot;
+    if (!settlement) return;
+    const activeSettlement = activeSettlementEntries.find((entry) =>
+      (entry.sourceOrderId && entry.sourceOrderId === order.id)
+      || (entry.sourceOrderNumber && entry.sourceOrderNumber === (order.number || order.orderNumber))
+    );
+    if (!activeSettlement) return;
+    const snapshotMismatch =
+      clamp(settlement.orderTotal || orderTotal(order)) !== clamp(activeSettlement.amount)
+      || clamp(settlement.creditUsed || 0) !== clamp(activeSettlement.creditUsed ?? 0)
+      || clamp(settlement.paidNow || 0) !== clamp(activeSettlement.paidNow ?? 0)
+      || clamp(settlement.remainingPayable || 0) !== clamp(activeSettlement.remainingPayable ?? 0)
+      || clamp(settlement.newCreditCreated || 0) !== clamp(activeSettlement.newCreditCreated ?? 0)
+      || clamp(settlement.resultingCreditBalance || 0) !== clamp(activeSettlement.resultingCreditBalance ?? 0);
+    if (snapshotMismatch) {
+      warnAccounting(
+        `snapshot-drift:${agent.id}:${order.id}`,
+        "Order payment-agent settlement snapshot differs from the latest active settlement entry.",
+        { paymentAgentId: agent.id, orderId: order.id, settlementEntryId: activeSettlement.id },
+      );
+    }
+  });
+
+  if (
+    clamp(agent.creditBalance ?? 0) !== clamp(creditLeft)
+    || clamp(agent.currentDuePayable ?? 0) !== clamp(duePending)
+    || clamp(agent.totalOrderAmount ?? 0) !== clamp(totalOrderAmount)
+    || clamp(agent.totalPaidAmount ?? 0) !== clamp(derivedTotalPaidAmount)
+  ) {
+    warnAccounting(
+      `aggregate-drift:${agent.id}`,
+      "Payment-agent aggregate fields differ from ledger-derived totals.",
+      {
+        paymentAgentId: agent.id,
+        aggregate: {
+          creditBalance: clamp(agent.creditBalance ?? 0),
+          currentDuePayable: clamp(agent.currentDuePayable ?? 0),
+          totalOrderAmount: clamp(agent.totalOrderAmount ?? 0),
+          totalPaidAmount: clamp(agent.totalPaidAmount ?? 0),
+        },
+        derived: {
+          creditLeft: clamp(creditLeft),
+          duePending: clamp(duePending),
+          totalOrderAmount: clamp(totalOrderAmount),
+          totalPaidAmount: clamp(derivedTotalPaidAmount),
+        },
+      },
+    );
+  }
 
   return {
     agent,

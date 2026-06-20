@@ -14,12 +14,20 @@ export function useCustomers() {
     try {
       const rows = await measurePerfAsync("reload", "useCustomers.reload", undefined, () => service.listCustomers());
       setData(rows);
-} catch (e) {
+      return rows;
+    } catch (e) {
       const message = e instanceof Error ? e.message : "Failed to load customers";
       setError(message);
+      return null;
 } finally { setIsLoading(false); }
   }, [service]);
   useEffect(() => { reload(); }, [reload]);
+  const upsertCustomer = useCallback(async (customer: Customer) => {
+    if (!service.upsertCustomer) throw new Error("Customer create/update flow is not enabled for this data source.");
+    const saved = await service.upsertCustomer(customer);
+    setData((prev) => (prev.some((entry) => entry.id === saved.id) ? prev.map((entry) => (entry.id === saved.id ? saved : entry)) : [saved, ...prev]));
+    return saved;
+  }, [service]);
   const recordPaymentToCustomer = useCallback(async (customerId: string, input: { amount: number; paymentDate?: string; note?: string }) => {
     if (!service.recordPaymentToCustomer) throw new Error("Customer payment flow is not enabled for this data source.");
     const updated = await service.recordPaymentToCustomer(customerId, input);
@@ -31,6 +39,6 @@ export function useCustomers() {
     await service.deleteCustomer(customerId);
     await reload();
   }, [service, reload]);
-  return { data, isLoading, error, isEmpty: !isLoading && data.length === 0, reload, recordPaymentToCustomer, deleteCustomer };
+  return { data, isLoading, error, isEmpty: !isLoading && data.length === 0, reload, upsertCustomer, recordPaymentToCustomer, deleteCustomer };
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarDays, ChevronLeft, ChevronRight, ChevronDown } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatIndianDate } from "@/lib/dateFormat";
 import { cn } from "@/lib/cn";
@@ -107,9 +107,8 @@ setOpen(false);
           buttonClassName
         )}
       >
-        <CalendarDays size={11} className="text-fg-subtle" />
         <span>{label}</span>
-        <ChevronDown size={11} className={cn("text-fg-subtle transition-transform", open && "rotate-180")} />
+        {compact ? null : <ChevronDown size={11} className={cn("text-fg-subtle transition-transform", open && "rotate-180")} />}
       </button>
       <FloatingPortal anchorRef={rootRef as any} open={open && !disabled} width={portalWidth}>
         <div className="rounded-xl border border-border bg-bg-card p-2 shadow-card">
@@ -197,4 +196,3 @@ onChange(undefined);
     </div>
   );
 }
-

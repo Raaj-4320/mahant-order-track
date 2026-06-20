@@ -7,6 +7,7 @@ import { getPaymentAgentsService } from "@/services/paymentAgentsService";
 import { getOrdersService } from "@/services/ordersService";
 import { customerLedgerService } from "@/services/customerLedgerService";
 import { customersDataSourceSelection, ordersDataSourceSelection } from "@/lib/runtimeConfig";
+import { getOrderPaymentAgentLedgerEntryIds, getOrderPaymentAgentLinkedAgentIds } from "@/services/settlement/paymentAgentSplits";
 
 const RECYCLE_BIN_PREFIX = "recycle";
 
@@ -65,6 +66,15 @@ const markRecycleEntryRestored = async (entryId: string, existing: RecycleBinEnt
 };
 
 const createReferenceSnapshotLabel = (record: ReferenceRecord) => `${record.type}: ${record.value}`;
+const CUSTOMER_DELETE_AUDIT_ENABLED = process.env.NODE_ENV !== "production";
+
+const logCustomerDeleteAudit = (payload: Record<string, unknown>) => {
+  if (!CUSTOMER_DELETE_AUDIT_ENABLED) return;
+  console.log("[customer-delete-audit]", JSON.stringify({
+    timestamp: new Date().toISOString(),
+    ...payload,
+  }, null, 2));
+};
 
 const orderUsesReference = (order: Order, type: ReferenceRecordType, value: string) => {
   const normalized = value.trim().toLowerCase();
@@ -95,7 +105,9 @@ export const orderLifecycleService = {
 
     const createdProductIds = order.lines.map((line) => `order-line-${order.id}-${line.id}`);
     const createdCustomerIds = unique(order.lines.map((line) => line.customerId).filter((id) => id && !context.knownCustomerIds.has(id)));
-    const createdPaymentAgentIds = order.paymentAgentId && !context.knownPaymentAgentIds.has(order.paymentAgentId) ? [order.paymentAgentId] : [];
+    const linkedPaymentAgentIds = getOrderPaymentAgentLinkedAgentIds(order);
+    const createdPaymentAgentIds = linkedPaymentAgentIds.filter((id) => !context.knownPaymentAgentIds.has(id));
+    const paymentAgentLedgerEntryIds = getOrderPaymentAgentLedgerEntryIds(order);
 
     const orderNumberRef = (order.number || order.orderNumber || "").trim()
       ? await referenceService.ensureReferenceRecord({ type: "orderNumber", value: order.number || order.orderNumber, sourceOrderId: order.id, lifecycle: { sourceType: "order", createdByOrder: true, reusable: false } })
@@ -128,7 +140,7 @@ export const orderLifecycleService = {
           reusable: false,
           deletedAt: undefined,
           linkedCustomerIds: unique(order.lines.map((line) => line.customerId)),
-          linkedPaymentAgentIds: unique([order.paymentAgentId || order.paymentBy]),
+          linkedPaymentAgentIds,
           linkedWechatIds: wechatRef ? [wechatRef.record.id] : [],
           linkedReferenceIds: unique([
             ...(orderNumberRef ? [orderNumberRef.record.id] : []),
@@ -170,7 +182,7 @@ export const orderLifecycleService = {
           createdByOrder: true,
           reusable: false,
           deletedAt: undefined,
-          linkedLedgerEntryIds: order.paymentAgentId ? [`order-settlement-${order.id}`] : [],
+          linkedLedgerEntryIds: paymentAgentLedgerEntryIds,
         }),
       });
     }
@@ -185,9 +197,9 @@ export const orderLifecycleService = {
       linkedDetailReferenceIds: detailRefs.map((item) => item.record.id),
       linkedOrderNumberReferenceIds: orderNumberRef ? [orderNumberRef.record.id] : [],
       customerLedgerEntryIds: order.lines.filter((line) => line.customerId).map((line) => `customer-receivable-${order.id}-${line.id}`),
-      paymentAgentLedgerEntryIds: order.paymentAgentId ? [`order-settlement-${order.id}`] : [],
+      paymentAgentLedgerEntryIds,
       affectedCustomerIds: unique(order.lines.map((line) => line.customerId)),
-      affectedPaymentAgentIds: unique([order.paymentAgentId || order.paymentBy]),
+      affectedPaymentAgentIds: linkedPaymentAgentIds,
     } as OrderDependencyMap;
 
     const nextOrder: Order = {
@@ -201,7 +213,7 @@ export const orderLifecycleService = {
         deletedAt: undefined,
         linkedProductIds: createdProductIds,
         linkedCustomerIds: createdCustomerIds,
-        linkedPaymentAgentIds: createdPaymentAgentIds,
+        linkedPaymentAgentIds,
         linkedWechatIds: wechatRef ? [wechatRef.record.id] : [],
         linkedReferenceIds: unique([
           ...(orderNumberRef ? [orderNumberRef.record.id] : []),
@@ -303,7 +315,7 @@ export const orderLifecycleService = {
     for (const agentId of dependencyMap?.createdPaymentAgentIds ?? []) {
       const agent = await paymentAgentsService.getPaymentAgentById(agentId);
       if (!agent) continue;
-      const stillUsed = activeOthers.some((activeOrder) => (activeOrder.paymentAgentId || activeOrder.paymentBy) === agentId);
+      const stillUsed = activeOthers.some((activeOrder) => getOrderPaymentAgentLinkedAgentIds(activeOrder).includes(agentId));
       if (stillUsed) continue;
       const recycleEntry = await createRecycleEntry({
         id: deterministicRecycleBinId("paymentAgent", agent.id),
@@ -674,37 +686,112 @@ export const orderLifecycleService = {
     if (!isFirebaseLifecycleEnabled()) return null;
     const customersService = getCustomersService();
     const ordersService = getOrdersService();
-    const customer = await customersService.getCustomerById(customerId);
-    if (!customer || !customersService.upsertCustomer) throw new Error("Customer not found.");
-    if (!customer.lifecycle?.createdByOrder) throw new Error("Only customers created from an order can be deleted from here.");
-    const activeOrders = (await ordersService.listOrders()).filter(isActiveOrder);
-    const inUse = activeOrders.some((order) => order.lines.some((line) => line.customerId === customerId));
-    if (inUse) throw new Error("Customer is still used by an active order and cannot be deleted.");
-    const recycleEntry = await createRecycleEntry({
-      id: deterministicRecycleBinId("customer", customer.id),
-      itemId: customer.id,
-      itemType: "customer",
-      label: customer.displayName || customer.name || customer.id,
-      originalReference: customer.customerCode || customer.id,
-      sourceOrderId: customer.lifecycle?.sourceOrderId,
-      snapshot: customer as unknown as Record<string, unknown>,
-      deletedAt: new Date().toISOString(),
-      deletedBy,
-      status: "deleted",
-    });
-    await customersService.upsertCustomer({
-      ...customer,
-      status: "inactive",
-      lifecycle: ensureLifecycle(customer.lifecycle, {
-        type: "customer",
-        status: "deleted",
-        sourceType: customer.lifecycle?.sourceType ?? "order",
-        deletedAt: recycleEntry.deletedAt,
+    try {
+      const customer = await customersService.getCustomerById(customerId);
+      if (!customer || !customersService.upsertCustomer) throw new Error("Customer not found.");
+      const allOrders = await ordersService.listOrders();
+      const relatedOrders = allOrders.filter((order) => order.lines.some((line) => line.customerId === customerId));
+      const activeOrders = relatedOrders.filter(isActiveOrder);
+      const archivedOrders = relatedOrders.filter((order) => order.status === "archived");
+      const recycledOrders = relatedOrders.filter((order) => order.lifecycle?.status === "deleted");
+      const deletedOrdersCount = Math.max(0, relatedOrders.length - activeOrders.length - archivedOrders.length - recycledOrders.length);
+      const blockingActiveOrderIds = activeOrders.map((order) => order.id);
+      const inUse = blockingActiveOrderIds.length > 0;
+
+      logCustomerDeleteAudit({
+        step: "safeDeleteCustomer-loaded-state",
+        customerId: customer.id,
+        customerName: customer.displayName || customer.name || customer.id,
+        customerSource: customer.source || "manual",
+        lifecycleStatus: customer.lifecycle?.status || "active",
+        createdByOrder: customer.lifecycle?.createdByOrder ?? false,
+        loadedOrdersCount: allOrders.length,
+        relatedOrdersCount: relatedOrders.length,
+        activeOrdersCount: activeOrders.length,
+        blockingActiveOrderIds,
+        deletedOrdersCount,
+        archivedOrdersCount: archivedOrders.length,
+        recycledOrdersCount: recycledOrders.length,
+        hasActiveReference: inUse,
+        decision: inUse ? "block" : "allow",
+        reason: inUse ? "active_order_reference_exists" : "no_active_order_references",
+      });
+
+      if (inUse) {
+        throw new Error("Customer is still used by an active order and cannot be deleted.");
+      }
+      const recycleEntry = await createRecycleEntry({
+        id: deterministicRecycleBinId("customer", customer.id),
+        itemId: customer.id,
+        itemType: "customer",
+        label: customer.displayName || customer.name || customer.id,
+        originalReference: customer.customerCode || customer.id,
+        sourceOrderId: customer.lifecycle?.sourceOrderId,
+        snapshot: customer as unknown as Record<string, unknown>,
+        deletedAt: new Date().toISOString(),
         deletedBy,
-        recycleBinEntryId: recycleEntry.id,
-      }),
-    });
-    return recycleEntry;
+        status: "deleted",
+      });
+
+      logCustomerDeleteAudit({
+        step: "safeDeleteCustomer-before-write",
+        customerId: customer.id,
+        customerName: customer.displayName || customer.name || customer.id,
+        customerSource: customer.source || "manual",
+        lifecycleStatus: customer.lifecycle?.status || "active",
+        createdByOrder: customer.lifecycle?.createdByOrder ?? false,
+        activeOrdersCount: activeOrders.length,
+        blockingActiveOrderIds,
+        deletedOrdersCount,
+        archivedOrdersCount: archivedOrders.length,
+        recycledOrdersCount: recycledOrders.length,
+        hasActiveReference: false,
+        decision: "allow",
+        reason: "writing_recycle_bin_and_customer_lifecycle",
+        recycleEntryId: recycleEntry.id,
+      });
+
+      const updatedCustomer = {
+        ...customer,
+        status: "inactive" as const,
+        lifecycle: ensureLifecycle(customer.lifecycle, {
+          type: "customer",
+          status: "deleted",
+          sourceType: customer.lifecycle?.sourceType ?? (customer.source === "order-line" ? "order" : "manual"),
+          deletedAt: recycleEntry.deletedAt,
+          deletedBy,
+          recycleBinEntryId: recycleEntry.id,
+        }),
+      };
+      await customersService.upsertCustomer(updatedCustomer);
+
+      logCustomerDeleteAudit({
+        step: "safeDeleteCustomer-success",
+        customerId: customer.id,
+        customerName: customer.displayName || customer.name || customer.id,
+        customerSource: customer.source || "manual",
+        lifecycleStatus: updatedCustomer.lifecycle?.status || "deleted",
+        createdByOrder: updatedCustomer.lifecycle?.createdByOrder ?? false,
+        activeOrdersCount: 0,
+        blockingActiveOrderIds: [],
+        deletedOrdersCount,
+        archivedOrdersCount: archivedOrders.length,
+        recycledOrdersCount: recycledOrders.length,
+        hasActiveReference: false,
+        decision: "allow",
+        reason: "customer_moved_to_recycle_bin",
+        recycleEntryId: recycleEntry.id,
+      });
+      return recycleEntry;
+    } catch (error) {
+      logCustomerDeleteAudit({
+        step: "safeDeleteCustomer-failure",
+        customerId,
+        decision: "block",
+        reason: error instanceof Error ? error.message : "Could not delete customer.",
+      });
+      throw error;
+    }
   },
 
   async safeDeletePaymentAgent(agentId: string, deletedBy = "system") {
@@ -715,7 +802,7 @@ export const orderLifecycleService = {
     if (!agent) throw new Error("Payment agent not found.");
     if (!agent.lifecycle?.createdByOrder) throw new Error("Only payment agents created from an order can be deleted from here.");
     const activeOrders = (await ordersService.listOrders()).filter(isActiveOrder);
-    const inUse = activeOrders.some((order) => (order.paymentAgentId || order.paymentBy) === agentId);
+    const inUse = activeOrders.some((order) => getOrderPaymentAgentLinkedAgentIds(order).includes(agentId));
     if (inUse) throw new Error("Payment agent is still used by an active order and cannot be deleted.");
     const recycleEntry = await createRecycleEntry({
       id: deterministicRecycleBinId("paymentAgent", agent.id),

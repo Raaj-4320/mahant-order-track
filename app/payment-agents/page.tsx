@@ -36,7 +36,7 @@ type LedgerViewRow = {
 
 export default function PaymentAgentsPage() {
   const PAGE_SIZE = 100;
-  const { data: agents, isLoading: isPaymentAgentsLoading, upsertPaymentAgent, deletePaymentAgent, recordPaymentToAgent, listPaymentAgentLedger } = usePaymentAgents();
+  const { data: agents, isLoading: isPaymentAgentsLoading, upsertPaymentAgent, deletePaymentAgent, recordPaymentToAgent, listPaymentAgentLedger, reload: reloadPaymentAgents } = usePaymentAgents();
   const { data: customers } = useCustomers();
   const { orders, pushToast } = useStore();
   const { data: firebaseOrders } = useOrders();
@@ -111,12 +111,16 @@ export default function PaymentAgentsPage() {
     });
     });
   }, [agents, ledgerRows, sourceOrders, customers]);
+  const visibleRows = useMemo(
+    () => rows.filter((row) => row.agent.status !== "inactive" && row.agent.lifecycle?.status !== "deleted"),
+    [rows],
+  );
 
   const filtered = useMemo(() => {
     const query = q.toLowerCase().trim();
-    if (!query) return rows;
-    return rows.filter((row) => row.searchText.includes(query));
-  }, [rows, q]);
+    if (!query) return visibleRows;
+    return visibleRows.filter((row) => row.searchText.includes(query));
+  }, [visibleRows, q]);
   const filteredAndSorted = useMemo(() => {
     return [...filtered].sort((left, right) => {
       if (sortBy === "orders") return right.totalOrders - left.totalOrders;
@@ -169,7 +173,7 @@ export default function PaymentAgentsPage() {
     logDataFlow("Payment Agents", {
       functionsCalled: ["usePaymentAgents.reload", "usePaymentAgents.listPaymentAgentLedger"],
       dbPaths: ["businesses/{businessId}/paymentAgents", "businesses/{businessId}/paymentAgentLedger"],
-      result: { count: rows.length, reachedComponent: true, renderedRows: filtered.length },
+      result: { count: visibleRows.length, reachedComponent: true, renderedRows: filtered.length },
       sampleAgents: filtered.slice(0, 5).map((row) => ({
         id: row.agent.id,
         name: row.agent.name,
@@ -178,7 +182,7 @@ export default function PaymentAgentsPage() {
         duePending: row.duePending,
       })),
     });
-  }, [filtered, isPaymentAgentsLoading, rows]);
+  }, [filtered, isPaymentAgentsLoading, visibleRows]);
 
   const buildLedgerTable = (agent: PaymentAgent) => {
     const summary = buildPaymentAgentAccountingSummary(agent, sourceOrders, ledgerRows[ALL_LEDGER_ROWS_KEY] || [], customers);
@@ -338,6 +342,7 @@ export default function PaymentAgentsPage() {
       const agent = agents.find((row) => row.id === deleteCtx.agentId) || null;
       if (agent?.lifecycle?.createdByOrder) {
         await orderLifecycleService.safeDeletePaymentAgent(deleteCtx.agentId, "payment-agents-page");
+        await reloadPaymentAgents();
         pushToast({ tone: "success", text: "Payment agent moved to Recycle Bin." });
       } else {
         await deletePaymentAgent(deleteCtx.agentId);

@@ -1,4 +1,4 @@
-import type { Customer, CustomerLedgerEntry, LifecycleMetadata, Order, OrderDependencyMap, PaymentAgent, PaymentAgentLedgerEntry, Product, RecycleBinEntry, ReferenceRecord, Supplier } from "@/lib/types";
+import type { Customer, CustomerLedgerEntry, LifecycleMetadata, Order, OrderDependencyMap, PaymentAgent, PaymentAgentLedgerEntry, PaymentAgentOrderSplit, Product, RecycleBinEntry, ReferenceRecord, Supplier } from "@/lib/types";
 import { seedDetailBoxesFromLegacy, withDerivedLegacyDetails } from "@/lib/orderLineDetails";
 
 const asNum = (v: unknown): number | undefined => {
@@ -70,6 +70,55 @@ const orderDependencyMapFromUnknown = (value: unknown): OrderDependencyMap | und
     affectedCustomerIds: asStringArray(raw.affectedCustomerIds) ?? [],
     affectedPaymentAgentIds: asStringArray(raw.affectedPaymentAgentIds) ?? [],
   };
+};
+
+const paymentAgentSplitSettlementSnapshotFromUnknown = (value: unknown): PaymentAgentOrderSplit["settlementSnapshot"] => {
+  const raw = asRecord(value);
+  if (!raw) return undefined;
+  return {
+    orderPortionTotal: asNum(raw.orderPortionTotal) ?? 0,
+    existingCredit: asNum(raw.existingCredit) ?? 0,
+    creditUsed: asNum(raw.creditUsed) ?? 0,
+    payableAfterCredit: asNum(raw.payableAfterCredit) ?? 0,
+    remainingPayable: asNum(raw.remainingPayable) ?? 0,
+    newCreditCreated: asNum(raw.newCreditCreated) ?? 0,
+    resultingCreditBalance: asNum(raw.resultingCreditBalance) ?? 0,
+    paidNow: asNum(raw.paidNow) ?? 0,
+    status: raw.status === "partial" || raw.status === "paid" || raw.status === "credit" ? raw.status : "unpaid",
+    createdAt: asStr(raw.createdAt) || undefined,
+    updatedAt: asStr(raw.updatedAt) || undefined,
+  };
+};
+
+const paymentAgentSplitsFromUnknown = (value: unknown): PaymentAgentOrderSplit[] | undefined => {
+  if (!Array.isArray(value)) return undefined;
+  return value
+    .map((item) => {
+      const raw = asRecord(item);
+      if (!raw) return null;
+      const id = asStr(raw.id);
+      if (!id) return null;
+      return {
+        id,
+        paymentAgentId: asStr(raw.paymentAgentId),
+        paymentBy: asStr(raw.paymentBy),
+        paymentAgentName: asStr(raw.paymentAgentName),
+        paymentAgentSnapshot: raw.paymentAgentSnapshot
+          ? {
+              id: asStr(asRecord(raw.paymentAgentSnapshot)?.id),
+              name: asStr(asRecord(raw.paymentAgentSnapshot)?.name),
+              code: asStr(asRecord(raw.paymentAgentSnapshot)?.code) || undefined,
+            }
+          : undefined,
+        assignedAmount: asNum(raw.assignedAmount) ?? 0,
+        paidNow: asNum(raw.paidNow),
+        note: asStr(raw.note) || undefined,
+        settlementSnapshot: paymentAgentSplitSettlementSnapshotFromUnknown(raw.settlementSnapshot),
+        createdAt: asStr(raw.createdAt) || undefined,
+        updatedAt: asStr(raw.updatedAt) || undefined,
+      } satisfies PaymentAgentOrderSplit;
+    })
+    .filter((split): split is PaymentAgentOrderSplit => Boolean(split));
 };
 
 
@@ -266,7 +315,7 @@ export const paymentAgentLedgerEntryFromFirestore = (doc: unknown): PaymentAgent
   const now = new Date().toISOString();
   return {
     id: asStr(e.id), agentId: asStr(e.agentId), type: (asStr(e.type) as PaymentAgentLedgerEntry["type"]) || "agent_payment",
-    sourceOrderId: asStr(e.sourceOrderId) || undefined, sourceOrderNumber: asStr(e.sourceOrderNumber) || undefined,
+    sourceOrderId: asStr(e.sourceOrderId) || undefined, sourceOrderNumber: asStr(e.sourceOrderNumber) || undefined, sourcePaymentAgentSplitId: asStr(e.sourcePaymentAgentSplitId) || undefined, settlementEntryKey: asStr(e.settlementEntryKey) || undefined,
     amount: asNum(e.amount) ?? 0, creditUsed: asNum(e.creditUsed), payableAfterCredit: asNum(e.payableAfterCredit), paidNow: asNum(e.paidNow), remainingPayable: asNum(e.remainingPayable), newCreditCreated: asNum(e.newCreditCreated), dueReduced: asNum(e.dueReduced), creditCreated: asNum(e.creditCreated), resultingCreditBalance: asNum(e.resultingCreditBalance), settlementHash: asStr(e.settlementHash) || undefined, isReversed: typeof e.isReversed === "boolean" ? e.isReversed : undefined, active: typeof e.active === "boolean" ? e.active : undefined, note: asStr(e.note) || undefined, paymentMethod: asStr(e.paymentMethod) || undefined, createdAt: asStr(e.createdAt, now), updatedAt: asStr(e.updatedAt) || undefined, paymentDate: asStr(e.paymentDate) || undefined, reversalOfId: asStr(e.reversalOfId) || undefined, lifecycle: lifecycleFromUnknown(e.lifecycle, { type: "paymentAgentLedger", sourceType: "system" })
   };
 };
@@ -274,6 +323,8 @@ export const paymentAgentLedgerEntryToFirestore = (entity: PaymentAgentLedgerEnt
   ...entity,
   sourceOrderId: entity.sourceOrderId ?? null,
   sourceOrderNumber: entity.sourceOrderNumber ?? null,
+  sourcePaymentAgentSplitId: entity.sourcePaymentAgentSplitId ?? null,
+  settlementEntryKey: entity.settlementEntryKey ?? null,
   creditUsed: entity.creditUsed ?? null,
   payableAfterCredit: entity.payableAfterCredit ?? null,
   paidNow: entity.paidNow ?? null,
@@ -341,7 +392,7 @@ export const orderFromFirestore = (doc: unknown): Order => {
         });
       })
     : [];
-  return { ...(o as any), id: asStr(o.id), number: asStr(o.number) || asStr(o.orderNumber), orderNumber: asStr(o.orderNumber) || asStr(o.number), orderPrefix: asStr(o.orderPrefix) || undefined, orderSequenceNumber: asNum(o.orderSequenceNumber) ?? undefined, date: asStr(o.date), loadingDate: asStr(o.loadingDate) || undefined, wechatId: asStr(o.wechatId), status: (asStr(o.status) as Order["status"]) || "draft", paymentStatus: (asStr(o.paymentStatus) as Order["paymentStatus"]) || "pending", paymentBy: asStr(o.paymentBy), paymentAgentId: asStr(o.paymentAgentId), shippingPrice: asNum(o.shippingPrice) ?? 0, paidToPaymentAgentNow: asNum(o.paidToPaymentAgentNow) ?? 0, lines: lines as any, createdAt: asStr(o.createdAt, now), updatedAt: asStr(o.updatedAt, now), savedAt: asStr(o.savedAt) || undefined, draftAutosavedAt: asStr(o.draftAutosavedAt) || undefined, lastEditedAt: asStr(o.lastEditedAt) || undefined, lifecycle: lifecycleFromUnknown(o.lifecycle, { type: "order", sourceType: "manual" }), dependencyMap: orderDependencyMapFromUnknown(o.dependencyMap) } as Order;
+  return { ...(o as any), id: asStr(o.id), number: asStr(o.number) || asStr(o.orderNumber), orderNumber: asStr(o.orderNumber) || asStr(o.number), orderPrefix: asStr(o.orderPrefix) || undefined, orderSequenceNumber: asNum(o.orderSequenceNumber) ?? undefined, date: asStr(o.date), loadingDate: asStr(o.loadingDate) || undefined, wechatId: asStr(o.wechatId), status: (asStr(o.status) as Order["status"]) || "draft", paymentStatus: (asStr(o.paymentStatus) as Order["paymentStatus"]) || "pending", paymentBy: asStr(o.paymentBy), paymentAgentId: asStr(o.paymentAgentId), paymentAgentSplits: paymentAgentSplitsFromUnknown(o.paymentAgentSplits), shippingPrice: asNum(o.shippingPrice) ?? 0, paidToPaymentAgentNow: asNum(o.paidToPaymentAgentNow) ?? 0, lines: lines as any, createdAt: asStr(o.createdAt, now), updatedAt: asStr(o.updatedAt, now), savedAt: asStr(o.savedAt) || undefined, draftAutosavedAt: asStr(o.draftAutosavedAt) || undefined, lastEditedAt: asStr(o.lastEditedAt) || undefined, lifecycle: lifecycleFromUnknown(o.lifecycle, { type: "order", sourceType: "manual" }), dependencyMap: orderDependencyMapFromUnknown(o.dependencyMap) } as Order;
 };
 export const orderToFirestore = (entity: Order): Record<string, unknown> => sanitizeFirestorePayload({
   ...entity,
@@ -356,6 +407,38 @@ export const orderToFirestore = (entity: Order): Record<string, unknown> => sani
   paymentByName: entity.paymentByName ?? "",
   paymentAgentName: entity.paymentAgentName ?? "",
   paymentAgentSnapshot: entity.paymentAgentSnapshot ?? { id: "", name: "", code: "" },
+  ...(entity.paymentAgentSplits
+    ? {
+        paymentAgentSplits: entity.paymentAgentSplits.map((split) => ({
+          id: split.id ?? "",
+          paymentAgentId: split.paymentAgentId ?? "",
+          paymentBy: split.paymentBy ?? "",
+          paymentAgentName: split.paymentAgentName ?? "",
+          paymentAgentSnapshot: split.paymentAgentSnapshot ?? null,
+          assignedAmount: split.assignedAmount ?? 0,
+          paidNow: split.paidNow ?? null,
+          note: split.note ?? null,
+          settlementSnapshot: split.settlementSnapshot
+            ? {
+                ...split.settlementSnapshot,
+                orderPortionTotal: split.settlementSnapshot.orderPortionTotal ?? 0,
+                existingCredit: split.settlementSnapshot.existingCredit ?? 0,
+                creditUsed: split.settlementSnapshot.creditUsed ?? 0,
+                payableAfterCredit: split.settlementSnapshot.payableAfterCredit ?? 0,
+                remainingPayable: split.settlementSnapshot.remainingPayable ?? 0,
+                newCreditCreated: split.settlementSnapshot.newCreditCreated ?? 0,
+                resultingCreditBalance: split.settlementSnapshot.resultingCreditBalance ?? 0,
+                paidNow: split.settlementSnapshot.paidNow ?? 0,
+                status: split.settlementSnapshot.status ?? "unpaid",
+                createdAt: split.settlementSnapshot.createdAt ?? null,
+                updatedAt: split.settlementSnapshot.updatedAt ?? null,
+              }
+            : null,
+          createdAt: split.createdAt ?? null,
+          updatedAt: split.updatedAt ?? null,
+        })),
+      }
+    : {}),
   wechatId: entity.wechatId ?? "",
   paidToPaymentAgentNow: entity.paidToPaymentAgentNow ?? 0,
   paymentAgentSettlementSnapshot: entity.paymentAgentSettlementSnapshot

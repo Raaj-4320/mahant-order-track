@@ -36,7 +36,9 @@ export function findCustomerByTypedName(customers: Customer[], typedName: string
   return measurePerfSync("resolve", "customers.findCustomerByTypedName", { customersCount: customers.length }, () => {
     const normalized = normalizeCustomerName(typedName);
     if (!normalized) return null;
-    const sorted = [...customers].sort((a, b) => a.id.localeCompare(b.id));
+    const sorted = [...customers]
+      .filter((customer) => customer.status !== "inactive" && customer.lifecycle?.status !== "deleted")
+      .sort((a, b) => a.id.localeCompare(b.id));
     return sorted.find((c) => normalizeCustomerName(c.name || c.displayName || "") === normalized) ?? null;
   });
 }
@@ -48,7 +50,18 @@ export function applyTypedCustomerToLine(line: OrderLine, typedName: string, cus
   return { customerName: matched.name, customerId: matched.id, customerSnapshot: { id: matched.id, name: matched.name, code: matched.customerCode } };
 }
 
-export async function resolveCustomersForOrderLines(lines: OrderLine[], customers: Customer[], nowIso: string): Promise<OrderLine[]> {
+const customerIdentityPatch = (customer: Pick<Customer, "id" | "name" | "customerCode">): Pick<OrderLine, "customerId" | "customerName" | "customerSnapshot"> => ({
+  customerId: customer.id,
+  customerName: customer.name,
+  customerSnapshot: { id: customer.id, name: customer.name, code: customer.customerCode },
+});
+
+export async function resolveCustomersForOrderLines(
+  lines: OrderLine[],
+  customers: Customer[],
+  nowIso: string,
+  ensureCustomer?: (typedName: string) => Promise<Customer | null>,
+): Promise<OrderLine[]> {
 return measurePerfAsync("resolve", "customers.resolveCustomersForOrderLines", { lineCount: lines.length, customersCount: customers.length }, async () => {
 logCustomer("resolve_order_customers_start", { lineCount: lines.length, knownCustomers: customers.length });
   const existing = new Map<string, Customer>();
@@ -71,8 +84,17 @@ logCustomer("resolve_order_customers_start", { lineCount: lines.length, knownCus
     const hit = existing.get(normalized);
     if (hit) {
       logCustomer("ensure_customer_existing_found", { lineId: line.id, customerId: hit.id, normalized });
-      resolved.push({ ...line, customerId: hit.id, customerName: hit.name, customerSnapshot: { id: hit.id, name: hit.name, code: hit.customerCode } });
+      resolved.push({ ...line, ...customerIdentityPatch(hit) });
       continue;
+    }
+    if (ensureCustomer) {
+      const created = await ensureCustomer(typed);
+      if (created) {
+        existing.set(normalized, created);
+        logCustomer("ensure_customer_created", { lineId: line.id, customerId: created.id, normalized, nowIso });
+        resolved.push({ ...line, ...customerIdentityPatch(created) });
+        continue;
+      }
     }
     logCustomer("ensure_customer_blocked", { lineId: line.id, reason: "unmatched_name_requires_explicit_selection", typed, normalized, nowIso, generatedIdPreview: createCustomerIdFromName(typed) });
     throw new Error(`Line ${index + 1}: Choose a valid customer.`);

@@ -157,8 +157,8 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
         </section>
       ) : null}
 
-      <section className="card overflow-hidden">
-        <div className="px-2 py-1.5 overflow-x-auto">
+      <section className="card overflow-visible">
+        <div className="overflow-x-auto overflow-y-visible px-2 py-1.5">
           <div className="flex justify-end px-2 pb-1 text-[11px] text-fg-subtle">{draft.lines.length} line{draft.lines.length === 1 ? "" : "s"}</div>
           <div className="min-w-[960px]">
             <div className={`${LINE_GRID} border-b border-border px-2 py-1.5 text-[13px] font-medium uppercase tracking-wide text-fg-subtle`}>
