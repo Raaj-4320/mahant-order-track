@@ -4,10 +4,8 @@ import { useEffect, useState } from "react";
 import { PaymentAgentSplitsEditor } from "@/components/orders/PaymentAgentSplitsEditor";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
-import { formatAmount } from "@/lib/data";
 import { formatWholeMoney } from "@/lib/numbers";
 import type { PaymentAgent, PaymentAgentOrderSplit } from "@/lib/types";
-import type { PaymentAgentSettlementResult } from "@/services/settlement/paymentAgentSettlement";
 
 type Props = {
   lineTotal: number;
@@ -19,20 +17,13 @@ type Props = {
   saveDraftLabel?: string;
   disableSaveOrder?: boolean;
   disableSaveDraft?: boolean;
-  paymentAgent: PaymentAgent | null;
   paymentAgents: PaymentAgent[];
   paymentAgentSplits: PaymentAgentOrderSplit[];
   onPaymentAgentSplitsChange: (splits: PaymentAgentOrderSplit[]) => void;
-  onAddPaymentAgentSplit: () => void;
-  onRemovePaymentAgentSplit: (splitId: string) => void;
-  settlement: PaymentAgentSettlementResult;
-  paidNow: number;
-  onPaidNowChange: (value: number) => void;
   onViewDetails: () => void;
   onShippingPriceChange: (value: number) => void;
 };
 
-const fmt = (value: number) => formatAmount(value);
 const fmtFinal = (value: number) => formatWholeMoney(value);
 
 function Metric({
@@ -49,11 +40,11 @@ function Metric({
   const isZero = zeroDanger && value.replace(/,/g, "") === "0";
 
   return (
-    <div className="px-3 py-1.5">
+    <div className="px-2 py-1">
       <div className="text-[10px] uppercase tracking-wide text-fg-subtle">{label}</div>
       <div
         className={cn(
-          "text-[16px] font-semibold tabular-nums",
+          "text-[13px] font-semibold tabular-nums",
           isZero
             ? "text-[var(--danger)]"
             : tone === "success"
@@ -83,13 +74,9 @@ export function OrderFooter({
   saveDraftLabel = "Save as Draft",
   disableSaveOrder = false,
   disableSaveDraft = false,
-  paymentAgent,
   paymentAgents,
   paymentAgentSplits,
   onPaymentAgentSplitsChange,
-  onAddPaymentAgentSplit,
-  onRemovePaymentAgentSplit,
-  settlement,
   onViewDetails,
   onShippingPriceChange,
 }: Props) {
@@ -100,74 +87,56 @@ export function OrderFooter({
   }, [shippingPrice]);
 
   return (
-    <footer className="sticky bottom-0 z-20 border-t border-border bg-bg-card px-5 py-2.5">
-      <div className="rounded-xl border border-border bg-bg-subtle px-2 py-2">
-        <div className="space-y-3">
-          <PaymentAgentSplitsEditor
-            splits={paymentAgentSplits}
-            paymentAgents={paymentAgents}
-            totalAmount={total}
-            onChange={onPaymentAgentSplitsChange}
-            onAdd={onAddPaymentAgentSplit}
-            onRemove={onRemovePaymentAgentSplit}
-          />
+    <footer className="sticky bottom-0 z-20 border-t border-border/70 bg-bg-card px-5 py-2">
+      <div className="space-y-2">
+        <PaymentAgentSplitsEditor
+          splits={paymentAgentSplits}
+          paymentAgents={paymentAgents}
+          totalAmount={total}
+          onChange={onPaymentAgentSplitsChange}
+        />
 
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center divide-x divide-border/70">
-              <Metric label="Agent Credit" value={paymentAgent ? fmt(settlement.existingCredit) : "-"} zeroDanger />
-              <Metric label="Order Lines Total" value={fmtFinal(lineTotal)} zeroDanger />
-              <div className="px-3 py-1.5">
-                <div className="text-[10px] uppercase tracking-wide text-fg-subtle">Shipping Price</div>
-                <input
-                  type="number"
-                  min={0}
-                  step="any"
-                  value={shippingInput}
-                  onChange={(event) => {
-                    const nextValue = event.target.value;
-                    if (nextValue === "" || /^\d*\.?\d*$/.test(nextValue)) {
-                      setShippingInput(nextValue);
-                      onShippingPriceChange(nextValue === "" ? 0 : Number(nextValue));
-                    }
-                  }}
-                  onBlur={() => setShippingInput(shippingPrice ? String(shippingPrice) : "")}
-                  onWheel={(event) => event.currentTarget.blur()}
-                  className={cn(
-                    "no-spinner mt-0.5 h-8 w-28 rounded-md border border-border bg-bg-card px-2 text-[14px] font-semibold tabular-nums outline-none transition-colors focus:border-brand",
-                    shippingPrice > 0 ? "text-fg" : "text-rose-600",
-                  )}
-                  placeholder="0"
-                />
-              </div>
-              <Metric label="Main Total Amount" value={fmtFinal(total)} tone="warning" zeroDanger />
-              <Metric label="Credit Used" value={paymentAgent ? fmt(settlement.creditUsed) : "0"} tone="info" zeroDanger />
-              <Metric
-                label="Payable"
-                value={paymentAgent ? fmtFinal(settlement.remainingPayable) : fmtFinal(total)}
-                tone={(paymentAgent ? settlement.remainingPayable : total) > 0 ? "warning" : "default"}
-                zeroDanger
-              />
-              <Metric
-                label="Credit Left"
-                value={paymentAgent ? fmt(settlement.resultingCreditBalance) : "-"}
-                tone={paymentAgent && settlement.resultingCreditBalance > 0 ? "success" : "default"}
-                zeroDanger
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+          <div className="flex flex-wrap items-center gap-1 sm:gap-2">
+            <Metric label="Lines" value={fmtFinal(lineTotal)} zeroDanger />
+            <div className="px-2 py-1">
+              <div className="text-[10px] uppercase tracking-wide text-fg-subtle">Shipping</div>
+              <input
+                type="number"
+                min={0}
+                step="any"
+                value={shippingInput}
+                onChange={(event) => {
+                  const nextValue = event.target.value;
+                  if (nextValue === "" || /^\d*\.?\d*$/.test(nextValue)) {
+                    setShippingInput(nextValue);
+                    onShippingPriceChange(nextValue === "" ? 0 : Number(nextValue));
+                  }
+                }}
+                onBlur={() => setShippingInput(shippingPrice ? String(shippingPrice) : "")}
+                onWheel={(event) => event.currentTarget.blur()}
+                className={cn(
+                  "no-spinner mt-0.5 h-8 w-24 rounded-lg border border-border/60 bg-bg-card px-2 text-[12px] font-medium tabular-nums outline-none transition-colors focus:border-brand",
+                  shippingPrice > 0 ? "text-fg" : "text-rose-600",
+                )}
+                placeholder="0"
               />
             </div>
+            <Metric label="Total" value={fmtFinal(total)} tone="warning" zeroDanger />
+          </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <Button size="sm" variant="secondary" onClick={onSaveDraft} disabled={disableSaveDraft}>{saveDraftLabel}</Button>
-              <Button size="sm" variant="secondary" onClick={onViewDetails}>View Order Details -&gt;</Button>
-              <Button
-                size="sm"
-                variant="primary"
-                onClick={onSaveOrder}
-                disabled={disableSaveOrder}
-                title={disableSaveOrder ? "Complete required fields before saving as order." : undefined}
-              >
-                {saveOrderLabel}
-              </Button>
-            </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="secondary" onClick={onSaveDraft} disabled={disableSaveDraft}>{saveDraftLabel}</Button>
+            <Button size="sm" variant="secondary" onClick={onViewDetails}>View Order Details -&gt;</Button>
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={onSaveOrder}
+              disabled={disableSaveOrder}
+              title={disableSaveOrder ? "Complete required fields before saving as order." : undefined}
+            >
+              {saveOrderLabel}
+            </Button>
           </div>
         </div>
       </div>

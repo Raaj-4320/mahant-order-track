@@ -1,21 +1,21 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Button } from "@/components/ui/Button";
+import { useMemo } from "react";
 import { Input } from "@/components/ui/Input";
 import { cn } from "@/lib/cn";
+import { formatAmount } from "@/lib/data";
 import type { PaymentAgent, PaymentAgentOrderSplit } from "@/lib/types";
+import { calculatePaymentAgentSettlement } from "@/services/settlement/paymentAgentSettlement";
 
 type Props = {
   splits: PaymentAgentOrderSplit[];
   paymentAgents: PaymentAgent[];
   totalAmount: number;
   onChange: (splits: PaymentAgentOrderSplit[]) => void;
-  onAdd: () => void;
-  onRemove: (splitId: string) => void;
 };
 
 const normalizeValue = (value?: string | null) => (value || "").trim().toLowerCase();
+const fmt = (value: number) => formatAmount(value);
 
 const getSplitLabel = (split: PaymentAgentOrderSplit) =>
   split.paymentAgentSnapshot?.name?.trim()
@@ -28,119 +28,76 @@ export function PaymentAgentSplitsEditor({
   paymentAgents,
   totalAmount,
   onChange,
-  onAdd,
-  onRemove,
 }: Props) {
-  const [queries, setQueries] = useState<Record<string, string>>({});
-  const [openRowId, setOpenRowId] = useState<string | null>(null);
-
-  useEffect(() => {
-    setQueries((current) => {
-      const next = { ...current };
-      let changed = false;
-      for (const split of splits) {
-        if (openRowId === split.id) continue;
-        const label = getSplitLabel(split);
-        if ((next[split.id] ?? "") !== label) {
-          next[split.id] = label;
-          changed = true;
-        }
-      }
-      Object.keys(next).forEach((id) => {
-        if (!splits.some((split) => split.id === id)) {
-          delete next[id];
-          changed = true;
-        }
-      });
-      return changed ? next : current;
-    });
-  }, [splits, openRowId]);
+  const visibleSplits = useMemo(() => {
+    const hasMeaningfulSplit = (split: PaymentAgentOrderSplit) =>
+      Boolean(getSplitLabel(split) || (Number(split.assignedAmount) || 0) > 0 || (Number(split.paidNow) || 0) > 0);
+    if (!splits.some(hasMeaningfulSplit)) {
+      return splits.slice(0, 1);
+    }
+    return splits.filter(hasMeaningfulSplit);
+  }, [splits]);
 
   const totalAssigned = useMemo(
     () => splits.reduce((sum, split) => sum + (Number(split.assignedAmount) || 0), 0),
     [splits],
   );
 
+  const duplicateCount = useMemo(() => {
+    const seen = new Set<string>();
+    let duplicates = 0;
+    for (const split of splits) {
+      const key = split.paymentAgentId || normalizeValue(getSplitLabel(split));
+      if (!key) continue;
+      if (seen.has(key)) duplicates += 1;
+      seen.add(key);
+    }
+    return duplicates;
+  }, [splits]);
+
+  const amountLeft = Number((totalAmount - totalAssigned).toFixed(2));
+
   const updateSplit = (splitId: string, updater: (split: PaymentAgentOrderSplit) => PaymentAgentOrderSplit) => {
     onChange(splits.map((split) => (split.id === splitId ? updater(split) : split)));
   };
 
   return (
-    <div className="rounded-xl border border-border bg-bg-card px-3 py-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-fg-subtle">Payment Agent Splits</div>
-          <div className="mt-0.5 text-[12px] text-fg-subtle">Assigned {totalAssigned} / {totalAmount}</div>
-        </div>
-        <Button type="button" size="sm" variant="secondary" onClick={onAdd}>+ Add Payment Agent</Button>
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-4 border-b border-border/50 pb-2 text-[12px]">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-fg-subtle">Distribution</span>
+        <span className="font-medium text-fg">Total: {fmt(totalAmount)}</span>
+        <span className={cn("font-medium", amountLeft === 0 ? "text-emerald-700" : "text-amber-700")}>
+          Left: {fmt(amountLeft)}
+        </span>
+        {duplicateCount > 0 ? <span className="text-[11px] text-rose-600">Duplicate payment agents must be removed before saving.</span> : null}
       </div>
 
-      <div className="mt-3 space-y-2">
-        {splits.map((split, index) => {
-          const query = queries[split.id] ?? "";
-          const normalizedQuery = normalizeValue(query);
-          const suggestions = paymentAgents
-            .filter((agent) => agent.status !== "inactive" && agent.lifecycle?.status !== "deleted")
-            .filter((agent) => !normalizedQuery || normalizeValue(agent.name).includes(normalizedQuery) || normalizeValue(agent.agentCode).includes(normalizedQuery))
-            .slice(0, 6);
+      <div className="space-y-1.5">
+        {visibleSplits.map((split, index) => {
+          const agent =
+            paymentAgents.find((candidate) => candidate.id === split.paymentAgentId)
+            ?? paymentAgents.find((candidate) => candidate.id === split.paymentBy)
+            ?? paymentAgents.find((candidate) => normalizeValue(candidate.name) === normalizeValue(getSplitLabel(split)))
+            ?? null;
+          const settlement = calculatePaymentAgentSettlement({
+            orderTotal: Number(split.assignedAmount) || 0,
+            existingCredit: agent?.creditBalance ?? 0,
+            paidNow: Number(split.paidNow) || 0,
+          });
+          const label = getSplitLabel(split) || "Select payment agent above";
 
           return (
-            <div key={split.id} className="rounded-lg border border-border/80 bg-bg-subtle/40 px-2 py-2">
-              <div className="grid grid-cols-1 gap-2 xl:grid-cols-[minmax(220px,1.5fr)_110px_110px_auto]">
-                <div className="relative">
-                  <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-fg-subtle">Agent {index + 1}</div>
-                  <Input
-                    value={query}
-                    onFocus={() => setOpenRowId(split.id)}
-                    onBlur={() => window.setTimeout(() => setOpenRowId((current) => (current === split.id ? null : current)), 120)}
-                    onChange={(event) => {
-                      const nextValue = event.target.value;
-                      setQueries((current) => ({ ...current, [split.id]: nextValue }));
-                      setOpenRowId(split.id);
-                      updateSplit(split.id, (current) => ({
-                        ...current,
-                        paymentAgentId: "",
-                        paymentBy: nextValue,
-                        paymentAgentName: nextValue,
-                        paymentAgentSnapshot: undefined,
-                      }));
-                    }}
-                    placeholder="Type payment agent"
-                    className="h-9 text-[12.5px]"
-                  />
-                  {openRowId === split.id ? (
-                    <div className="absolute left-0 right-0 top-full z-40 mt-1 overflow-hidden rounded-lg border border-border bg-white shadow-card">
-                      {suggestions.length > 0 ? (
-                        suggestions.map((agent) => (
-                          <button
-                            key={agent.id}
-                            type="button"
-                            className="block w-full border-b border-border/60 px-3 py-2 text-left text-[12px] text-fg last:border-b-0 hover:bg-bg-subtle"
-                            onMouseDown={(event) => {
-                              event.preventDefault();
-                              setOpenRowId(null);
-                              setQueries((current) => ({ ...current, [split.id]: agent.name }));
-                              updateSplit(split.id, (current) => ({
-                                ...current,
-                                paymentAgentId: agent.id,
-                                paymentBy: agent.id,
-                                paymentAgentName: agent.name,
-                                paymentAgentSnapshot: { id: agent.id, name: agent.name, code: agent.agentCode },
-                              }));
-                            }}
-                          >
-                            {agent.name}
-                          </button>
-                        ))
-                      ) : (
-                        <div className="px-3 py-2 text-[11.5px] text-fg-subtle">No matching payment agent</div>
-                      )}
-                    </div>
-                  ) : null}
+            <div key={split.id} className="grid grid-cols-1 gap-2 border-b border-border/35 py-1.5 last:border-b-0 md:grid-cols-[minmax(170px,1.2fr)_120px_120px_100px_100px] md:items-center md:gap-3">
+              <div className="min-w-0">
+                <div className="truncate text-[12.5px] font-medium text-fg">{label}</div>
+                <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[10.5px] text-fg-subtle">
+                  <span>{index === 0 ? "Primary" : `Agent ${index + 1}`}</span>
+                  <span>Credit used: {fmt(settlement.creditUsed)}</span>
                 </div>
+              </div>
 
-                <label className="flex flex-col gap-1">
-                  <span className="text-[10px] font-medium uppercase tracking-wide text-fg-subtle">Amount</span>
+                <label className="flex flex-col gap-0.5">
+                  <span className="text-[10px] text-fg-subtle">Assigned</span>
                   <Input
                     type="text"
                     inputMode="decimal"
@@ -155,12 +112,12 @@ export function PaymentAgentSplitsEditor({
                       }
                     }}
                     placeholder="0"
-                    className="h-9 text-[12.5px]"
+                    className="h-8 rounded-lg border-border/60 bg-bg-card text-[12px] shadow-none"
                   />
                 </label>
 
-                <label className="flex flex-col gap-1">
-                  <span className="text-[10px] font-medium uppercase tracking-wide text-fg-subtle">Paid Now</span>
+                <label className="flex flex-col gap-0.5">
+                  <span className="text-[10px] text-fg-subtle">Paid now</span>
                   <Input
                     type="text"
                     inputMode="decimal"
@@ -175,22 +132,19 @@ export function PaymentAgentSplitsEditor({
                       }
                     }}
                     placeholder="0"
-                    className="h-9 text-[12.5px]"
+                    className="h-8 rounded-lg border-border/60 bg-bg-card text-[12px] shadow-none"
                   />
                 </label>
 
-                <div className="flex items-end justify-end">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="secondary"
-                    className={cn("h-9 px-3 text-[12px]", splits.length <= 1 && "opacity-70")}
-                    onClick={() => onRemove(split.id)}
-                  >
-                    Remove
-                  </Button>
+                <div className="flex flex-col gap-0.5 text-[10px] text-fg-subtle md:items-end">
+                  <span>Pending/Due</span>
+                  <span className="text-[12px] font-medium text-fg">{fmt(settlement.remainingPayable)}</span>
                 </div>
-              </div>
+
+                <div className="flex flex-col gap-0.5 text-[10px] text-fg-subtle md:items-end">
+                  <span>Credit left</span>
+                  <span className="text-[12px] font-medium text-fg">{fmt(settlement.resultingCreditBalance)}</span>
+                </div>
             </div>
           );
         })}

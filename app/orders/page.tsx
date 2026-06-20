@@ -36,6 +36,7 @@ import { TablePagination } from "@/components/table/TablePagination";
 import { ordersDataSourceSelection } from "@/lib/runtimeConfig";
 import { LoadingDateControl } from "@/components/orders/LoadingDateControl";
 import { OrderStatusControl } from "@/components/orders/OrderStatusControl";
+import { PaymentAgentHeaderPicker } from "@/components/orders/PaymentAgentHeaderPicker";
 import { isOrderEligibleForCreditSettlement } from "@/services/settlement/orderCreditEligibility";
 import { getLineDetailsParts, joinLineDetails, seedDetailBoxesFromLegacy, withDerivedLegacyDetails } from "@/lib/orderLineDetails";
 import { orderLifecycleService } from "@/services/orderLifecycleService";
@@ -429,8 +430,6 @@ export default function OrdersPage() {
   const [seriesForm, setSeriesForm] = useState({ label: "", startNumber: "" });
   const [seriesCreateError, setSeriesCreateError] = useState("");
   const [seriesCreateBusy, setSeriesCreateBusy] = useState(false);
-  const [headerPaymentQuery, setHeaderPaymentQuery] = useState("");
-  const [headerPaymentOpen, setHeaderPaymentOpen] = useState(false);
   const [headerWechatOpen, setHeaderWechatOpen] = useState(false);
   const [popupCustomerIssues, setPopupCustomerIssues] = useState<Record<string, string | null>>({});
   const [previewImage, setPreviewImage] = useState<{ src: string; alt: string; caption?: string } | null>(null);
@@ -596,8 +595,6 @@ export default function OrdersPage() {
     return Array.from(new Set([...fromCustomerRows, ...fromOrders]));
   }, [customers, activeOrders]);
   const selectedPaymentAgentId = draft.paymentAgentId || draft.paymentBy;
-  const selectedPaymentAgent = resolveOrderPaymentAgent(draft, paymentAgents);
-  const settlement = useMemo(() => calculatePaymentAgentSettlement({ orderTotal: total, existingCredit: selectedPaymentAgent?.creditBalance ?? 0, paidNow: draft.paidToPaymentAgentNow ?? 0 }), [total, selectedPaymentAgent, draft.paidToPaymentAgentNow]);
   const validation = useMemo(() => validateOrderForSave(draft), [draft]);
   const seriesPreview = useMemo(() => {
     const normalizedLabel = normalizeSeriesLabel(seriesForm.label);
@@ -607,27 +604,12 @@ export default function OrdersPage() {
     return formatSeriesOrderNumber(buildSeriesPrefix(normalizedLabel), startNumber);
   }, [seriesForm.label, seriesForm.startNumber]);
   const seriesSuggestions = useMemo(() => orderSeries.map((series) => ({ ...series, suggestion: getSeriesSuggestion(series) })), [orderSeries]);
-  const headerPaymentSuggestions = useMemo(() => {
-    const q = headerPaymentQuery.trim().toLowerCase();
-    return paymentAgents.filter((p) => !q || p.name.toLowerCase().includes(q) || (p.agentCode || "").toLowerCase().includes(q) || p.id.toLowerCase().includes(q)).slice(0, 4);
-  }, [paymentAgents, headerPaymentQuery]);
-  const paymentLabel = (p: any) => (p.creditBalance ?? 0) > 0 ? `${p.name} — Credit: ${formatAmount(p.creditBalance ?? 0)}` : p.name;
-
   const headerWechatSuggestions = useMemo(() => {
     const q = (draft.wechatId || "").trim().toLowerCase();
     return wechatSuggestions
       .filter((w) => w && (!q || w.toLowerCase().includes(q)))
       .slice(0, 4);
   }, [wechatSuggestions, draft.wechatId]);
-  useEffect(() => {
-    if (headerPaymentOpen) return;
-    setHeaderPaymentQuery(
-      selectedPaymentAgent
-        ? paymentLabel(selectedPaymentAgent)
-        : draft.paymentAgentSnapshot?.name || draft.paymentByName || draft.paymentAgentName || draft.paymentBy || ""
-    );
-  }, [selectedPaymentAgent, draft.paymentAgentSnapshot?.name, draft.paymentByName, draft.paymentAgentName, draft.paymentBy, headerPaymentOpen]);
-
   useEffect(() => {
     if (editingOrderId) return;
     if (selectedSeriesId) return;
@@ -910,13 +892,6 @@ export default function OrdersPage() {
       const existingSplits = getEditablePaymentAgentSplits(current);
       const nextSplits = typeof updater === "function" ? updater(existingSplits) : updater;
       return applyLegacyPaymentAgentFromSplits(current, nextSplits.length > 0 ? nextSplits : [createEmptyPaymentAgentSplit()]);
-    });
-  };
-
-  const updatePrimaryPaymentAgentSplit = (updater: (split: PaymentAgentOrderSplit) => PaymentAgentOrderSplit) => {
-    setDraftPaymentAgentSplits((current) => {
-      const [first = createEmptyPaymentAgentSplit(), ...rest] = current;
-      return [updater(first), ...rest];
     });
   };
 
@@ -2884,9 +2859,14 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
               </div>
               <Button size="sm" variant="secondary" onClick={requestExitComposer} aria-label="Close order editor"><X size={16} /></Button>
             </div>
-            <div className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-[minmax(220px,0.8fr)_minmax(145px,0.55fr)_minmax(145px,0.55fr)_minmax(420px,1.2fr)_minmax(220px,0.8fr)]">
-              <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Payment By</span><div className="relative"><Input value={headerPaymentQuery} onFocus={() => setHeaderPaymentOpen(true)} onBlur={() => window.setTimeout(() => setHeaderPaymentOpen(false),120)} onChange={(e)=>{const next=e.target.value;
-setHeaderPaymentQuery(next); setHeaderPaymentOpen(true); updatePrimaryPaymentAgentSplit((split)=>({ ...split, paymentAgentId:"", paymentBy:next, paymentAgentName: next, paymentAgentSnapshot: undefined }));}} placeholder="Primary payment agent" />{headerPaymentQuery || draft.paymentAgentId || draft.paymentBy ? <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-fg-subtle transition-colors hover:text-fg" onMouseDown={(e) => { e.preventDefault(); setHeaderPaymentQuery(""); setHeaderPaymentOpen(false); updatePrimaryPaymentAgentSplit((split) => ({ ...split, paymentAgentId: "", paymentBy: "", paymentAgentName: "", paymentAgentSnapshot: undefined, paidNow: 0 })); }}>Clear</button> : null}{headerPaymentOpen && headerPaymentSuggestions.length>0 ? <div className="absolute z-30 mt-1 max-h-44 w-full overflow-auto rounded-lg border border-border bg-bg-card shadow-card">{headerPaymentSuggestions.map((p)=><button key={p.id} type="button" className="block w-full px-2 py-1.5 text-left text-[12px] hover:bg-bg-subtle" onMouseDown={(e)=>{e.preventDefault(); setHeaderPaymentOpen(false); const label=paymentLabel(p); setHeaderPaymentQuery(label); updatePrimaryPaymentAgentSplit((split)=>({ ...split, paymentBy:p.id, paymentAgentId:p.id, paymentAgentName: p.name, paymentAgentSnapshot: { id: p.id, name: p.name, code: p.agentCode }}));}}>{paymentLabel(p)}</button>)}</div>:null}</div></label>
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-[minmax(340px,1.15fr)_minmax(145px,0.55fr)_minmax(145px,0.55fr)_minmax(420px,1.2fr)_minmax(220px,0.8fr)]">
+              <PaymentAgentHeaderPicker
+                splits={getEditablePaymentAgentSplits(draft)}
+                paymentAgents={paymentAgents}
+                onChange={setDraftPaymentAgentSplits}
+                onAdd={() => setDraftPaymentAgentSplits((current) => [...current, createEmptyPaymentAgentSplit()])}
+                onRemove={(splitId) => setDraftPaymentAgentSplits((current) => current.length <= 1 ? [createEmptyPaymentAgentSplit()] : current.filter((split) => split.id !== splitId))}
+              />
               <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Date</span><Input type="date" value={draft.date} onChange={(e)=>setDraft((d)=>({...d,date:e.target.value}))} /></label>
               <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Loading Date</span><Input type="date" value={draft.loadingDate || ""} onChange={(e)=>setDraft((d)=>({...d,loadingDate:e.target.value || undefined}))} /></label>
               <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Order Number</span><div className="space-y-2"><div className="grid grid-cols-1 gap-2 xl:grid-cols-[minmax(190px,0.95fr)_minmax(0,1.15fr)_auto]"><div className="relative" ref={seriesPickerRef}><button type="button" className={cn("flex h-10 w-full items-center justify-between rounded-xl border border-border bg-bg-card px-3 text-left text-[12.5px] shadow-sm transition-colors", seriesPickerOpen ? "border-brand ring-2 ring-brand/15" : "hover:border-border-strong hover:bg-bg-subtle/40", (isOrderSeriesLoading || orderSeries.length === 0) && "cursor-not-allowed opacity-70")} onClick={() => { if (!isOrderSeriesLoading && orderSeries.length > 0) setSeriesPickerOpen((open) => !open); }} disabled={isOrderSeriesLoading || orderSeries.length === 0}><div className="min-w-0 truncate font-semibold text-fg">{selectedOrderSeries ? getSeriesSuggestion(selectedOrderSeries) : isOrderSeriesLoading ? "Loading series..." : "No series yet"}</div><ChevronDown size={15} className={cn("ml-3 shrink-0 text-fg-subtle transition-transform", seriesPickerOpen && "rotate-180")} /></button>{seriesPickerOpen ? <div className="absolute left-0 top-full z-40 mt-2 w-[320px] max-w-[calc(100vw-3rem)] overflow-hidden rounded-2xl border border-border bg-bg-card shadow-card"><div className="border-b border-border/80 px-3 py-2"><div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-fg-subtle">Order Series</div></div><div className="max-h-72 overflow-y-auto p-1.5">{seriesSuggestions.map((series) => <button key={series.id} type="button" className={cn("block w-full rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-bg-subtle", selectedOrderSeries?.id === series.id && "bg-bg-subtle")} onClick={() => handleSeriesChange(series.id)}><div className="text-[13px] font-semibold text-fg">{series.suggestion}</div></button>)}<button type="button" className="mt-1 block w-full rounded-xl border border-dashed border-border px-3 py-2.5 text-left transition-colors hover:border-brand hover:bg-bg-subtle" onClick={openCreateSeriesModal}><div className="text-[13px] font-semibold text-fg">+ Add New Series</div></button></div></div> : null}</div><Input className="min-w-0" value={draft.number} onChange={(e)=>handleOrderNumberInputChange(e.target.value)} placeholder={selectedOrderSeries ? getSeriesSuggestion(selectedOrderSeries) : orderSeries.length ? "Type full order number" : "Create a series first"} /><Button type="button" size="sm" variant="secondary" className="h-10 whitespace-nowrap px-4 text-[12.5px]" onClick={openCreateSeriesModal}>Add New Series</Button></div>{orderSeries.length === 0 ? <div className="text-[11px] text-amber-700">No order number series yet. Create one before saving a new order number.</div> : null}</div></label>
@@ -2905,7 +2885,7 @@ setHeaderPaymentQuery(next); setHeaderPaymentOpen(true); updatePrimaryPaymentAge
           <div className="min-h-0 flex-1 overflow-y-auto">
             <OrderForm showOrderInfo={false} draft={draft} setDraft={(u) => setDraft((d) => u(d))} paymentAgents={paymentAgents} customers={customers} onUploadingChange={onUploadingChange} onRemoveLine={handleRemoveLine} wechatSuggestions={wechatSuggestions.filter((w) => draft.wechatId.trim() ? w.toLowerCase().includes(draft.wechatId.trim().toLowerCase()) : false)} customerSuggestions={customerSuggestions} onPreviewImage={(src) => setPreviewImage({ src, alt: "Order line photo preview" })} onCustomerValidityChange={(lineId, issue) => setPopupCustomerIssues((prev) => ({ ...prev, [lineId]: issue }))} />
           </div>
-          <OrderFooter lineTotal={lineTotal} shippingPrice={getOrderShippingAmount(draft)} total={total} onSaveDraft={() => onSave("draft")} onSaveOrder={() => onSave("saved")} onViewDetails={() => setViewOrder(draft)} saveOrderLabel={orderSaveState === "saving" ? "Saving Order..." : (editingOrderId ? "Save Changes" : "Save Order")} saveDraftLabel={orderSaveState === "saving" ? "Saving Draft..." : "Save as Draft"} disableSaveDraft={orderSaveState !== "idle"} disableSaveOrder={orderSaveState !== "idle"} paymentAgent={selectedPaymentAgent} paymentAgents={paymentAgents} paymentAgentSplits={draft.paymentAgentSplits ?? []} onPaymentAgentSplitsChange={setDraftPaymentAgentSplits} onAddPaymentAgentSplit={() => setDraftPaymentAgentSplits((current) => [...current, createEmptyPaymentAgentSplit()])} onRemovePaymentAgentSplit={(splitId) => setDraftPaymentAgentSplits((current) => current.length <= 1 ? [createEmptyPaymentAgentSplit()] : current.filter((split) => split.id !== splitId))} settlement={settlement} paidNow={draft.paidToPaymentAgentNow ?? 0} onPaidNowChange={(value) => setDraft((d) => ({ ...d, paidToPaymentAgentNow: Math.max(0, Number(value) || 0) }))} onShippingPriceChange={(value) => setDraft((d) => ({ ...d, shippingPrice: value }))} />
+          <OrderFooter lineTotal={lineTotal} shippingPrice={getOrderShippingAmount(draft)} total={total} onSaveDraft={() => onSave("draft")} onSaveOrder={() => onSave("saved")} onViewDetails={() => setViewOrder(draft)} saveOrderLabel={orderSaveState === "saving" ? "Saving Order..." : (editingOrderId ? "Save Changes" : "Save Order")} saveDraftLabel={orderSaveState === "saving" ? "Saving Draft..." : "Save as Draft"} disableSaveDraft={orderSaveState !== "idle"} disableSaveOrder={orderSaveState !== "idle"} paymentAgents={paymentAgents} paymentAgentSplits={getEditablePaymentAgentSplits(draft)} onPaymentAgentSplitsChange={setDraftPaymentAgentSplits} onShippingPriceChange={(value) => setDraft((d) => ({ ...d, shippingPrice: value }))} />
         </div>
       </div>}
       {showExitConfirm ? <div className="fixed inset-0 z-[65] bg-black/50 grid place-items-center p-4"><div className="card w-full max-w-lg p-4 space-y-3"><div className="text-lg font-semibold">{editingOrderId ? "Save changes before closing?" : "Save order before closing?"}</div><div className="text-sm text-fg-subtle">{editingOrderId ? "You made changes to this order. Save them now or discard them." : "Save this order as a draft before closing, or discard it."}</div><div className="flex flex-wrap justify-end gap-2"><Button variant="secondary" onClick={() => { setShowExitConfirm(false); resetOrderComposer(); }}>{editingOrderId ? "Discard Changes" : "Discard Order"}</Button><Button variant="primary" onClick={() => { setShowExitConfirm(false); void onSave(editingOrderId ? "saved" : "draft", true); }}>{editingOrderId ? "Save Changes" : "Save Draft"}</Button></div></div></div> : null}
