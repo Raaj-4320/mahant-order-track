@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { OrderNumberSeries } from "@/lib/types";
+import type { Order, OrderNumberSeries } from "@/lib/types";
 import { measurePerfAsync } from "@/lib/perfDebug";
 import { getOrderNumberSeriesService } from "@/services/orderNumberSeriesService";
 

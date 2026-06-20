@@ -5,7 +5,7 @@ import { measurePerfAsync, recordPerfEvent, recordPerfNoopWrite } from "@/lib/pe
 import { paymentAgentFromFirestore, paymentAgentLedgerEntryToFirestore, paymentAgentToFirestore } from "@/lib/firebase/mappers";
 import { paymentAgentLedgerPath, paymentAgentsPath, paymentAgentPath } from "@/lib/firebase/paths";
 import type { PaymentAgentsService } from "@/services/contracts";
-import type { PaymentAgent } from "@/lib/types";
+import type { PaymentAgent, PaymentAgentLedgerEntry, PaymentAgentOrderSplit, PaymentAgentSplitSettlementSnapshot } from "@/lib/types";
 import { buildOrderSplitSettlementEntry, buildOrderSplitSettlementReversalEntry } from "@/services/settlement/paymentAgentLedger";
 import { isOrderEligibleForCreditSettlement } from "@/services/settlement/orderCreditEligibility";
 import { calculatePaymentAgentSettlement } from "@/services/settlement/paymentAgentSettlement";
@@ -21,7 +21,48 @@ const makeId = () => (globalThis.crypto?.randomUUID?.() ?? `pa-${Date.now()}-${M
 const requireDb = () => { const db = getFirestoreDb(); if (!db) throw new Error("Firebase not configured."); return db; };
 const clamp = (n: number) => Math.max(0, Number.isFinite(n) ? n : 0);
 
-const isActiveSettlementEntry = (entry: Record<string, unknown> | null | undefined) =>
+const toSplitSettlementSnapshot = (
+  split: Pick<PaymentAgentOrderSplit, "assignedAmount" | "paidNow" | "settlementSnapshot">,
+): PaymentAgentSplitSettlementSnapshot => {
+  const now = new Date().toISOString();
+  if (split.settlementSnapshot) {
+    return {
+      orderPortionTotal: clamp(split.settlementSnapshot.orderPortionTotal),
+      existingCredit: clamp(split.settlementSnapshot.existingCredit),
+      creditUsed: clamp(split.settlementSnapshot.creditUsed),
+      payableAfterCredit: clamp(split.settlementSnapshot.payableAfterCredit),
+      remainingPayable: clamp(split.settlementSnapshot.remainingPayable),
+      newCreditCreated: clamp(split.settlementSnapshot.newCreditCreated),
+      resultingCreditBalance: clamp(split.settlementSnapshot.resultingCreditBalance),
+      paidNow: clamp(split.settlementSnapshot.paidNow),
+      status: split.settlementSnapshot.status,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  const settlement = calculatePaymentAgentSettlement({
+    orderTotal: clamp(split.assignedAmount),
+    existingCredit: 0,
+    paidNow: clamp(split.paidNow ?? 0),
+  });
+
+  return {
+    orderPortionTotal: clamp(settlement.orderTotal),
+    existingCredit: clamp(settlement.existingCredit),
+    creditUsed: clamp(settlement.creditUsed),
+    payableAfterCredit: clamp(settlement.payableAfterCredit),
+    remainingPayable: clamp(settlement.remainingPayable),
+    newCreditCreated: clamp(settlement.newCreditCreated),
+    resultingCreditBalance: clamp(settlement.resultingCreditBalance),
+    paidNow: clamp(settlement.paidNow),
+    status: settlement.status,
+    createdAt: now,
+    updatedAt: now,
+  };
+};
+
+const isActiveSettlementEntry = (entry: PaymentAgentLedgerEntry | null | undefined) =>
   Boolean(entry && entry.active !== false && entry.isReversed !== true);
 
 const applySettlementDelta = (
@@ -131,23 +172,7 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
       if (!agentId) {
         throw new Error(`Payment agent split ${split.id} is missing an agent id.`);
       }
-      const settlement = split.settlementSnapshot
-        ? {
-            ...split.settlementSnapshot,
-            orderPortionTotal: clamp(split.settlementSnapshot.orderPortionTotal),
-            existingCredit: clamp(split.settlementSnapshot.existingCredit),
-            creditUsed: clamp(split.settlementSnapshot.creditUsed),
-            payableAfterCredit: clamp(split.settlementSnapshot.payableAfterCredit),
-            remainingPayable: clamp(split.settlementSnapshot.remainingPayable),
-            newCreditCreated: clamp(split.settlementSnapshot.newCreditCreated),
-            resultingCreditBalance: clamp(split.settlementSnapshot.resultingCreditBalance),
-            paidNow: clamp(split.settlementSnapshot.paidNow),
-          }
-        : calculatePaymentAgentSettlement({
-            orderTotal: clamp(split.assignedAmount),
-            existingCredit: 0,
-            paidNow: clamp(split.paidNow ?? 0),
-          });
+      const settlement = toSplitSettlementSnapshot(split);
       return {
         ...split,
         paymentAgentId: agentId,
@@ -164,12 +189,12 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
     ]));
 
     return runTransaction(db, async (tx) => {
-      const existingEntries = new Map<string, Record<string, unknown>>();
+      const existingEntries = new Map<string, PaymentAgentLedgerEntry>();
       for (const entryId of existingEntryIds) {
         const settlementRef = doc(db, paymentAgentLedgerPath(BUSINESS_ID), entryId);
         const snap = await tx.get(settlementRef);
         if (snap.exists()) {
-          existingEntries.set(entryId, { id: snap.id, ...(snap.data() as Record<string, unknown>) });
+          existingEntries.set(entryId, { id: snap.id, ...(snap.data() as Record<string, unknown>) } as PaymentAgentLedgerEntry);
         }
       }
 
@@ -189,7 +214,7 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
         agentDocs.set(agentId, paymentAgentFromFirestore({ id: agentSnap.id, ...(agentSnap.data() as Record<string, unknown>) }));
       }
 
-      const applyAgentUpdate = (agentId: string, direction: 1 | -1, entry: Record<string, unknown>) => {
+      const applyAgentUpdate = (agentId: string, direction: 1 | -1, entry: PaymentAgentLedgerEntry) => {
         const current = agentDocs.get(agentId);
         if (!current) throw new Error(`Payment agent ${agentId} is missing during settlement update.`);
         agentDocs.set(agentId, applySettlementDelta(current, entry, direction, now));
@@ -204,7 +229,7 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
         if (typeof existing.agentId === "string" && existing.agentId.trim()) {
           applyAgentUpdate(existing.agentId.trim(), -1, existing);
         }
-        const reversal = buildOrderSplitSettlementReversalEntry(order, existing as any);
+        const reversal = buildOrderSplitSettlementReversalEntry(order, existing);
         const reversalRef = doc(db, paymentAgentLedgerPath(BUSINESS_ID), reversal.id);
         recordPerfEvent("firestore-write", "paymentAgents.applyOrderSettlement.reversal", { path: `${paymentAgentLedgerPath(BUSINESS_ID)}/${reversalRef.id}`, orderId: order.id, splitId: existing.sourcePaymentAgentSplitId || "legacy" });
         tx.set(reversalRef, paymentAgentLedgerEntryToFirestore({ ...reversal, createdAt: now, updatedAt: now }), { merge: true });
@@ -240,14 +265,14 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
       ]));
       if (entryIds.length === 0) return;
 
-      const existingEntries: Array<Record<string, unknown>> = [];
+      const existingEntries: PaymentAgentLedgerEntry[] = [];
       const agentIds = new Set<string>();
 
       for (const entryId of entryIds) {
         const settlementRef = doc(db, paymentAgentLedgerPath(BUSINESS_ID), entryId);
         const snap = await tx.get(settlementRef);
         if (!snap.exists()) continue;
-        const existing = { id: snap.id, ...(snap.data() as Record<string, unknown>) };
+        const existing = { id: snap.id, ...(snap.data() as Record<string, unknown>) } as PaymentAgentLedgerEntry;
         if (!isActiveSettlementEntry(existing)) continue;
         existingEntries.push(existing);
         if (typeof existing.agentId === "string" && existing.agentId.trim()) {
@@ -271,7 +296,7 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
         const current = agentDocs.get(agentId);
         if (!current) throw new Error(`Payment agent ${agentId} not found during settlement reversal.`);
         agentDocs.set(agentId, applySettlementDelta(current, existing, -1, now));
-        const reversal = buildOrderSplitSettlementReversalEntry(order, existing as any);
+        const reversal = buildOrderSplitSettlementReversalEntry(order, existing);
         const reversalRef = doc(db, paymentAgentLedgerPath(BUSINESS_ID), reversal.id);
         recordPerfEvent("firestore-write", "paymentAgents.reverseOrderSettlement.reversal", { path: `${paymentAgentLedgerPath(BUSINESS_ID)}/${reversalRef.id}`, orderId: order.id, splitId: existing.sourcePaymentAgentSplitId || "legacy" });
         tx.set(reversalRef, paymentAgentLedgerEntryToFirestore({ ...reversal, createdAt: now, updatedAt: now }), { merge: true });

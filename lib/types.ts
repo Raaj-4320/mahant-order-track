@@ -17,6 +17,8 @@ export type {
   Product,
   PaymentAgent,
   OrderNumberSeries,
+  PaymentAgentSplitSettlementSnapshot,
+  PaymentAgentOrderSplit,
   PaymentAgentLedgerEntry,
   CustomerLedgerEntry,
   OrderLine,

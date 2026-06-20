@@ -109,7 +109,8 @@ type OutsideEditField =
   | "totalCtns"
   | "pcsPerCtn"
   | "rate"
-  | "shipping";
+  | "shipping"
+  | (string & {});
 type OutsideEditState = {
   activeField: OutsideEditField | null;
   lineId?: string;
@@ -1539,7 +1540,9 @@ try {
         orderNumber: cleanedDraft.orderNumber || cleanedDraft.number,
         ...deriveOrderSeriesFields(cleanedDraft.orderNumber || cleanedDraft.number),
         status: "draft" as const,
-        paymentAgentSettlementSnapshot: primaryDraftSplit?.settlementSnapshot
+      paymentAgentSettlementSnapshot: (() => {
+        const now = new Date().toISOString();
+        return primaryDraftSplit?.settlementSnapshot
           ? {
               orderTotal: primaryDraftSplit.settlementSnapshot.orderPortionTotal,
               existingCredit: primaryDraftSplit.settlementSnapshot.existingCredit,
@@ -1555,7 +1558,8 @@ try {
               createdAt: primaryDraftSplit.settlementSnapshot.createdAt || now,
               updatedAt: now,
             }
-          : undefined,
+          : undefined;
+      })(),
       };
       saveAudit.mark("orderPayload:built", { status: "draft" });
       try {
@@ -2378,9 +2382,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                     <div className="min-w-[220px] text-center">
                       <div className="text-[13px] font-semibold uppercase tracking-[0.16em] text-slate-400">Customer</div>
                       <div className="mt-3 flex items-center gap-3 text-[21px] font-bold leading-tight text-slate-950">
-                        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white/92 text-slate-600 shadow-sm ring-1 ring-[#e6e8ec]">
-                          <UserRound size={19} />
-                        </span>
+                        <span aria-hidden="true" className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white/92 text-slate-600 shadow-sm ring-1 ring-[#e6e8ec]" />
                         <div className="min-w-0 flex-1">
                           {line ? renderOutsideEditableField({
                             order,

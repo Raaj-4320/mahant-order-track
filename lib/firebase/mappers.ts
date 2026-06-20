@@ -92,33 +92,33 @@ const paymentAgentSplitSettlementSnapshotFromUnknown = (value: unknown): Payment
 
 const paymentAgentSplitsFromUnknown = (value: unknown): PaymentAgentOrderSplit[] | undefined => {
   if (!Array.isArray(value)) return undefined;
-  return value
-    .map((item) => {
-      const raw = asRecord(item);
-      if (!raw) return null;
-      const id = asStr(raw.id);
-      if (!id) return null;
-      return {
-        id,
-        paymentAgentId: asStr(raw.paymentAgentId),
-        paymentBy: asStr(raw.paymentBy),
-        paymentAgentName: asStr(raw.paymentAgentName),
-        paymentAgentSnapshot: raw.paymentAgentSnapshot
-          ? {
-              id: asStr(asRecord(raw.paymentAgentSnapshot)?.id),
-              name: asStr(asRecord(raw.paymentAgentSnapshot)?.name),
-              code: asStr(asRecord(raw.paymentAgentSnapshot)?.code) || undefined,
-            }
-          : undefined,
-        assignedAmount: asNum(raw.assignedAmount) ?? 0,
-        paidNow: asNum(raw.paidNow),
-        note: asStr(raw.note) || undefined,
-        settlementSnapshot: paymentAgentSplitSettlementSnapshotFromUnknown(raw.settlementSnapshot),
-        createdAt: asStr(raw.createdAt) || undefined,
-        updatedAt: asStr(raw.updatedAt) || undefined,
-      } satisfies PaymentAgentOrderSplit;
-    })
-    .filter((split): split is PaymentAgentOrderSplit => Boolean(split));
+  return value.reduce<PaymentAgentOrderSplit[]>((acc, item) => {
+    const raw = asRecord(item);
+    if (!raw) return acc;
+    const id = asStr(raw.id);
+    if (!id) return acc;
+    const rawSnapshot = asRecord(raw.paymentAgentSnapshot);
+    acc.push({
+      id,
+      paymentAgentId: asStr(raw.paymentAgentId),
+      paymentBy: asStr(raw.paymentBy),
+      paymentAgentName: asStr(raw.paymentAgentName),
+      paymentAgentSnapshot: rawSnapshot
+        ? {
+            id: asStr(rawSnapshot.id),
+            name: asStr(rawSnapshot.name),
+            code: asStr(rawSnapshot.code) || undefined,
+          }
+        : undefined,
+      assignedAmount: asNum(raw.assignedAmount) ?? 0,
+      paidNow: asNum(raw.paidNow),
+      note: asStr(raw.note) || undefined,
+      settlementSnapshot: paymentAgentSplitSettlementSnapshotFromUnknown(raw.settlementSnapshot),
+      createdAt: asStr(raw.createdAt) || undefined,
+      updatedAt: asStr(raw.updatedAt) || undefined,
+    });
+    return acc;
+  }, []);
 };
 
 
