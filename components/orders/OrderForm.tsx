@@ -54,7 +54,7 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
       .slice(0, 4);
   }, [paymentAgents, paymentQuery]);
 
-  const paymentLabel = (p: PaymentAgent) => ((p.creditBalance ?? 0) > 0 ? `${p.name} — Credit: ${formatAmount(p.creditBalance ?? 0)}` : p.name);
+  const paymentLabel = (p: PaymentAgent) => ((p.creditBalance ?? 0) > 0 ? `${p.name} - Credit: ${formatAmount(p.creditBalance ?? 0)}` : p.name);
 
   const updateLine = (id: string, patch: Partial<OrderLine>) =>
     setDraft((d) => ({
@@ -73,7 +73,7 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
   }, [selectedLabel, draft.paymentAgentSnapshot?.name, draft.paymentByName, draft.paymentAgentName, draft.paymentBy, paymentOpen]);
 
   return (
-    <div className="flex flex-col gap-3 px-5 py-4">
+    <div className="flex min-h-0 flex-col gap-2 px-3 py-2">
       {showOrderInfo ? (
         <section className="card p-3.5">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-[minmax(180px,0.7fr)_minmax(145px,0.55fr)_minmax(145px,0.55fr)_minmax(150px,0.55fr)_minmax(180px,0.7fr)]">
@@ -157,11 +157,11 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
         </section>
       ) : null}
 
-      <section className="card overflow-visible">
-        <div className="overflow-x-auto overflow-y-visible px-2 py-1.5">
-          <div className="flex justify-end px-2 pb-1 text-[11px] text-fg-subtle">{draft.lines.length} line{draft.lines.length === 1 ? "" : "s"}</div>
+      <section className={showOrderInfo ? "card overflow-visible" : "min-h-0 overflow-visible"}>
+        <div className="overflow-x-auto overflow-y-visible px-1 py-0.5">
+          <div className="flex justify-end px-1 pb-0.5 text-[10.5px] text-fg-subtle">{draft.lines.length} line{draft.lines.length === 1 ? "" : "s"}</div>
           <div className="min-w-[960px]">
-            <div className={`${LINE_GRID} border-b border-border px-2 py-1.5 text-[13px] font-medium uppercase tracking-wide text-fg-subtle`}>
+            <div className={`${LINE_GRID} border-b border-border/60 px-1.5 py-1 text-[11px] font-medium uppercase tracking-wide text-fg-subtle`}>
               <span className="text-center">Pic + Dim</span>
               <span className="text-center">Product</span>
               <span>MARKA</span>
@@ -172,7 +172,7 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
               <span className="text-center">Rate / PCS</span>
               <span className="text-center">Total Amount</span>
               <span className="text-center">Customer</span>
-              <span className="text-center">·</span>
+              <span className="text-center">|</span>
             </div>
 
             <div className="flex flex-col py-0.5">
@@ -191,12 +191,12 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
                   onPreviewImage={onPreviewImage}
                 />
               ))}
-              {draft.lines.length === 0 ? <div className="py-6 text-center text-[12.5px] text-fg-subtle">No lines yet — add your first line below.</div> : null}
+              {draft.lines.length === 0 ? <div className="py-4 text-center text-[12px] text-fg-subtle">No lines yet</div> : null}
             </div>
 
             <button
               onClick={addLine}
-              className="mt-1.5 w-full rounded-lg border border-dashed border-border bg-transparent py-2 text-[12.5px] text-fg-muted hover:bg-bg-subtle hover:text-fg transition-colors flex items-center justify-center gap-2"
+              className="mt-1 w-full rounded-md border border-dashed border-border/70 bg-transparent py-1.5 text-[12px] text-fg-muted transition-colors hover:bg-bg-subtle hover:text-fg flex items-center justify-center gap-1.5"
             >
               <Plus size={14} />
               Add New Line
@@ -207,3 +207,6 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
     </div>
   );
 }
+
+
+

@@ -51,7 +51,7 @@ export function PhotoUpload({
   dimLabel,
   onDimChange,
   compact,
-  ariaLabel = "Upload photo — click, drag, or paste",
+  ariaLabel = "Upload photo - click, drag, or paste",
   onUploadingChange,
   onPreview,
 }: Props) {
@@ -128,7 +128,7 @@ export function PhotoUpload({
     }
   };
 
-  const boxClasses = compact ? "h-[68px] w-full max-w-[72px] rounded-lg" : "h-[72px] w-full max-w-[110px] rounded-lg";
+  const boxClasses = compact ? "h-[60px] w-full max-w-[64px] rounded-md" : "h-[72px] w-full max-w-[110px] rounded-lg";
 
   useEffect(() => () => { clearLocalPreview(); }, []);
 
@@ -197,12 +197,12 @@ export function PhotoUpload({
         ) : compact ? (
           <div className="flex flex-col items-center gap-0.5 px-1 text-center">
             <Plus size={14} />
-            <span className="text-[8.5px] leading-tight text-fg-subtle">Click to select · Paste image · Double-click</span>
+            <span className="text-[8.5px] leading-tight text-fg-subtle">Click to select - Paste image - Double-click</span>
           </div>
         ) : (
           <div className="flex flex-col items-center gap-0.5 px-1 text-center">
             <div className="grid h-6 w-6 place-items-center rounded-full border border-dashed border-fg-subtle/60"><Plus size={13} /></div>
-            <span className="text-[9.5px] leading-tight text-fg-subtle">{dragOver ? "Drop image" : focused ? "Paste image now" : "Click to select · Paste image · Double-click to browse"}</span>
+            <span className="text-[9.5px] leading-tight text-fg-subtle">{dragOver ? "Drop image" : focused ? "Paste image now" : "Click to select - Paste image - Double-click to browse"}</span>
           </div>
         )}
         <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onPick} disabled={isUploading} />
@@ -225,3 +225,5 @@ export function PhotoUpload({
     </div>
   );
 }
+
+

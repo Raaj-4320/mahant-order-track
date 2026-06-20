@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -175,7 +175,7 @@ const createSaveTimingProfile = (label: string, meta?: Record<string, unknown>) 
       deltaMs: Number((entry.at - (index === 0 ? startedAt : steps[index - 1]!.at)).toFixed(2)),
       meta: entry.meta ? JSON.stringify(entry.meta) : "",
     }));
-    console.groupCollapsed(`[Orders Save Audit] ${label} · ${Number((finalAt - startedAt).toFixed(2))}ms`);
+    console.groupCollapsed(`[Orders Save Audit] ${label} | ${Number((finalAt - startedAt).toFixed(2))}ms`);
     console.table(rows);
     console.groupEnd();
   };
@@ -1968,7 +1968,7 @@ try {
     return line.details?.trim() ? [line.details.trim()] : [];
   };
   const getCardCustomerValue = (line: Order["lines"][number] | null) => {
-    return line ? getLineCustomerDisplay(line, customers) : "—";
+    return line ? getLineCustomerDisplay(line, customers) : "-";
   };
   const isLineMatchedByQuery = (line: Order["lines"][number]) => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -2141,7 +2141,7 @@ try {
 const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 58px 62px 76px 72px 118px minmax(108px,0.85fr) 108px minmax(108px,0.8fr) 104px";
   const fmtOrderDate = (order: Order) => {
     const raw = order.date || order.createdAt || order.updatedAt;
-    if (!raw) return "—";
+    if (!raw) return "-";
     const d = new Date(raw);
     if (Number.isNaN(d.getTime())) return formatDate(raw);
     return formatIndianDate(d);
@@ -2252,8 +2252,8 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
       <div className="flex flex-wrap items-center gap-2 px-5 py-3 border-b border-border bg-bg">
         <div className="min-w-[280px] flex-1 max-w-xl"><Input value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="Search order no., payment agent, WeChat, marka, details, customer, amounts, status, dates..." leadingIcon={<Search size={15} />} /></div>
         <div className="relative" ref={pickerRef}>
-          <Button size="sm" onClick={() => setPickerOpen((v) => !v)}><List size={14} /><span className="text-fg-muted">Order</span><span className="font-semibold">{(editingOrder?.number || draft.number || history[0]?.order.number || history[0]?.order.orderNumber || "—")}</span><ChevronDown size={13} /></Button>
-          {pickerOpen && <div className="absolute left-0 top-full z-20 mt-2 w-72 rounded-xl border border-border bg-bg-card p-1.5 shadow-card max-h-[320px] overflow-y-auto">{pickerOrders.slice(0,30).map((o) => <button key={o.id} onClick={() => { setPickerOpen(false); startEdit(o); }} className="block w-full rounded-md px-2.5 py-2 text-left text-[12.5px] hover:bg-bg-subtle transition-colors"><div className="flex items-center justify-between"><span className="text-[14px] font-semibold">{o.number || o.orderNumber || "Draft"}</span><span className="text-[11px] text-fg-subtle">{formatDate(o.date)}</span></div><div className="mt-0.5 text-[11.5px] text-fg-muted">{o.lines.length} lines Â· {formatFinalAmount(orderTotal(o))}</div></button>)}</div>}
+          <Button size="sm" onClick={() => setPickerOpen((v) => !v)}><List size={14} /><span className="text-fg-muted">Order</span><span className="font-semibold">{(editingOrder?.number || draft.number || history[0]?.order.number || history[0]?.order.orderNumber || "-")}</span><ChevronDown size={13} /></Button>
+          {pickerOpen && <div className="absolute left-0 top-full z-20 mt-2 w-72 rounded-xl border border-border bg-bg-card p-1.5 shadow-card max-h-[320px] overflow-y-auto">{pickerOrders.slice(0,30).map((o) => <button key={o.id} onClick={() => { setPickerOpen(false); startEdit(o); }} className="block w-full rounded-md px-2.5 py-2 text-left text-[12.5px] hover:bg-bg-subtle transition-colors"><div className="flex items-center justify-between"><span className="text-[14px] font-semibold">{o.number || o.orderNumber || "Draft"}</span><span className="text-[11px] text-fg-subtle">{formatDate(o.date)}</span></div><div className="mt-0.5 text-[11.5px] text-fg-muted">{o.lines.length} lines | {formatFinalAmount(orderTotal(o))}</div></button>)}</div>}
         </div>
         <div className="relative">
           <Button size="sm" variant="secondary" onClick={() => { setFilterOpen((prev) => !prev); }}><Filter size={14} />Filter</Button>
@@ -2299,7 +2299,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                   const totalCtns = getOrderTotalCtns(o);
                   const totalAmount = getOrderTotalAmount(o);
                   return <tr key={o.id} className="border-t border-border/80 hover:bg-bg-subtle/40 align-middle">
-                    <td className="px-4 py-3"><div className="grid h-10 w-10 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle">{photo ? <button type="button" title="Open image preview" aria-label="Open image preview" className="h-full w-full cursor-zoom-in" onClick={() => setPreviewImage({ src: photo, alt: "Draft line photo" })}><img src={photo} alt="draft line" className="h-full w-full object-cover" loading="lazy" decoding="async" /></button> : <span className="text-[10px] text-fg-subtle">—</span>}</div></td>
+                    <td className="px-4 py-3"><div className="grid h-10 w-10 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle">{photo ? <button type="button" title="Open image preview" aria-label="Open image preview" className="h-full w-full cursor-zoom-in" onClick={() => setPreviewImage({ src: photo, alt: "Draft line photo" })}><img src={photo} alt="draft line" className="h-full w-full object-cover" loading="lazy" decoding="async" /></button> : <span className="text-[10px] text-fg-subtle">-</span>}</div></td>
                     <td>{o.wechatId?.trim() ? <span>{o.wechatId.trim()}</span> : renderDraftMissing()}</td>
                     <td>{paymentMeta.isMissing ? renderDraftMissing() : <span>{paymentMeta.value}</span>}</td>
                     <td>{marka ? <span>{marka}</span> : renderDraftMissing()}</td>
@@ -2363,14 +2363,14 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                             order,
                             field: "customer",
                             line,
-                            displayValue: customerValue || "—",
+                            displayValue: customerValue || "-",
                             placeholder: "Set customer",
                             title: customerValue,
                             buttonClassName: cn("block w-full rounded-xl px-2 py-1 text-left text-[21px] font-bold leading-tight transition-colors hover:bg-white/70", customerMissing && "text-[var(--danger)]"),
                             inputClassName: "h-10 min-w-0 text-[15px] font-semibold",
                             listId: `outside-customer-${order.id}-${line.id}`,
                             listOptions: customerSuggestions,
-                          }) : <span className="min-w-0 break-words">—</span>}
+                          }) : <span className="min-w-0 break-words">-</span>}
                         </div>
                       </div>
                     </div>
@@ -2466,11 +2466,11 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                       order,
                       field: "marka",
                       line,
-                      displayValue: line.marka?.trim() || "—",
+                      displayValue: line.marka?.trim() || "-",
                       placeholder: "Set marka",
                       buttonClassName: "block w-full rounded-xl px-2 py-1 text-left text-[28px] font-extrabold leading-tight text-slate-950 transition-colors hover:bg-white/70",
                       inputClassName: "h-11 min-w-0 text-[18px] font-bold",
-                    }) : <div className="text-[28px] font-extrabold leading-tight text-slate-950">—</div>}
+                    }) : <div className="text-[28px] font-extrabold leading-tight text-slate-950">-</div>}
                     {row.extraLines.length > 0 ? <button type="button" className="mt-3 text-[13px] font-semibold text-brand transition-colors hover:underline" onClick={() => setExpandedOrderIds((prev) => ({ ...prev, [order.id]: !expanded }))}>{expanded ? "Show Less" : `See More (+${row.extraLines.length})`}</button> : null}
                     <div className="mt-5 text-[19px] leading-relaxed">
                       <span className="font-medium text-slate-500">WeChat: </span>
@@ -2486,7 +2486,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                           order,
                           field: "marka",
                           line: extraLine,
-                          displayValue: extraLine.marka?.trim() || "—",
+                          displayValue: extraLine.marka?.trim() || "-",
                           placeholder: "Set marka",
                           buttonClassName: "block w-full rounded-md px-1 py-0.5 text-left text-[15px] font-semibold transition-colors hover:bg-white/70",
                           inputClassName: "h-8 min-w-0 text-[12px] font-semibold",
@@ -2596,10 +2596,10 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                   <div className="text-[14px] font-bold">{row.order.number || row.order.orderNumber || "Draft"}</div>
                   <div className="text-[11px] text-fg-subtle">{getDisplayWechatId(row.order)}</div>
                 </div>
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-bg-subtle">{productPhoto ? <img src={getCloudinaryOptimizedUrl(productPhoto, { width: 80, height: 80, crop: "fit" })} alt="product" className="h-full w-full object-contain" /> : <span className="text-[10px] text-fg-subtle">—</span>}</div>
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-bg-subtle">{productPhoto ? <img src={getCloudinaryOptimizedUrl(productPhoto, { width: 80, height: 80, crop: "fit" })} alt="product" className="h-full w-full object-contain" /> : <span className="text-[10px] text-fg-subtle">-</span>}</div>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[14px] font-semibold">{row.line?.marka?.trim() || "—"}</div>
-                  <div className="truncate text-[12px] text-fg-subtle">{row.line ? getVisibleLineDetails(row.line).join(" · ") || "—" : "—"}</div>
+                  <div className="truncate text-[14px] font-semibold">{row.line?.marka?.trim() || "-"}</div>
+                  <div className="truncate text-[12px] text-fg-subtle">{row.line ? getVisibleLineDetails(row.line).join(" | ") || "-" : "-"}</div>
                 </div>
                 <div className="text-right">
                   <div className="text-[12px] text-fg-subtle">{getPaymentAgentMeta(row.order).value}</div>
@@ -2651,7 +2651,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                   const rate = selectedLine ? getLineRate(selectedLine) : 0;
                   const amount = getOrderTotalAmount(order);
                   const shippingAmount = getOrderShippingAmount(order);
-                  const marka = selectedLine?.marka?.trim() || "—";
+                  const marka = selectedLine?.marka?.trim() || "-";
                   const customerName = getCardCustomerValue(selectedLine);
                   const hasMultipleLines = orderLines.length > 1;
                   const customerMissing = isMissingCustomerDisplay(customerName);
@@ -2683,7 +2683,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                         })}
                       </div>
                       <div className="min-w-0 px-0.5 py-1.5">
-                        <div className="flex justify-center">{productPhoto ? <button type="button" onClick={() => setPreviewImage({ src: productPhoto, alt: "Product photo" })} className="grid h-[74px] w-[74px] shrink-0 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle"><img src={getCloudinaryOptimizedUrl(productPhoto, { width: 120, height: 120, crop: "fit" })} alt="product" className="h-full w-full object-contain" loading="lazy" decoding="async" /></button> : <span className="text-[10px] text-fg-subtle">—</span>}</div></div>
+                        <div className="flex justify-center">{productPhoto ? <button type="button" onClick={() => setPreviewImage({ src: productPhoto, alt: "Product photo" })} className="grid h-[74px] w-[74px] shrink-0 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle"><img src={getCloudinaryOptimizedUrl(productPhoto, { width: 120, height: 120, crop: "fit" })} alt="product" className="h-full w-full object-contain" loading="lazy" decoding="async" /></button> : <span className="text-[10px] text-fg-subtle">-</span>}</div></div>
                       <div className="min-w-0 px-1 py-1.5 text-center">
                         <div className="flex items-center justify-center gap-1.5">
                           {hasMultipleLines ? (
@@ -2707,7 +2707,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                               title: marka,
                               buttonClassName: "block w-full rounded-md px-1 py-1 text-center text-[14px] font-semibold leading-[1.2] whitespace-normal break-normal [overflow-wrap:normal] [word-break:normal] transition-colors hover:bg-bg-subtle",
                               inputClassName: "h-8 min-w-0 text-[12px]",
-                            }) : <div className="text-[14px] font-semibold leading-[1.2]">—</div>}
+                            }) : <div className="text-[14px] font-semibold leading-[1.2]">-</div>}
                           </div>
                           {hasMultipleLines ? <span className="shrink-0 text-[11px] font-semibold text-fg-subtle">{`${selectedLineIndex + 1}/${orderLines.length}`}</span> : null}
                           {hasMultipleLines ? (
@@ -2849,28 +2849,32 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
         }}
       />
       </main>
-      {isOrderModalOpen && <div className="fixed inset-0 z-50 bg-black/45 p-3 md:p-6">
-        <div className="relative mx-auto w-full max-w-[1400px] h-[90vh] rounded-2xl border border-border bg-bg-card shadow-card flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
-          <div className="border-b border-border px-4 py-3 space-y-2">
-            <div className="flex items-center justify-between gap-3">
+      {isOrderModalOpen && <div className="fixed inset-0 z-50 bg-black/45 p-2 md:p-4">
+        <div className="relative mx-auto flex h-[88vh] w-full max-w-[1500px] flex-col overflow-hidden rounded-2xl border border-border bg-bg-card shadow-card" onClick={(e) => e.stopPropagation()}>
+          <div className="border-b border-border/70 px-3 py-2">
+            <div className="flex items-start justify-between gap-3">
               <div>
-                <h3 className="text-[18px] font-semibold">{editingOrder ? (editingOrder.status === "draft" ? "Complete Draft" : "Edit Order") : "Add Order"}</h3>
-                {isFirebaseOrdersMode && <div className="text-[11px] text-fg-subtle mt-0.5">{autosaveStatus === "saving" ? "Saving draft..." : autosaveStatus === "saved" ? "Draft saved" : autosaveStatus === "error" ? "Draft autosave failed" : ""}</div>}
+                <h3 className="text-[17px] font-semibold leading-tight">{editingOrder ? (editingOrder.status === "draft" ? "Complete Draft" : "Edit Order") : "Add Order"}</h3>
+                {isFirebaseOrdersMode && <div className="mt-0.5 text-[10.5px] text-fg-subtle">{autosaveStatus === "saving" ? "Saving draft..." : autosaveStatus === "saved" ? "Draft saved" : autosaveStatus === "error" ? "Draft autosave failed" : ""}</div>}
               </div>
               <Button size="sm" variant="secondary" onClick={requestExitComposer} aria-label="Close order editor"><X size={16} /></Button>
             </div>
-            <div className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-[minmax(340px,1.15fr)_minmax(145px,0.55fr)_minmax(145px,0.55fr)_minmax(420px,1.2fr)_minmax(220px,0.8fr)]">
-              <PaymentAgentHeaderPicker
-                splits={getEditablePaymentAgentSplits(draft)}
-                paymentAgents={paymentAgents}
-                onChange={setDraftPaymentAgentSplits}
-                onAdd={() => setDraftPaymentAgentSplits((current) => [...current, createEmptyPaymentAgentSplit()])}
-                onRemove={(splitId) => setDraftPaymentAgentSplits((current) => current.length <= 1 ? [createEmptyPaymentAgentSplit()] : current.filter((split) => split.id !== splitId))}
-              />
-              <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Date</span><Input type="date" value={draft.date} onChange={(e)=>setDraft((d)=>({...d,date:e.target.value}))} /></label>
-              <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Loading Date</span><Input type="date" value={draft.loadingDate || ""} onChange={(e)=>setDraft((d)=>({...d,loadingDate:e.target.value || undefined}))} /></label>
-              <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>Order Number</span><div className="space-y-2"><div className="grid grid-cols-1 gap-2 xl:grid-cols-[minmax(190px,0.95fr)_minmax(0,1.15fr)_auto]"><div className="relative" ref={seriesPickerRef}><button type="button" className={cn("flex h-10 w-full items-center justify-between rounded-xl border border-border bg-bg-card px-3 text-left text-[12.5px] shadow-sm transition-colors", seriesPickerOpen ? "border-brand ring-2 ring-brand/15" : "hover:border-border-strong hover:bg-bg-subtle/40", (isOrderSeriesLoading || orderSeries.length === 0) && "cursor-not-allowed opacity-70")} onClick={() => { if (!isOrderSeriesLoading && orderSeries.length > 0) setSeriesPickerOpen((open) => !open); }} disabled={isOrderSeriesLoading || orderSeries.length === 0}><div className="min-w-0 truncate font-semibold text-fg">{selectedOrderSeries ? getSeriesSuggestion(selectedOrderSeries) : isOrderSeriesLoading ? "Loading series..." : "No series yet"}</div><ChevronDown size={15} className={cn("ml-3 shrink-0 text-fg-subtle transition-transform", seriesPickerOpen && "rotate-180")} /></button>{seriesPickerOpen ? <div className="absolute left-0 top-full z-40 mt-2 w-[320px] max-w-[calc(100vw-3rem)] overflow-hidden rounded-2xl border border-border bg-bg-card shadow-card"><div className="border-b border-border/80 px-3 py-2"><div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-fg-subtle">Order Series</div></div><div className="max-h-72 overflow-y-auto p-1.5">{seriesSuggestions.map((series) => <button key={series.id} type="button" className={cn("block w-full rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-bg-subtle", selectedOrderSeries?.id === series.id && "bg-bg-subtle")} onClick={() => handleSeriesChange(series.id)}><div className="text-[13px] font-semibold text-fg">{series.suggestion}</div></button>)}<button type="button" className="mt-1 block w-full rounded-xl border border-dashed border-border px-3 py-2.5 text-left transition-colors hover:border-brand hover:bg-bg-subtle" onClick={openCreateSeriesModal}><div className="text-[13px] font-semibold text-fg">+ Add New Series</div></button></div></div> : null}</div><Input className="min-w-0" value={draft.number} onChange={(e)=>handleOrderNumberInputChange(e.target.value)} placeholder={selectedOrderSeries ? getSeriesSuggestion(selectedOrderSeries) : orderSeries.length ? "Type full order number" : "Create a series first"} /><Button type="button" size="sm" variant="secondary" className="h-10 whitespace-nowrap px-4 text-[12.5px]" onClick={openCreateSeriesModal}>Add New Series</Button></div>{orderSeries.length === 0 ? <div className="text-[11px] text-amber-700">No order number series yet. Create one before saving a new order number.</div> : null}</div></label>
-              <label className="flex flex-col gap-1 text-[11.5px] text-fg-muted"><span>WeChat ID</span><div className="relative"><Input value={draft.wechatId} onFocus={() => setHeaderWechatOpen(true)} onBlur={() => window.setTimeout(() => setHeaderWechatOpen(false), 120)} onChange={(e)=>{const next=e.target.value; setHeaderWechatOpen(true); setDraft((d)=>({...d,wechatId:next}));}} />{headerWechatOpen && headerWechatSuggestions.length>0 ? <div className="absolute z-30 mt-1 max-h-44 w-full overflow-auto rounded-lg border border-border bg-bg-card shadow-card">{headerWechatSuggestions.map((w)=><button key={w} type="button" className="block w-full px-2 py-1.5 text-left text-[12px] hover:bg-bg-subtle" onMouseDown={(e)=>{e.preventDefault(); setHeaderWechatOpen(false); setDraft((d)=>({...d,wechatId:w}));}}>{w}</button>)}</div> : null}</div></label>
+            <div className="mt-2 flex items-start gap-3">
+              <div className="min-w-[420px] max-w-[620px] flex-1">
+                <PaymentAgentHeaderPicker
+                  splits={getEditablePaymentAgentSplits(draft)}
+                  paymentAgents={paymentAgents}
+                  onChange={setDraftPaymentAgentSplits}
+                  onAdd={() => setDraftPaymentAgentSplits((current) => [...current, createEmptyPaymentAgentSplit()])}
+                  onRemove={(splitId) => setDraftPaymentAgentSplits((current) => current.length <= 1 ? [createEmptyPaymentAgentSplit()] : current.filter((split) => split.id !== splitId))}
+                />
+              </div>
+              <div className="grid min-w-0 flex-[1.45] grid-cols-[112px_128px_minmax(360px,1fr)_180px] gap-2">
+                <label className="flex flex-col gap-0.5 text-[10.5px] text-fg-muted"><span>Date</span><Input className="h-10 px-3 text-[12px]" type="date" value={draft.date} onChange={(e)=>setDraft((d)=>({...d,date:e.target.value}))} /></label>
+                <label className="flex flex-col gap-0.5 text-[10.5px] text-fg-muted"><span>Loading Date</span><Input className="h-10 px-3 text-[12px]" type="date" value={draft.loadingDate || ""} onChange={(e)=>setDraft((d)=>({...d,loadingDate:e.target.value || undefined}))} /></label>
+                <label className="flex flex-col gap-0.5 text-[10.5px] text-fg-muted"><span>Order Number / Series</span><div className="grid grid-cols-[170px_minmax(0,1fr)_132px] gap-2"><div className="relative" ref={seriesPickerRef}><button type="button" className={cn("flex h-10 w-full items-center justify-between rounded-xl border border-border/60 bg-bg-card px-3 text-left text-[12px] shadow-none transition-colors", seriesPickerOpen ? "border-brand ring-2 ring-brand/15" : "hover:border-border-strong hover:bg-bg-subtle/40", (isOrderSeriesLoading || orderSeries.length === 0) && "cursor-not-allowed opacity-70")} onClick={() => { if (!isOrderSeriesLoading && orderSeries.length > 0) setSeriesPickerOpen((open) => !open); }} disabled={isOrderSeriesLoading || orderSeries.length === 0}><div className="min-w-0 truncate font-semibold text-fg">{selectedOrderSeries ? getSeriesSuggestion(selectedOrderSeries) : isOrderSeriesLoading ? "Loading series..." : "No series yet"}</div><ChevronDown size={14} className={cn("ml-2 shrink-0 text-fg-subtle transition-transform", seriesPickerOpen && "rotate-180")} /></button>{seriesPickerOpen ? <div className="absolute left-0 top-full z-40 mt-2 w-[320px] max-w-[calc(100vw-3rem)] overflow-hidden rounded-2xl border border-border bg-bg-card shadow-card"><div className="border-b border-border/80 px-3 py-2"><div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-fg-subtle">Order Series</div></div><div className="max-h-72 overflow-y-auto p-1.5">{seriesSuggestions.map((series) => <button key={series.id} type="button" className={cn("block w-full rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-bg-subtle", selectedOrderSeries?.id === series.id && "bg-bg-subtle")} onClick={() => handleSeriesChange(series.id)}><div className="text-[13px] font-semibold text-fg">{series.suggestion}</div></button>)}<button type="button" className="mt-1 block w-full rounded-xl border border-dashed border-border px-3 py-2.5 text-left transition-colors hover:border-brand hover:bg-bg-subtle" onClick={openCreateSeriesModal}><div className="text-[13px] font-semibold text-fg">+ Add New Series</div></button></div></div> : null}</div><Input className="min-w-0 h-10 px-3 text-[12px]" value={draft.number} onChange={(e)=>handleOrderNumberInputChange(e.target.value)} placeholder={selectedOrderSeries ? getSeriesSuggestion(selectedOrderSeries) : orderSeries.length ? "Type full order number" : "Create a series first"} /><Button type="button" size="sm" variant="secondary" className="h-10 whitespace-nowrap px-3 text-[12px]" onClick={openCreateSeriesModal}>Add New Series</Button></div>{orderSeries.length === 0 ? <div className="pt-0.5 text-[10.5px] text-amber-700">No order number series yet. Create one before saving a new order number.</div> : null}</label>
+                <label className="flex flex-col gap-0.5 text-[10.5px] text-fg-muted"><span>WeChat ID</span><div className="relative"><Input className="h-10 px-3 text-[12px]" value={draft.wechatId} onFocus={() => setHeaderWechatOpen(true)} onBlur={() => window.setTimeout(() => setHeaderWechatOpen(false), 120)} onChange={(e)=>{const next=e.target.value; setHeaderWechatOpen(true); setDraft((d)=>({...d,wechatId:next}));}} />{headerWechatOpen && headerWechatSuggestions.length>0 ? <div className="absolute z-30 mt-1 max-h-44 w-full overflow-auto rounded-lg border border-border bg-bg-card shadow-card">{headerWechatSuggestions.map((w)=><button key={w} type="button" className="block w-full px-2 py-1.5 text-left text-[12px] hover:bg-bg-subtle" onMouseDown={(e)=>{e.preventDefault(); setHeaderWechatOpen(false); setDraft((d)=>({...d,wechatId:w}));}}>{w}</button>)}</div> : null}</div></label>
+              </div>
             </div>
           </div>
           {validationWarning.visible ? <div className="absolute left-1/2 top-[84px] z-[70] w-[92%] max-w-[560px] -translate-x-1/2 rounded-xl border border-amber-400 bg-amber-50 p-3 shadow-lg">
@@ -2889,7 +2893,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
         </div>
       </div>}
       {showExitConfirm ? <div className="fixed inset-0 z-[65] bg-black/50 grid place-items-center p-4"><div className="card w-full max-w-lg p-4 space-y-3"><div className="text-lg font-semibold">{editingOrderId ? "Save changes before closing?" : "Save order before closing?"}</div><div className="text-sm text-fg-subtle">{editingOrderId ? "You made changes to this order. Save them now or discard them." : "Save this order as a draft before closing, or discard it."}</div><div className="flex flex-wrap justify-end gap-2"><Button variant="secondary" onClick={() => { setShowExitConfirm(false); resetOrderComposer(); }}>{editingOrderId ? "Discard Changes" : "Discard Order"}</Button><Button variant="primary" onClick={() => { setShowExitConfirm(false); void onSave(editingOrderId ? "saved" : "draft", true); }}>{editingOrderId ? "Save Changes" : "Save Draft"}</Button></div></div></div> : null}
-      {showCreateSeriesModal ? <div className="fixed inset-0 z-[75] bg-black/50 grid place-items-center p-4" onClick={() => { if (!seriesCreateBusy) setShowCreateSeriesModal(false); }}><div className="card w-full max-w-md p-4 space-y-4" onClick={(e) => e.stopPropagation()}><div className="space-y-1"><div className="text-lg font-semibold">Add New Series</div><div className="text-sm text-fg-subtle">Create a new order number series and switch this order to it immediately.</div></div><label className="flex flex-col gap-1 text-sm text-fg-muted"><span>Series Label</span><Input value={seriesForm.label} onChange={(e) => { setSeriesCreateError(""); setSeriesForm((prev) => ({ ...prev, label: e.target.value })); }} placeholder="LLL" autoFocus /></label><label className="flex flex-col gap-1 text-sm text-fg-muted"><span>Starting Number</span><Input value={seriesForm.startNumber} onChange={(e) => { setSeriesCreateError(""); setSeriesForm((prev) => ({ ...prev, startNumber: e.target.value.replace(/[^\d]/g, "") })); }} placeholder="501" inputMode="numeric" /></label><div className="rounded-lg border border-border bg-bg-subtle px-3 py-2"><div className="text-[11px] uppercase tracking-wide text-fg-subtle">Preview</div><div className="mt-1 text-base font-semibold text-fg">{seriesPreview || "—"}</div></div>{seriesCreateError ? <div className="text-sm text-[var(--danger)]">{seriesCreateError}</div> : null}<div className="flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setShowCreateSeriesModal(false)} disabled={seriesCreateBusy}>Cancel</Button><Button type="button" variant="primary" onClick={() => { void handleCreateSeries(); }} disabled={seriesCreateBusy}>{seriesCreateBusy ? "Creating..." : "Create Series"}</Button></div></div></div> : null}
+      {showCreateSeriesModal ? <div className="fixed inset-0 z-[75] bg-black/50 grid place-items-center p-4" onClick={() => { if (!seriesCreateBusy) setShowCreateSeriesModal(false); }}><div className="card w-full max-w-md p-4 space-y-4" onClick={(e) => e.stopPropagation()}><div className="space-y-1"><div className="text-lg font-semibold">Add New Series</div><div className="text-sm text-fg-subtle">Create a new order number series and switch this order to it immediately.</div></div><label className="flex flex-col gap-1 text-sm text-fg-muted"><span>Series Label</span><Input value={seriesForm.label} onChange={(e) => { setSeriesCreateError(""); setSeriesForm((prev) => ({ ...prev, label: e.target.value })); }} placeholder="LLL" autoFocus /></label><label className="flex flex-col gap-1 text-sm text-fg-muted"><span>Starting Number</span><Input value={seriesForm.startNumber} onChange={(e) => { setSeriesCreateError(""); setSeriesForm((prev) => ({ ...prev, startNumber: e.target.value.replace(/[^\d]/g, "") })); }} placeholder="501" inputMode="numeric" /></label><div className="rounded-lg border border-border bg-bg-subtle px-3 py-2"><div className="text-[11px] uppercase tracking-wide text-fg-subtle">Preview</div><div className="mt-1 text-base font-semibold text-fg">{seriesPreview || "-"}</div></div>{seriesCreateError ? <div className="text-sm text-[var(--danger)]">{seriesCreateError}</div> : null}<div className="flex justify-end gap-2"><Button type="button" variant="secondary" onClick={() => setShowCreateSeriesModal(false)} disabled={seriesCreateBusy}>Cancel</Button><Button type="button" variant="primary" onClick={() => { void handleCreateSeries(); }} disabled={seriesCreateBusy}>{seriesCreateBusy ? "Creating..." : "Create Series"}</Button></div></div></div> : null}
       {showDraftIncompleteConfirm && <div className="fixed inset-0 z-[60] bg-black/50 grid place-items-center p-4"><div className="card w-full max-w-lg p-4 space-y-3"><div className="text-lg font-semibold">Save incomplete draft?</div><div className="text-sm text-fg-subtle">This draft has empty required fields. Save it anyway?</div><div className="flex justify-end gap-2"><Button variant="secondary" onClick={() => setShowDraftIncompleteConfirm(false)}>Cancel</Button><Button variant="primary" onClick={() => onSave("draft", true)}>Save Draft Anyway</Button></div></div></div>}
       <ConfirmDialog
         open={Boolean(pendingDeleteOrder)}
@@ -2904,9 +2908,11 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
       <LoadingOverlay
         open={orderSaveState === "saving"}
         title={orderSaveState === "saving" ? "Saving order" : "Loading"}
-        message={orderSaveState === "saving" ? "Saving your order now…" : "Fetching the latest data…"}
+        message={orderSaveState === "saving" ? "Saving your order now..." : "Fetching the latest data..."}
       />
       <OrderLinesDetailModal order={viewOrder} isOpen={!!viewOrder} onClose={() => setViewOrder(null)} />
     </div>
   );
 }
+
+

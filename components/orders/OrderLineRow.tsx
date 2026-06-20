@@ -25,7 +25,7 @@ type Props = {
 
 // Columns: pic+dim | product | marka | details | ctns | pcs/ctn | total pcs | rmb/pcs | line total | customer | action
 export const LINE_GRID =
-  "grid grid-cols-[72px_72px_minmax(0,0.6fr)_minmax(0,0.6fr)_56px_76px_60px_76px_132px_minmax(0,0.5fr)_28px] items-center gap-1.5";
+  "grid grid-cols-[64px_64px_minmax(0,0.58fr)_minmax(0,0.62fr)_54px_72px_58px_72px_112px_minmax(0,0.48fr)_24px] items-center gap-1";
 
 export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, customerSuggestions = [], customers = [], onPreviewImage, onCustomerValidityChange }: Props) {
   const pcs = lineTotalPcs(line);
@@ -92,7 +92,7 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
 
   return (
     <div
-      className={`${LINE_GRID} px-2 py-2 text-[13.75px] hover:bg-bg-subtle/60 transition-colors rounded-lg`}
+      className={`${LINE_GRID} rounded-md px-1.5 py-1 text-[12.75px] transition-colors hover:bg-bg-subtle/40`}
     >
       <PhotoUpload
         compact
@@ -119,7 +119,7 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
         placeholder="MARKA"
       />
 
-      <div className="grid grid-cols-3 gap-1">
+      <div className="grid grid-cols-3 gap-0.5">
         <Input compact value={detailParts.detail1} onChange={(e) => onChange({ detail1: e.target.value })} placeholder="Detail 1" />
         <Input compact value={detailParts.detail2} onChange={(e) => onChange({ detail2: e.target.value })} placeholder="Detail 2" />
         <Input compact value={detailParts.detail3} onChange={(e) => onChange({ detail3: e.target.value })} placeholder="Detail 3" />
@@ -151,7 +151,7 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
         onWheel={(e) => (e.currentTarget as HTMLInputElement).blur()}
       />
 
-      <div className="text-center font-semibold text-[var(--success)] tabular-nums">
+      <div className="text-center text-[12px] font-semibold text-[var(--success)] tabular-nums">
         {formatAmount(pcs)}
       </div>
 
@@ -168,7 +168,7 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
         onWheel={(e) => (e.currentTarget as HTMLInputElement).blur()}
       />
 
-      <div className="rounded-md border border-border/70 bg-bg-subtle px-2 py-1 text-center tabular-nums leading-tight text-[14.5px] font-semibold">
+      <div className="rounded-md border border-border/50 bg-bg-subtle/60 px-1.5 py-1 text-center tabular-nums leading-tight text-[13px] font-semibold">
         <span className={totalRmb > 0 ? "text-fg" : "text-[var(--danger)]"}>{formatWholeMoney(totalRmb)}</span>
       </div>
 
@@ -193,6 +193,7 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
             setCustomerOpen(true);
           }}
           placeholder="Customer"
+          className="text-[12px]"
         />
         {customerOpen ? (
           <div className="absolute left-0 top-full z-50 mt-1 max-h-44 w-full overflow-auto rounded-xl border border-black/10 bg-white shadow-[0_12px_30px_rgba(15,23,42,0.12)]">
@@ -218,9 +219,9 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
       <button
         onClick={onRemove}
         aria-label="Remove line"
-        className="mx-auto grid h-6 w-6 place-items-center rounded-md text-[var(--danger)] hover:bg-[var(--danger)]/10 transition-colors"
+        className="mx-auto grid h-5 w-5 place-items-center rounded text-[var(--danger)] transition-colors hover:bg-[var(--danger)]/10"
       >
-        <Trash2 size={14} />
+        <Trash2 size={13} />
       </button>
     </div>
   );

@@ -62,17 +62,31 @@ export function PaymentAgentSplitsEditor({
   };
 
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-center gap-4 border-b border-border/50 pb-2 text-[12px]">
+    <div className="space-y-1">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border/45 pb-1 text-[11.5px]">
         <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-fg-subtle">Distribution</span>
         <span className="font-medium text-fg">Total: {fmt(totalAmount)}</span>
+        <span className="font-medium text-fg">Assigned: {fmt(totalAssigned)}</span>
         <span className={cn("font-medium", amountLeft === 0 ? "text-emerald-700" : "text-amber-700")}>
           Left: {fmt(amountLeft)}
         </span>
         {duplicateCount > 0 ? <span className="text-[11px] text-rose-600">Duplicate payment agents must be removed before saving.</span> : null}
       </div>
 
-      <div className="space-y-1.5">
+      {visibleSplits.length === 0 ? (
+        <div className="py-1 text-[11px] text-fg-subtle">No payment agent selected</div>
+      ) : null}
+
+      <div className="space-y-0.5">
+        {visibleSplits.length > 0 ? (
+          <div className="grid grid-cols-[minmax(160px,1.35fr)_90px_90px_92px_92px] items-center gap-2 px-1 text-[10px] font-medium uppercase tracking-wide text-fg-subtle">
+            <span>Agent Name</span>
+            <span>Assigned</span>
+            <span>Paid Now</span>
+            <span className="text-right">Pending Due</span>
+            <span className="text-right">Credit Left</span>
+          </div>
+        ) : null}
         {visibleSplits.map((split, index) => {
           const agent =
             paymentAgents.find((candidate) => candidate.id === split.paymentAgentId)
@@ -87,64 +101,53 @@ export function PaymentAgentSplitsEditor({
           const label = getSplitLabel(split) || "Select payment agent above";
 
           return (
-            <div key={split.id} className="grid grid-cols-1 gap-2 border-b border-border/35 py-1.5 last:border-b-0 md:grid-cols-[minmax(170px,1.2fr)_120px_120px_100px_100px] md:items-center md:gap-3">
+            <div key={split.id} className="grid grid-cols-[minmax(160px,1.35fr)_90px_90px_92px_92px] items-center gap-2 border-b border-border/25 py-1 last:border-b-0">
               <div className="min-w-0">
-                <div className="truncate text-[12.5px] font-medium text-fg">{label}</div>
-                <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[10.5px] text-fg-subtle">
-                  <span>{index === 0 ? "Primary" : `Agent ${index + 1}`}</span>
-                  <span>Credit used: {fmt(settlement.creditUsed)}</span>
-                </div>
+                <div className="truncate text-[12px] font-medium text-fg">{label}</div>
+                <div className="truncate text-[10px] text-fg-subtle">{index === 0 ? "Primary" : `Agent ${index + 1}`}</div>
               </div>
 
-                <label className="flex flex-col gap-0.5">
-                  <span className="text-[10px] text-fg-subtle">Assigned</span>
-                  <Input
-                    type="text"
-                    inputMode="decimal"
-                    value={split.assignedAmount ? String(split.assignedAmount) : ""}
-                    onChange={(event) => {
-                      const nextValue = event.target.value;
-                      if (nextValue === "" || /^\d*\.?\d*$/.test(nextValue)) {
-                        updateSplit(split.id, (current) => ({
-                          ...current,
-                          assignedAmount: nextValue === "" ? 0 : Number(nextValue),
-                        }));
-                      }
-                    }}
-                    placeholder="0"
-                    className="h-8 rounded-lg border-border/60 bg-bg-card text-[12px] shadow-none"
-                  />
-                </label>
+              <label className="block">
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  value={split.assignedAmount ? String(split.assignedAmount) : ""}
+                  onChange={(event) => {
+                    const nextValue = event.target.value;
+                    if (nextValue === "" || /^\d*\.?\d*$/.test(nextValue)) {
+                      updateSplit(split.id, (current) => ({
+                        ...current,
+                        assignedAmount: nextValue === "" ? 0 : Number(nextValue),
+                      }));
+                    }
+                  }}
+                  placeholder="0"
+                  className="h-8 rounded-lg border-border/55 bg-bg-card px-2 text-[12px] shadow-none"
+                />
+              </label>
 
-                <label className="flex flex-col gap-0.5">
-                  <span className="text-[10px] text-fg-subtle">Paid now</span>
-                  <Input
-                    type="text"
-                    inputMode="decimal"
-                    value={split.paidNow ? String(split.paidNow) : ""}
-                    onChange={(event) => {
-                      const nextValue = event.target.value;
-                      if (nextValue === "" || /^\d*\.?\d*$/.test(nextValue)) {
-                        updateSplit(split.id, (current) => ({
-                          ...current,
-                          paidNow: nextValue === "" ? 0 : Number(nextValue),
-                        }));
-                      }
-                    }}
-                    placeholder="0"
-                    className="h-8 rounded-lg border-border/60 bg-bg-card text-[12px] shadow-none"
-                  />
-                </label>
+              <label className="block">
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  value={split.paidNow ? String(split.paidNow) : ""}
+                  onChange={(event) => {
+                    const nextValue = event.target.value;
+                    if (nextValue === "" || /^\d*\.?\d*$/.test(nextValue)) {
+                      updateSplit(split.id, (current) => ({
+                        ...current,
+                        paidNow: nextValue === "" ? 0 : Number(nextValue),
+                      }));
+                    }
+                  }}
+                  placeholder="0"
+                  className="h-8 rounded-lg border-border/55 bg-bg-card px-2 text-[12px] shadow-none"
+                />
+              </label>
 
-                <div className="flex flex-col gap-0.5 text-[10px] text-fg-subtle md:items-end">
-                  <span>Pending/Due</span>
-                  <span className="text-[12px] font-medium text-fg">{fmt(settlement.remainingPayable)}</span>
-                </div>
+              <div className="text-right text-[12px] font-medium text-fg">{fmt(settlement.remainingPayable)}</div>
 
-                <div className="flex flex-col gap-0.5 text-[10px] text-fg-subtle md:items-end">
-                  <span>Credit left</span>
-                  <span className="text-[12px] font-medium text-fg">{fmt(settlement.resultingCreditBalance)}</span>
-                </div>
+              <div className="text-right text-[12px] font-medium text-fg">{fmt(settlement.resultingCreditBalance)}</div>
             </div>
           );
         })}

@@ -40,7 +40,7 @@ function Metric({
   const isZero = zeroDanger && value.replace(/,/g, "") === "0";
 
   return (
-    <div className="px-2 py-1">
+    <div className="px-1.5 py-0.5">
       <div className="text-[10px] uppercase tracking-wide text-fg-subtle">{label}</div>
       <div
         className={cn(
@@ -87,7 +87,7 @@ export function OrderFooter({
   }, [shippingPrice]);
 
   return (
-    <footer className="sticky bottom-0 z-20 border-t border-border/70 bg-bg-card px-5 py-2">
+    <footer className="border-t border-border/70 bg-bg-card px-3 py-1.5">
       <div className="space-y-2">
         <PaymentAgentSplitsEditor
           splits={paymentAgentSplits}
@@ -96,10 +96,10 @@ export function OrderFooter({
           onChange={onPaymentAgentSplitsChange}
         />
 
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-          <div className="flex flex-wrap items-center gap-1 sm:gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-0.5">
+          <div className="flex flex-wrap items-center gap-1 sm:gap-1.5">
             <Metric label="Lines" value={fmtFinal(lineTotal)} zeroDanger />
-            <div className="px-2 py-1">
+            <div className="px-1.5 py-0.5">
               <div className="text-[10px] uppercase tracking-wide text-fg-subtle">Shipping</div>
               <input
                 type="number"
@@ -125,7 +125,7 @@ export function OrderFooter({
             <Metric label="Total" value={fmtFinal(total)} tone="warning" zeroDanger />
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5 border-l border-border/40 pl-2">
             <Button size="sm" variant="secondary" onClick={onSaveDraft} disabled={disableSaveDraft}>{saveDraftLabel}</Button>
             <Button size="sm" variant="secondary" onClick={onViewDetails}>View Order Details -&gt;</Button>
             <Button
