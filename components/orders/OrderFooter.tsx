@@ -131,7 +131,7 @@ export function OrderFooter({
         <div className="relative min-w-0 lg:h-[192px] lg:w-[52%]">
           <div
             className={cn(
-              "absolute inset-x-0 bottom-0 rounded-2xl border border-border/60 bg-bg-subtle/10 transition-all duration-300 ease-out",
+              "absolute inset-x-0 bottom-0 rounded-2xl border border-border/60 bg-bg-card transition-all duration-300 ease-out",
               isBreakdownExpanded
                 ? "z-30 shadow-[0_-24px_80px_rgba(15,23,42,0.12)]"
                 : "z-10",

@@ -19,7 +19,7 @@ type Props = {
 
 const normalizeValue = (value?: string | null) => (value || "").trim().toLowerCase();
 const fmt = (value: number) => formatAmount(value);
-const SPLIT_GRID = "grid grid-cols-[minmax(200px,1.15fr)_minmax(84px,104px)_minmax(84px,104px)_minmax(92px,112px)_minmax(92px,112px)] items-center gap-3";
+const SPLIT_GRID = "grid grid-cols-[minmax(220px,1.2fr)_minmax(96px,112px)_minmax(96px,112px)_minmax(108px,124px)_minmax(108px,124px)] items-center gap-3";
 const PILL_CLASS = "rounded-full border border-border/60 bg-bg-card px-3 py-1.5 font-medium text-fg";
 const VALUE_BOX_CLASS = "rounded-xl px-3 py-2 text-right text-[12px] font-semibold";
 
@@ -70,7 +70,7 @@ export function PaymentAgentSplitsEditor({
   };
 
   return (
-    <div className={cn("rounded-xl bg-bg-subtle/10 px-2.5 py-2", expanded && "px-3 py-2.5")}>
+    <div className={cn("rounded-xl bg-bg-subtle/10 px-2.5 py-2", expanded && "bg-bg-card px-3 py-2.5")}>
       <button
         type="button"
         onClick={onToggleExpand}
@@ -98,22 +98,20 @@ export function PaymentAgentSplitsEditor({
 
       <div className={cn("mt-1 space-y-2", expanded && "space-y-2.5")}>
         {visibleSplits.length > 0 ? (
-          <div className="px-2 py-0.5">
-            <div className={cn("grid items-end gap-x-3 gap-y-2", expanded ? "grid-cols-[minmax(0,1fr)_auto]" : "grid-cols-1")}>
-              <div className={`${SPLIT_GRID} text-[10px] font-semibold uppercase tracking-[0.1em] text-fg-subtle`}>
-                <span>Agent Name</span>
-                <span>Assigned</span>
-                <span>Paid Now</span>
-                <span className="text-right">Pending Due</span>
-                <span className="text-right">Credit Left</span>
-              </div>
-              <div className="flex flex-wrap items-center justify-start gap-2 whitespace-nowrap text-[11px] lg:justify-end">
-                <span className={PILL_CLASS}>Total: {fmt(totalAmount)}</span>
-                <span className={PILL_CLASS}>Assigned: {fmt(totalAssigned)}</span>
-                <span className={cn("rounded-full border px-3 py-1.5 font-medium", amountLeft === 0 ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700" : "border-amber-500/25 bg-amber-500/10 text-amber-700")}>
-                  Left: {fmt(amountLeft)}
-                </span>
-              </div>
+          <div className="space-y-2 px-2 py-0.5">
+            <div className={`${SPLIT_GRID} text-[10px] font-semibold uppercase tracking-[0.1em] text-fg-subtle`}>
+              <span>Agent Name</span>
+              <span className="text-center">Assigned</span>
+              <span className="text-center">Paid Now</span>
+              <span className="text-right">Pending Due</span>
+              <span className="text-right">Credit Left</span>
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-2 text-[11px]">
+              <span className={PILL_CLASS}>Total: {fmt(totalAmount)}</span>
+              <span className={PILL_CLASS}>Assigned: {fmt(totalAssigned)}</span>
+              <span className={cn("rounded-full border px-3 py-1.5 font-medium", amountLeft === 0 ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700" : "border-amber-500/25 bg-amber-500/10 text-amber-700")}>
+                Left: {fmt(amountLeft)}
+              </span>
             </div>
           </div>
         ) : null}

@@ -2866,7 +2866,55 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                 <label className="flex flex-col gap-1.5 text-[14px] text-fg-muted"><span className="font-medium tracking-[0.01em]">Date</span><Input className="h-10 rounded-xl px-3 text-[13px]" type="date" value={draft.date} onChange={(e)=>setDraft((d)=>({...d,date:e.target.value}))} /></label>
               </section>
               <section className="min-w-0 xl:col-span-1">
-                <label className="flex flex-col gap-1.5 text-[14px] text-fg-muted"><span className="font-medium tracking-[0.01em]">Order Number</span><div className="grid gap-2 lg:grid-cols-[168px_minmax(156px,1fr)]"><div className="relative" ref={seriesPickerRef}><button type="button" className={cn("flex h-10 w-full items-center justify-between rounded-xl border border-border/60 bg-bg-card px-3 text-left text-[13px] shadow-none transition-colors", seriesPickerOpen ? "border-brand ring-2 ring-brand/15" : "hover:border-border-strong hover:bg-bg-subtle/40", (isOrderSeriesLoading || orderSeries.length === 0) && "cursor-not-allowed opacity-70")} onClick={() => { if (!isOrderSeriesLoading && orderSeries.length > 0) setSeriesPickerOpen((open) => !open); }} disabled={isOrderSeriesLoading || orderSeries.length === 0}><div className="min-w-0 truncate font-semibold text-fg">{selectedOrderSeries ? getSeriesSuggestion(selectedOrderSeries) : isOrderSeriesLoading ? "Loading series..." : "No series yet"}</div><ChevronDown size={14} className={cn("ml-2 shrink-0 text-fg-subtle transition-transform", seriesPickerOpen && "rotate-180")} /></button>{seriesPickerOpen ? <div className="absolute left-0 top-full z-40 mt-2 w-[320px] max-w-[calc(100vw-3rem)] overflow-hidden rounded-2xl border border-border bg-bg-card shadow-card"><div className="border-b border-border/80 px-3 py-2"><div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-fg-subtle">Order Series</div></div><div className="max-h-72 overflow-y-auto p-1.5">{seriesSuggestions.map((series) => <button key={series.id} type="button" className={cn("block w-full rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-bg-subtle", selectedOrderSeries?.id === series.id && "bg-bg-subtle")} onClick={() => handleSeriesChange(series.id)}><div className="text-[13px] font-semibold text-fg">{series.suggestion}</div></button>)}<button type="button" className="mt-1 block w-full rounded-xl border border-dashed border-border px-3 py-2.5 text-left transition-colors hover:border-brand hover:bg-bg-subtle" onClick={openCreateSeriesModal}><div className="text-[13px] font-semibold text-fg">+ Add New Series</div></button></div></div> : null}</div><Input className="min-w-0 h-10 rounded-xl px-3 text-[13px]" value={draft.number} onChange={(e)=>handleOrderNumberInputChange(e.target.value)} placeholder={selectedOrderSeries ? getSeriesSuggestion(selectedOrderSeries) : orderSeries.length ? "Type full order number" : "Create a series first"} /></div>{orderSeries.length === 0 ? <div className="pt-0.5 text-[10.5px] text-amber-700">No order number series yet. Create one before saving a new order number.</div> : null}</label>
+                <label className="flex flex-col gap-1.5 text-[14px] text-fg-muted">
+                  <span className="font-medium tracking-[0.01em]">Order Number</span>
+                  <div className="relative" ref={seriesPickerRef}>
+                    <Input
+                      className="min-w-0 h-10 rounded-xl px-3 pr-10 text-[13px]"
+                      value={draft.number}
+                      onChange={(e) => handleOrderNumberInputChange(e.target.value)}
+                      placeholder={selectedOrderSeries ? getSeriesSuggestion(selectedOrderSeries) : orderSeries.length ? "Type or select order number" : "Create a series first"}
+                    />
+                    <button
+                      type="button"
+                      className={cn(
+                        "absolute right-1.5 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg text-fg-subtle transition-colors",
+                        seriesPickerOpen ? "bg-bg-subtle text-fg" : "hover:bg-bg-subtle hover:text-fg",
+                        (isOrderSeriesLoading || orderSeries.length === 0) && "cursor-not-allowed opacity-70",
+                      )}
+                      onClick={() => {
+                        if (!isOrderSeriesLoading && orderSeries.length > 0) setSeriesPickerOpen((open) => !open);
+                      }}
+                      disabled={isOrderSeriesLoading || orderSeries.length === 0}
+                      aria-label="Toggle order number suggestions"
+                    >
+                      <ChevronDown size={14} className={cn("transition-transform", seriesPickerOpen && "rotate-180")} />
+                    </button>
+                    {seriesPickerOpen ? (
+                      <div className="absolute left-0 top-full z-40 mt-2 w-full min-w-[320px] max-w-[calc(100vw-3rem)] overflow-hidden rounded-2xl border border-border bg-bg-card shadow-card">
+                        <div className="border-b border-border/80 px-3 py-2">
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-fg-subtle">Order Series</div>
+                        </div>
+                        <div className="max-h-72 overflow-y-auto p-1.5">
+                          {seriesSuggestions.map((series) => (
+                            <button
+                              key={series.id}
+                              type="button"
+                              className={cn("block w-full rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-bg-subtle", selectedOrderSeries?.id === series.id && "bg-bg-subtle")}
+                              onClick={() => handleSeriesChange(series.id)}
+                            >
+                              <div className="text-[13px] font-semibold text-fg">{series.suggestion}</div>
+                            </button>
+                          ))}
+                          <button type="button" className="mt-1 block w-full rounded-xl border border-dashed border-border px-3 py-2.5 text-left transition-colors hover:border-brand hover:bg-bg-subtle" onClick={openCreateSeriesModal}>
+                            <div className="text-[13px] font-semibold text-fg">+ Add New Series</div>
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                  {orderSeries.length === 0 ? <div className="pt-0.5 text-[10.5px] text-amber-700">No order number series yet. Create one before saving a new order number.</div> : null}
+                </label>
               </section>
               <section className="min-w-0">
                 <label className="flex flex-col gap-1.5 text-[14px] text-fg-muted"><span className="font-medium tracking-[0.01em]">WeChat ID</span><div className="relative"><Input className="h-10 rounded-xl px-3 text-[13px]" value={draft.wechatId} onFocus={() => setHeaderWechatOpen(true)} onBlur={() => window.setTimeout(() => setHeaderWechatOpen(false), 120)} onChange={(e)=>{const next=e.target.value; setHeaderWechatOpen(true); setDraft((d)=>({...d,wechatId:next}));}} />{headerWechatOpen && headerWechatSuggestions.length>0 ? <div className="absolute z-30 mt-1.5 max-h-44 w-full overflow-auto rounded-xl border border-border bg-bg-card shadow-card">{headerWechatSuggestions.map((w)=><button key={w} type="button" className="block w-full px-3 py-2 text-left text-[12px] hover:bg-bg-subtle" onMouseDown={(e)=>{e.preventDefault(); setHeaderWechatOpen(false); setDraft((d)=>({...d,wechatId:w}));}}>{w}</button>)}</div> : null}</div></label>
