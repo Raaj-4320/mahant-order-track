@@ -5,6 +5,16 @@ import { isPaymentAgentActive, resolveOrderPaymentAgentMatch } from "@/lib/order
 
 const clamp = (value: number) => Math.max(0, Number.isFinite(value) ? value : 0);
 const entryTime = (entry: PaymentAgentLedgerEntry) => entry.paymentDate || entry.updatedAt || entry.createdAt || "";
+const createdSortTime = (value?: string) => {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+const sortableTime = (value?: string) => {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
 const PAYMENT_AGENT_ACCOUNTING_AUDIT_ENABLED = process.env.NODE_ENV !== "production";
 const warnedAccountingKeys = new Set<string>();
 
@@ -42,6 +52,7 @@ export type PaymentAgentAccountingTransactionRow = {
   amount: number;
   notes: string;
   runningCreditLeft: number;
+  createdSortAt?: string;
 };
 
 export type PaymentAgentAccountingPaymentRow = {
@@ -51,6 +62,8 @@ export type PaymentAgentAccountingPaymentRow = {
   method: string;
   notes: string;
   runningCreditLeft: number;
+  canDelete: boolean;
+  createdSortAt?: string;
 };
 
 export type PaymentAgentOrderRow = {
@@ -310,6 +323,7 @@ export const buildPaymentAgentTransactionRows = (summary: PaymentAgentAccounting
         notes: `Credit used for order ${orderNumber}`,
         runningCreditLeft: 0,
         creditDelta: -clamp(entry.creditUsed ?? 0),
+        createdSortAt: entry.createdAt || entry.updatedAt || entryTime(entry),
       });
     }
     if (clamp(entry.remainingPayable ?? 0) > 0) {
@@ -323,6 +337,7 @@ export const buildPaymentAgentTransactionRows = (summary: PaymentAgentAccounting
         notes: `Pending amount after credit/payment for order ${orderNumber}`,
         runningCreditLeft: 0,
         creditDelta: 0,
+        createdSortAt: entry.createdAt || entry.updatedAt || entryTime(entry),
       });
     }
     if (clamp(entry.newCreditCreated ?? 0) > 0) {
@@ -336,6 +351,7 @@ export const buildPaymentAgentTransactionRows = (summary: PaymentAgentAccounting
         notes: `Order created additional advance balance for ${orderNumber}`,
         runningCreditLeft: 0,
         creditDelta: clamp(entry.newCreditCreated ?? 0),
+        createdSortAt: entry.createdAt || entry.updatedAt || entryTime(entry),
       });
     }
   });
@@ -352,6 +368,7 @@ export const buildPaymentAgentTransactionRows = (summary: PaymentAgentAccounting
       notes: entry.note?.trim() || "Reversal of previous settlement",
       runningCreditLeft: 0,
       creditDelta: clamp(entry.creditUsed ?? 0) - clamp(entry.newCreditCreated ?? 0),
+      createdSortAt: entry.createdAt || entry.updatedAt || entryTime(entry),
     });
   });
 
@@ -363,7 +380,7 @@ export const buildPaymentAgentTransactionRows = (summary: PaymentAgentAccounting
   });
 
   return ordered
-    .sort((left, right) => right.date.localeCompare(left.date) || right.id.localeCompare(left.id))
+    .sort((left, right) => createdSortTime(right.createdSortAt) - createdSortTime(left.createdSortAt) || sortableTime(right.date) - sortableTime(left.date) || right.id.localeCompare(left.id))
     .map(({ creditDelta: _creditDelta, ...row }) => row);
 };
 
@@ -431,26 +448,50 @@ export const buildPaymentAgentPaymentRows = (summary: PaymentAgentAccountingSumm
   });
 
   const runningBalanceByPaymentId = new Map<string, number>();
+  let openingRunningCredit = 0;
   let runningCredit = 0;
   [...events]
     .sort((left, right) => left.date.localeCompare(right.date) || left.id.localeCompare(right.id))
     .forEach((event) => {
       runningCredit = Math.max(0, runningCredit + event.delta);
+      if (event.kind === "opening") {
+        openingRunningCredit = runningCredit;
+      }
       if (event.kind === "payment") {
         const paymentId = event.id.replace(/^payment-/, "");
         runningBalanceByPaymentId.set(paymentId, runningCredit);
       }
     });
 
-  return summary.activePaymentEntries
+  const rows: PaymentAgentAccountingPaymentRow[] = [];
+
+  if (openingAdvanced > 0) {
+    rows.push({
+      id: `opening-${summary.agent.id}`,
+      date: summary.agent.createdAt || summary.agent.updatedAt || "",
+      amount: openingAdvanced,
+      method: "Opening Balance",
+      notes: "Opening advance balance",
+      runningCreditLeft: openingRunningCredit || openingAdvanced,
+      canDelete: false,
+      createdSortAt: summary.agent.createdAt || summary.agent.updatedAt || "",
+    });
+  }
+
+  summary.activePaymentEntries
     .filter((entry) => entry.type === "agent_payment")
-    .map((entry) => ({
-      id: entry.id,
-      date: entry.paymentDate || entry.createdAt || "",
-      amount: clamp(entry.amount),
-      method: entry.paymentMethod?.trim() || "—",
-      notes: entry.note?.trim() || "—",
-      runningCreditLeft: runningBalanceByPaymentId.get(entry.id) ?? summary.creditLeft,
-    }))
-    .sort((left, right) => right.date.localeCompare(left.date));
+    .forEach((entry) => {
+      rows.push({
+        id: entry.id,
+        date: entry.paymentDate || entry.createdAt || "",
+        amount: clamp(entry.amount),
+        method: entry.paymentMethod?.trim() || "—",
+        notes: entry.note?.trim() || "—",
+        runningCreditLeft: runningBalanceByPaymentId.get(entry.id) ?? summary.creditLeft,
+        canDelete: true,
+        createdSortAt: entry.createdAt || entry.updatedAt || entry.paymentDate || "",
+      });
+    });
+
+  return rows.sort((left, right) => createdSortTime(right.createdSortAt) - createdSortTime(left.createdSortAt) || sortableTime(right.date) - sortableTime(left.date) || right.id.localeCompare(left.id));
 };

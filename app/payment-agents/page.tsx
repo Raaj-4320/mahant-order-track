@@ -125,7 +125,7 @@ export default function PaymentAgentsPage() {
         totalUsed: finance.totalUsed,
         duePending: finance.duePending,
         creditLeft: finance.creditLeft,
-        paymentsMade: finance.paymentsMade,
+        paymentsMade: finance.totalAdvanced,
         searchText,
       };
     });
@@ -173,7 +173,7 @@ export default function PaymentAgentsPage() {
       formatAmount(row.totalUsed),
       formatAmount(row.duePending),
       formatAmount(row.creditLeft),
-      formatAmount(row.paymentsMade),
+      formatAmount(row.totalAdvanced),
     ]);
     const csv = [header, ...csvRows].map((line) => line.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -307,9 +307,9 @@ export default function PaymentAgentsPage() {
 
   const save = async () => {
     if (!form.name.trim()) return pushToast({ tone: "danger", text: "Payment Agent Name is required." });
-    const opening = Math.max(0, Number(form.openingCredit) || 0);
     const now = new Date().toISOString();
     const existing = rows.find((x) => x.agent.id === form.id)?.agent ?? null;
+    const opening = existing ? Math.max(0, Number(existing.openingCreditBalance) || 0) : Math.max(0, Number(form.openingCredit) || 0);
     const agent: PaymentAgent = {
       id: form.id || `pa-${Date.now()}`,
       initials: form.name.trim().slice(0, 2).toUpperCase(),
@@ -346,7 +346,7 @@ export default function PaymentAgentsPage() {
       phone: agent.phone || "",
       wechatId: agent.wechatId || "",
       country: agent.country || "",
-      openingCredit: String(agent.openingCreditBalance ?? 0),
+      openingCredit: "",
       notes: agent.notes || "",
       status: agent.status,
     });
@@ -557,7 +557,9 @@ export default function PaymentAgentsPage() {
                 <Input value={form.phone} onChange={(e) => setForm((s) => ({ ...s, phone: e.target.value }))} placeholder="Phone" />
                 <Input value={form.wechatId} onChange={(e) => setForm((s) => ({ ...s, wechatId: e.target.value }))} placeholder="WeChat ID" />
                 <Input value={form.country} onChange={(e) => setForm((s) => ({ ...s, country: e.target.value }))} placeholder="Country" />
-                <Input type="number" min={0} value={form.openingCredit} onChange={(e) => setForm((s) => ({ ...s, openingCredit: e.target.value }))} placeholder="Opening Credit Balance" />
+                {!form.id ? (
+                  <Input type="number" min={0} value={form.openingCredit} onChange={(e) => setForm((s) => ({ ...s, openingCredit: e.target.value }))} placeholder="Opening Advance Balance" />
+                ) : null}
                 <Input value={form.notes} onChange={(e) => setForm((s) => ({ ...s, notes: e.target.value }))} placeholder="Notes" />
                 <Input value={form.status} onChange={(e) => setForm((s) => ({ ...s, status: e.target.value as PaymentAgent["status"] }))} placeholder="Status" />
               </div>

@@ -141,7 +141,7 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
   };
 
   const kpis = [
-    { label: "Advance Payments", value: formatAmount(directFinance.paymentsMade), tone: "text-sky-700 bg-sky-50 border-sky-100", icon: <Wallet size={16} /> },
+    { label: "Advance Payments", value: formatAmount(directFinance.totalAdvanced), tone: "text-sky-700 bg-sky-50 border-sky-100", icon: <Wallet size={16} /> },
     { label: "Credit Used", value: formatAmount(directFinance.totalUsed), tone: "text-slate-700 bg-slate-50 border-slate-200", icon: <Download size={16} /> },
     { label: "Credit Left", value: formatAmount(directFinance.creditLeft), tone: "text-emerald-700 bg-emerald-50 border-emerald-100", icon: <Wallet size={16} /> },
     { label: "Due / Pending", value: formatAmount(directFinance.duePending), tone: "text-rose-700 bg-rose-50 border-rose-100", icon: <CalendarDays size={16} /> },
@@ -241,43 +241,43 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
               {paymentRows.length === 0 ? (
                 <div className="px-4 py-8 text-center text-[12px] text-fg-subtle">No payments recorded yet.</div>
               ) : (
-                <div className="max-h-[44vh] overflow-x-auto overflow-y-auto">
-                  <table className="w-full min-w-[680px] text-[12px]">
-                    <thead className="bg-white">
-                      <tr className="border-b border-border text-[10px] uppercase tracking-[0.01em] text-fg-muted">
-                        <th className="px-3 py-2 text-right">Amount</th>
-                        <th className="px-3 py-2 text-left">Method</th>
-                        <th className="px-3 py-2 text-left">Notes</th>
-                        <th className="px-3 py-2 text-right">Credit Left</th>
-                        <th className="sticky right-0 z-10 bg-white px-3 py-2 text-right shadow-[-8px_0_8px_-8px_rgba(15,23,42,0.12)]">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {pagedPaymentRows.map((row) => (
-                        <tr key={row.id} className="border-b border-border transition-colors last:border-b-0 hover:bg-bg-subtle/40">
-                          <td className="px-3 py-2.5 text-right font-semibold leading-tight tabular-nums">{formatAmount(row.amount)}</td>
-                          <td className="px-3 py-2.5 leading-tight">{row.method}</td>
-                          <td className="max-w-[180px] truncate px-3 py-2.5 leading-tight text-fg-subtle" title={row.notes}>{row.notes}</td>
-                          <td className="px-3 py-2.5 text-right font-semibold leading-tight tabular-nums text-emerald-700">{formatAmount(row.runningCreditLeft)}</td>
-                          <td className="sticky right-0 z-10 bg-white px-3 py-2.5 text-right shadow-[-8px_0_8px_-8px_rgba(15,23,42,0.12)]">
-                            <Button
-                              size="sm"
-                              variant="danger"
-                              className="min-w-[86px] justify-center"
-                              disabled={deletingPaymentId === row.id}
-                              onClick={() => {
-                                if (!window.confirm("Delete this payment transaction and reverse its effect?")) return;
-                                void deletePayment(row.id);
-                              }}
-                            >
-                              <Trash2 size={13} />
-                              {deletingPaymentId === row.id ? "Deleting..." : "Delete"}
-                            </Button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="max-h-[44vh] overflow-y-auto overflow-x-hidden">
+                  <div className="grid grid-cols-[84px_86px_138px_minmax(0,1fr)_74px] border-b border-border bg-white text-[10px] uppercase tracking-[0.01em] text-fg-muted">
+                    <div className="px-2 py-2 text-left">Date</div>
+                    <div className="px-2 py-2 text-right">Amount</div>
+                    <div className="px-2 py-2 text-left">Method</div>
+                    <div className="min-w-0 px-2 py-2 text-left">Notes</div>
+                    <div className="px-2 py-2 text-right">Action</div>
+                  </div>
+                  {pagedPaymentRows.map((row) => (
+                    <div
+                      key={row.id}
+                      className="grid grid-cols-[84px_86px_138px_minmax(0,1fr)_74px] border-b border-border text-[12px] transition-colors last:border-b-0 hover:bg-bg-subtle/40"
+                    >
+                      <div className="px-2 py-2.5 leading-tight text-fg-subtle">{formatDateLabel(row.date)}</div>
+                      <div className="px-2 py-2.5 text-right font-semibold leading-tight tabular-nums">{formatAmount(row.amount)}</div>
+                      <div className="truncate px-2 py-2.5 leading-tight" title={row.method}>{row.method}</div>
+                      <div className="min-w-0 truncate px-2 py-2.5 leading-tight text-fg-subtle" title={row.notes}>{row.notes}</div>
+                      <div className="px-2 py-2.5 text-right">
+                        {row.canDelete ? (
+                          <button
+                            type="button"
+                            className="inline-flex items-center justify-end gap-1 whitespace-nowrap text-[12px] font-medium text-[var(--danger)] transition-colors hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-60"
+                            disabled={deletingPaymentId === row.id}
+                            onClick={() => {
+                              if (!window.confirm("Delete this payment transaction and reverse its effect?")) return;
+                              void deletePayment(row.id);
+                            }}
+                          >
+                            <Trash2 size={13} />
+                            {deletingPaymentId === row.id ? "..." : "Delete"}
+                          </button>
+                        ) : (
+                          <span className="text-[12px] font-medium text-fg-subtle">—</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
               <TablePagination total={paymentRows.length} currentPage={paymentsPage} pageSize={PAGE_SIZE} onPageChange={setPaymentsPage} label="payments" />

@@ -8,7 +8,6 @@ import type { PaymentAgentsService } from "@/services/contracts";
 import type { Order, PaymentAgent, PaymentAgentLedgerEntry, PaymentAgentOrderSplit, PaymentAgentSplitSettlementSnapshot } from "@/lib/types";
 import { buildOrderSplitSettlementEntry, buildOrderSplitSettlementReversalEntry } from "@/services/settlement/paymentAgentLedger";
 import { isOrderEligibleForCreditSettlement } from "@/services/settlement/orderCreditEligibility";
-import { calculatePaymentAgentSettlement } from "@/services/settlement/paymentAgentSettlement";
 import {
   getOrderPaymentAgentLedgerEntryIds,
   getOrderPaymentAgentSplits,
@@ -42,22 +41,18 @@ const toSplitSettlementSnapshot = (
     };
   }
 
-  const settlement = calculatePaymentAgentSettlement({
-    orderTotal: clamp(split.assignedAmount),
-    existingCredit: 0,
-    paidNow: clamp(split.paidNow ?? 0),
-  });
+  const usedAmount = clamp(split.paidNow ?? split.assignedAmount);
 
   return {
-    orderPortionTotal: clamp(settlement.orderTotal),
-    existingCredit: clamp(settlement.existingCredit),
-    creditUsed: clamp(settlement.creditUsed),
-    payableAfterCredit: clamp(settlement.payableAfterCredit),
-    remainingPayable: clamp(settlement.remainingPayable),
-    newCreditCreated: clamp(settlement.newCreditCreated),
-    resultingCreditBalance: clamp(settlement.resultingCreditBalance),
-    paidNow: clamp(settlement.paidNow),
-    status: settlement.status,
+    orderPortionTotal: usedAmount,
+    existingCredit: 0,
+    creditUsed: usedAmount,
+    payableAfterCredit: 0,
+    remainingPayable: 0,
+    newCreditCreated: 0,
+    resultingCreditBalance: 0,
+    paidNow: 0,
+    status: usedAmount > 0 ? "paid" : "unpaid",
     createdAt: now,
     updatedAt: now,
   };
@@ -69,8 +64,7 @@ const isActiveSettlementEntry = (entry: PaymentAgentLedgerEntry | null | undefin
 type AgentOrderFact = {
   orderId: string;
   time: string;
-  amount: number;
-  paidNow: number;
+  usedAmount: number;
 };
 
 type AgentFinanceComputation = {
@@ -101,12 +95,22 @@ const buildAgentOrderFacts = (agent: PaymentAgent, orders: Order[]): AgentOrderF
     .flatMap((order) =>
       getOrderPaymentAgentSplits(order)
         .filter((split) => splitBelongsToAgent(agent, split))
-        .map((split) => ({
-          orderId: order.id,
-          time: orderEventTime(order, split),
-          amount: clamp(split.assignedAmount || split.settlementSnapshot?.orderPortionTotal || 0),
-          paidNow: clamp(split.paidNow ?? split.settlementSnapshot?.paidNow ?? 0),
-        })),
+        .map((split) => {
+          const snapshotCreditUsed = clamp(split.settlementSnapshot?.creditUsed ?? 0);
+          const savedPaidAmount = clamp(split.paidNow ?? 0);
+          const fallbackAssignedAmount = clamp(split.assignedAmount ?? split.settlementSnapshot?.orderPortionTotal ?? 0);
+          const usedAmount = snapshotCreditUsed > 0
+            ? snapshotCreditUsed
+            : savedPaidAmount > 0
+              ? savedPaidAmount
+              : fallbackAssignedAmount;
+
+          return {
+            orderId: order.id,
+            time: orderEventTime(order, split),
+            usedAmount,
+          };
+        }),
     );
 
 const computeAgentFinanceFromRawFacts = (
@@ -120,7 +124,7 @@ const computeAgentFinanceFromRawFacts = (
     .map((entry) => ({ amount: clamp(entry.amount), time: paymentEventTime(entry) }));
 
   const events = [
-    ...orderFacts.map((fact) => ({ kind: "order" as const, time: fact.time, orderId: fact.orderId, amount: fact.amount, paidNow: fact.paidNow })),
+    ...orderFacts.map((fact) => ({ kind: "order" as const, time: fact.time, orderId: fact.orderId, usedAmount: fact.usedAmount })),
     ...activePayments.map((fact, index) => ({ kind: "payment" as const, time: fact.time, index, amount: fact.amount })),
   ].sort((left, right) => {
     const byTime = left.time.localeCompare(right.time);
@@ -135,14 +139,9 @@ const computeAgentFinanceFromRawFacts = (
 
   for (const event of events) {
     if (event.kind === "order") {
-      const creditUsed = Math.min(creditBalance, clamp(event.amount));
-      const payableAfterCredit = clamp(event.amount) - creditUsed;
-      const paidNow = clamp(event.paidNow);
-      const remainingPayable = Math.max(0, payableAfterCredit - paidNow);
-      const newCreditCreated = Math.max(0, paidNow - payableAfterCredit);
+      const creditUsed = clamp(event.usedAmount);
       totalUsedAmount += creditUsed;
-      creditBalance = clamp(creditBalance - creditUsed + newCreditCreated);
-      currentDuePayable = clamp(currentDuePayable + remainingPayable);
+      creditBalance = clamp(creditBalance - creditUsed);
       continue;
     }
 
@@ -152,7 +151,7 @@ const computeAgentFinanceFromRawFacts = (
     creditBalance = clamp(creditBalance + creditCreated);
   }
 
-  const totalOrderAmount = orderFacts.reduce((sum, fact) => sum + clamp(fact.amount), 0);
+  const totalOrderAmount = orderFacts.reduce((sum, fact) => sum + clamp(fact.usedAmount), 0);
   const totalPaidAmount = activePayments.reduce((sum, fact) => sum + clamp(fact.amount), 0);
 
   return {
@@ -160,7 +159,7 @@ const computeAgentFinanceFromRawFacts = (
     creditBalance,
     totalOrderAmount,
     totalPaidAmount,
-    totalPayableAmount: clamp(totalOrderAmount - totalUsedAmount),
+    totalPayableAmount: 0,
     currentDuePayable,
     totalUsedAmount,
     currentPayable: currentDuePayable,
@@ -210,13 +209,13 @@ const applySettlementDelta = (
 ): PaymentAgent => ({
   ...agent,
   totalOrdersPaid: clamp((agent.totalOrdersPaid ?? 0) + direction),
-  creditBalance: clamp((agent.creditBalance ?? 0) + direction * (-clamp(entry.creditUsed ?? 0) + clamp(entry.newCreditCreated ?? 0))),
-  totalOrderAmount: clamp((agent.totalOrderAmount ?? 0) + direction * clamp(entry.amount ?? 0)),
-  totalPaidAmount: clamp((agent.totalPaidAmount ?? 0) + direction * clamp(entry.paidNow ?? 0)),
-  totalPayableAmount: clamp((agent.totalPayableAmount ?? Math.max(0, (agent.totalOrderAmount ?? 0) - (agent.totalUsedAmount ?? 0))) + direction * clamp(entry.payableAfterCredit ?? 0)),
-  currentDuePayable: clamp((agent.currentDuePayable ?? 0) + direction * clamp(entry.remainingPayable ?? 0)),
+  creditBalance: clamp((agent.creditBalance ?? 0) + direction * -clamp(entry.creditUsed ?? entry.amount ?? 0)),
+  totalOrderAmount: clamp((agent.totalOrderAmount ?? 0) + direction * clamp(entry.creditUsed ?? entry.amount ?? 0)),
+  totalPaidAmount: clamp(agent.totalPaidAmount ?? 0),
+  totalPayableAmount: 0,
+  currentDuePayable: 0,
   totalUsedAmount: clamp((agent.totalUsedAmount ?? 0) + direction * clamp(entry.creditUsed ?? 0)),
-  currentPayable: clamp((agent.currentPayable ?? agent.currentDuePayable ?? 0) + direction * clamp(entry.remainingPayable ?? 0)),
+  currentPayable: 0,
   updatedAt: now,
 });
 

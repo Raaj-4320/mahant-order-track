@@ -5,7 +5,7 @@ import { PaymentAgentSplitsEditor } from "@/components/orders/PaymentAgentSplits
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
 import { formatWholeMoney } from "@/lib/numbers";
-import { calculatePaymentAgentSettlement } from "@/services/settlement/paymentAgentSettlement";
+import { getPaymentAgentDirectFinance } from "@/services/paymentAgentFinance";
 import type { PaymentAgent, PaymentAgentOrderSplit } from "@/lib/types";
 
 type Props = {
@@ -97,13 +97,8 @@ export function OrderFooter({
           paymentAgents.find((candidate) => candidate.id === split.paymentAgentId)
           ?? paymentAgents.find((candidate) => candidate.id === split.paymentBy)
           ?? null;
-        const assignedAmount = Number(split.assignedAmount) || 0;
         const paidNow = Number(split.paidNow) || 0;
-        const settlement = calculatePaymentAgentSettlement({
-          orderTotal: assignedAmount,
-          existingCredit: agent?.creditBalance ?? 0,
-          paidNow,
-        });
+        const existingCredit = agent ? getPaymentAgentDirectFinance(agent).creditLeft : 0;
         const label =
           split.paymentAgentSnapshot?.name?.trim()
           || split.paymentAgentName?.trim()
@@ -113,17 +108,16 @@ export function OrderFooter({
         return {
           id: split.id,
           label,
-          assignedAmount,
-          existingCredit: agent?.creditBalance ?? 0,
-          creditUsed: settlement.creditUsed,
-          payable: settlement.remainingPayable,
-          creditLeft: settlement.resultingCreditBalance,
+          paidNow,
+          existingCredit,
+          creditUsed: paidNow,
+          payable: Math.max(0, total - paidNow),
+          creditLeft: Math.max(0, existingCredit - paidNow),
         };
       })
-      .filter((entry) => entry.label || entry.assignedAmount > 0 || entry.creditUsed > 0 || entry.payable > 0 || entry.creditLeft > 0);
-  }, [paymentAgentSplits, paymentAgents]);
+      .filter((entry) => entry.label || entry.paidNow > 0 || entry.creditUsed > 0 || entry.creditLeft > 0);
+  }, [paymentAgentSplits, paymentAgents, total]);
   const summary = useMemo(() => {
-    const assigned = paymentAgentSplits.reduce((sum, split) => sum + (Number(split.assignedAmount) || 0), 0);
     const paidNow = paymentAgentSplits.reduce((sum, split) => sum + (Number(split.paidNow) || 0), 0);
     const totals = paymentAgentSplits.reduce(
       (acc, split) => {
@@ -131,25 +125,21 @@ export function OrderFooter({
           paymentAgents.find((candidate) => candidate.id === split.paymentAgentId)
           ?? paymentAgents.find((candidate) => candidate.id === split.paymentBy)
           ?? null;
-        const settlement = calculatePaymentAgentSettlement({
-          orderTotal: Number(split.assignedAmount) || 0,
-          existingCredit: agent?.creditBalance ?? 0,
-          paidNow: Number(split.paidNow) || 0,
-        });
-        acc.agentCredit += agent?.creditBalance ?? 0;
-        acc.creditUsed += settlement.creditUsed;
-        acc.pendingDue += settlement.remainingPayable;
-        acc.creditLeft += settlement.resultingCreditBalance;
+        const availableCredit = agent ? getPaymentAgentDirectFinance(agent).creditLeft : 0;
+        const usedAmount = Number(split.paidNow) || 0;
+        acc.agentCredit += availableCredit;
+        acc.creditUsed += usedAmount;
+        acc.creditLeft += Math.max(0, availableCredit - usedAmount);
         return acc;
       },
-      { agentCredit: 0, creditUsed: 0, pendingDue: 0, creditLeft: 0 },
+      { agentCredit: 0, creditUsed: 0, creditLeft: 0 },
     );
 
     return {
       agentCredit: totals.agentCredit,
       orderTotal: total,
       creditUsed: totals.creditUsed,
-      pendingDue: totals.pendingDue,
+      pendingDue: Math.max(0, total - paidNow),
       creditLeft: totals.creditLeft,
     };
   }, [paymentAgentSplits, paymentAgents, total]);
@@ -220,10 +210,10 @@ export function OrderFooter({
                   </div>
                   <div className="mt-2 space-y-2">
                     {splitSummaries.length > 0 ? splitSummaries.map((entry) => (
-                      <div key={entry.id} className="grid grid-cols-[minmax(160px,1.2fr)_repeat(4,minmax(88px,1fr))] items-center gap-3 rounded-xl border border-border/60 bg-bg-card px-3 py-2">
+                        <div key={entry.id} className="grid grid-cols-[minmax(160px,1.2fr)_repeat(4,minmax(88px,1fr))] items-center gap-3 rounded-xl border border-border/60 bg-bg-card px-3 py-2">
                         <div className="min-w-0">
                           <div className="truncate text-[13px] font-semibold text-fg">{entry.label}</div>
-                          <div className="mt-0.5 text-[11px] text-fg-subtle">Assigned: {fmtFinal(entry.assignedAmount)}</div>
+                          <div className="mt-0.5 text-[11px] text-fg-subtle">Paid: {fmtFinal(entry.paidNow)}</div>
                         </div>
                         <div className="text-right text-[12px] font-semibold tabular-nums text-sky-600">{fmtFinal(entry.existingCredit)}</div>
                         <div className="text-right text-[12px] font-semibold tabular-nums text-sky-600">{fmtFinal(entry.creditUsed)}</div>

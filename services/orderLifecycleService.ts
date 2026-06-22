@@ -100,13 +100,12 @@ export const orderLifecycleService = {
     const referenceService = await getReferenceRecordsFirebaseService();
     const productsService = getProductsService();
     const customersService = getCustomersService();
-    const paymentAgentsService = getPaymentAgentsService();
     const ordersService = getOrdersService();
 
     const createdProductIds = order.lines.map((line) => `order-line-${order.id}-${line.id}`);
     const createdCustomerIds = unique(order.lines.map((line) => line.customerId).filter((id) => id && !context.knownCustomerIds.has(id)));
     const linkedPaymentAgentIds = getOrderPaymentAgentLinkedAgentIds(order);
-    const createdPaymentAgentIds = linkedPaymentAgentIds.filter((id) => !context.knownPaymentAgentIds.has(id));
+    const createdPaymentAgentIds: string[] = [];
     const paymentAgentLedgerEntryIds = getOrderPaymentAgentLedgerEntryIds(order);
 
     const orderNumberRef = (order.number || order.orderNumber || "").trim()
@@ -165,24 +164,6 @@ export const orderLifecycleService = {
           reusable: false,
           deletedAt: undefined,
           linkedLedgerEntryIds: order.lines.filter((line) => line.customerId === customerId).map((line) => `customer-receivable-${order.id}-${line.id}`),
-        }),
-      });
-    }
-
-    for (const agentId of createdPaymentAgentIds) {
-      const agent = await paymentAgentsService.getPaymentAgentById(agentId);
-      if (!agent) continue;
-      await paymentAgentsService.upsertPaymentAgent({
-        ...agent,
-        lifecycle: ensureLifecycle(agent.lifecycle, {
-          type: "paymentAgent",
-          status: "active",
-          sourceType: "order",
-          sourceOrderId: order.id,
-          createdByOrder: true,
-          reusable: false,
-          deletedAt: undefined,
-          linkedLedgerEntryIds: paymentAgentLedgerEntryIds,
         }),
       });
     }

@@ -1,11 +1,13 @@
 "use client";
 
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
-import { formatAmount } from "@/lib/data";
 import type { PaymentAgent, PaymentAgentOrderSplit } from "@/lib/types";
+import { formatAmount } from "@/lib/data";
+import { getPaymentAgentDirectFinance } from "@/services/paymentAgentFinance";
 
 type Props = {
   splits: PaymentAgentOrderSplit[];
@@ -23,10 +25,150 @@ const getSplitLabel = (split: PaymentAgentOrderSplit) =>
   || split.paymentBy?.trim()
   || "";
 
-const getPaymentAgentNote = (agent: PaymentAgent | null, query: string) => {
-  if (agent) return `Credit left: ${formatAmount(agent.creditBalance ?? 0)}`;
-  return query.trim() ? "Creates on save" : "Credit left: 0";
+type PickerRowProps = {
+  split: PaymentAgentOrderSplit;
+  index: number;
+  totalSplits: number;
+  paymentAgents: PaymentAgent[];
+  query: string;
+  duplicateKeys: Set<string>;
+  onQueryChange: (value: string) => void;
+  onSelect: (agent: PaymentAgent) => void;
+  onClear: () => void;
+  onRemove: () => void;
+  onOpen: () => void;
+  onClose: () => void;
+  open: boolean;
 };
+
+function PaymentAgentPickerRow({
+  split,
+  index,
+  totalSplits,
+  paymentAgents,
+  query,
+  duplicateKeys,
+  onQueryChange,
+  onSelect,
+  onClear,
+  onRemove,
+  onOpen,
+  onClose,
+  open,
+}: PickerRowProps) {
+  const anchorRef = useRef<HTMLDivElement | null>(null);
+  const [layout, setLayout] = useState<{ top: number; left: number; width: number } | null>(null);
+  const normalizedQuery = normalizeValue(query);
+  const suggestions = paymentAgents
+    .filter((agent) => agent.status !== "inactive" && agent.lifecycle?.status !== "deleted")
+    .filter((agent) => !normalizedQuery || normalizeValue(agent.name).includes(normalizedQuery) || normalizeValue(agent.agentCode).includes(normalizedQuery) || normalizeValue(agent.id).includes(normalizedQuery))
+    .slice(0, 8);
+  const typedDuplicate = Boolean(normalizedQuery && duplicateKeys.has(normalizedQuery));
+
+  useEffect(() => {
+    if (!open) return;
+    const updateLayout = () => {
+      const rect = anchorRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setLayout({
+        top: rect.bottom + 6,
+        left: rect.left,
+        width: rect.width,
+      });
+    };
+
+    updateLayout();
+    window.addEventListener("resize", updateLayout);
+    window.addEventListener("scroll", updateLayout, true);
+    return () => {
+      window.removeEventListener("resize", updateLayout);
+      window.removeEventListener("scroll", updateLayout, true);
+    };
+  }, [open]);
+
+  return (
+    <div className="flex w-[198px] shrink-0 items-center gap-1.5">
+      <div ref={anchorRef} className="relative min-w-0 flex-1">
+        <Input
+          value={query}
+          onFocus={onOpen}
+          onBlur={() => window.setTimeout(onClose, 120)}
+          onChange={(event) => {
+            onQueryChange(event.target.value);
+            onOpen();
+          }}
+          placeholder="Search payment agent"
+          className={`h-10 rounded-xl bg-bg-card px-3 pr-8 text-[13px] shadow-none ${typedDuplicate ? "border-[var(--danger)]/50 focus:border-[var(--danger)]" : "border-border/60"}`}
+        />
+
+        {query || split.paymentAgentId || split.paymentBy ? (
+          <button
+            type="button"
+            aria-label="Clear payment agent"
+            title="Clear payment agent"
+            className="absolute right-2 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center rounded-md text-fg-subtle transition-colors hover:bg-bg-subtle hover:text-fg"
+            onMouseDown={(event) => {
+              event.preventDefault();
+              onClear();
+            }}
+          >
+            <X size={11} />
+          </button>
+        ) : null}
+
+        {open && layout && typeof document !== "undefined"
+          ? createPortal(
+              <div
+                className="fixed z-[9999] overflow-hidden rounded-xl border border-border/70 bg-bg-card shadow-card"
+                style={{ top: layout.top, left: layout.left, width: layout.width }}
+              >
+                {suggestions.length > 0 ? (
+                  suggestions.map((agent) => {
+                    const isUsed = duplicateKeys.has(normalizeValue(agent.id)) || duplicateKeys.has(normalizeValue(agent.name));
+                    return (
+                      <button
+                        key={agent.id}
+                        type="button"
+                        disabled={isUsed}
+                        className={`block w-full border-b border-border/50 px-3 py-2 text-left text-[11.5px] last:border-b-0 ${isUsed ? "cursor-not-allowed bg-bg-subtle/40 text-fg-subtle" : "text-fg hover:bg-bg-subtle"}`}
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                          if (isUsed) return;
+                          onSelect(agent);
+                        }}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate">{getPaymentAgentDirectFinance(agent).creditLeft > 0 ? `${agent.name} - Credit: ${formatAmount(getPaymentAgentDirectFinance(agent).creditLeft)}` : agent.name}</span>
+                          {isUsed ? <span className="shrink-0 text-[10px] uppercase">Used</span> : null}
+                        </div>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div className="px-3 py-2 text-[11.5px] text-fg-subtle">No matching payment agent. Add it from the Payment Agents tab first.</div>
+                )}
+              </div>,
+              document.body,
+            )
+          : null}
+      </div>
+      {totalSplits > 1 ? (
+        <button
+          type="button"
+          aria-label={`Remove payment agent ${index + 1}`}
+          title="Remove payment agent"
+          className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-border/60 bg-bg-card text-fg-subtle transition-colors hover:border-border hover:text-fg"
+          onMouseDown={(event) => {
+            event.preventDefault();
+            onRemove();
+          }}
+        >
+          <X size={12} />
+        </button>
+      ) : null}
+    </div>
+  );
+}
 
 export function PaymentAgentHeaderPicker({
   splits,
@@ -93,7 +235,7 @@ export function PaymentAgentHeaderPicker({
       <div className="flex items-center gap-3">
         <span className="shrink-0 text-[14px] font-medium tracking-[0.01em] text-fg-muted">Payment By</span>
         <span className="min-w-0 truncate text-[14px] font-medium tracking-[0.01em] text-fg-subtle">
-          {primaryAgent ? `Credit left: ${formatAmount(primaryAgent.creditBalance ?? 0)}` : "Credit left: 0"}
+          {primaryAgent ? `Credit left: ${formatAmount(getPaymentAgentDirectFinance(primaryAgent).creditLeft)}` : "Credit left: 0"}
         </span>
       </div>
 
@@ -101,125 +243,56 @@ export function PaymentAgentHeaderPicker({
         <div className="flex min-w-max items-center gap-2">
             {splits.map((split, index) => {
               const query = queries[split.id] ?? "";
-              const normalizedQuery = normalizeValue(query);
               const duplicateKeys = duplicateKeysBySplit[split.id] ?? new Set<string>();
-              const resolvedAgent =
-                paymentAgents.find((agent) => agent.id === split.paymentAgentId)
-                ?? paymentAgents.find((agent) => agent.id === split.paymentBy)
-                ?? paymentAgents.find((agent) => normalizeValue(agent.name) === normalizeValue(split.paymentAgentName || split.paymentBy || query))
-                ?? null;
-              const suggestions = paymentAgents
-                .filter((agent) => agent.status !== "inactive" && agent.lifecycle?.status !== "deleted")
-                .filter((agent) => !normalizedQuery || normalizeValue(agent.name).includes(normalizedQuery) || normalizeValue(agent.agentCode).includes(normalizedQuery) || normalizeValue(agent.id).includes(normalizedQuery))
-                .slice(0, 8);
-              const typedDuplicate = Boolean(normalizedQuery && duplicateKeys.has(normalizedQuery));
 
               return (
-                <div key={split.id} className="flex w-[198px] shrink-0 items-center gap-1.5">
-                  <div className="relative min-w-0 flex-1 overflow-visible">
-                    <Input
-                      value={query}
-                      onFocus={() => setOpenRowId(split.id)}
-                      onBlur={() => window.setTimeout(() => setOpenRowId((current) => (current === split.id ? null : current)), 120)}
-                      onChange={(event) => {
-                        const nextValue = event.target.value;
-                        const normalizedNextValue = normalizeValue(nextValue);
-                        setQueries((current) => ({ ...current, [split.id]: nextValue }));
-                        setOpenRowId(split.id);
-
-                        if (normalizedNextValue && duplicateKeys.has(normalizedNextValue)) {
-                          return;
-                        }
-
-                        updateSplit(split.id, (current) => ({
-                          ...current,
-                          paymentAgentId: "",
-                          paymentBy: nextValue,
-                          paymentAgentName: nextValue,
-                          paymentAgentSnapshot: undefined,
-                        }));
-                      }}
-                      placeholder="Search payment agent"
-                      className={`h-10 rounded-xl bg-bg-card px-3 pr-8 text-[13px] shadow-none ${typedDuplicate ? "border-[var(--danger)]/50 focus:border-[var(--danger)]" : "border-border/60"}`}
-                    />
-
-                    {query || split.paymentAgentId || split.paymentBy ? (
-                      <button
-                        type="button"
-                        aria-label="Clear payment agent"
-                        title="Clear payment agent"
-                        className="absolute right-2 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center rounded-md text-fg-subtle transition-colors hover:bg-bg-subtle hover:text-fg"
-                        onMouseDown={(event) => {
-                          event.preventDefault();
-                          setQueries((current) => ({ ...current, [split.id]: "" }));
-                          setOpenRowId(null);
-                          updateSplit(split.id, (current) => ({
-                            ...current,
-                            paymentAgentId: "",
-                            paymentBy: "",
-                            paymentAgentName: "",
-                            paymentAgentSnapshot: undefined,
-                          }));
-                        }}
-                      >
-                        <X size={11} />
-                      </button>
-                    ) : null}
-
-                    {openRowId === split.id ? (
-                      <div className="absolute left-0 right-0 top-full z-[80] mt-1.5 overflow-hidden rounded-xl border border-border/70 bg-bg-card shadow-card">
-                        {suggestions.length > 0 ? (
-                          suggestions.map((agent) => {
-                            const isUsed = duplicateKeys.has(normalizeValue(agent.id)) || duplicateKeys.has(normalizeValue(agent.name));
-                            return (
-                              <button
-                                key={agent.id}
-                                type="button"
-                                disabled={isUsed}
-                                className={`block w-full border-b border-border/50 px-3 py-2 text-left text-[11.5px] last:border-b-0 ${isUsed ? "cursor-not-allowed bg-bg-subtle/40 text-fg-subtle" : "text-fg hover:bg-bg-subtle"}`}
-                                onMouseDown={(event) => {
-                                  event.preventDefault();
-                                  if (isUsed) return;
-                                  setOpenRowId(null);
-                                  setQueries((current) => ({ ...current, [split.id]: agent.name }));
-                                  updateSplit(split.id, (current) => ({
-                                    ...current,
-                                    paymentAgentId: agent.id,
-                                    paymentBy: agent.id,
-                                    paymentAgentName: agent.name,
-                                    paymentAgentSnapshot: { id: agent.id, name: agent.name, code: agent.agentCode },
-                                  }));
-                                }}
-                              >
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="truncate">{(agent.creditBalance ?? 0) > 0 ? `${agent.name} - Credit: ${formatAmount(agent.creditBalance ?? 0)}` : agent.name}</span>
-                                  {isUsed ? <span className="shrink-0 text-[10px] uppercase">Used</span> : null}
-                                </div>
-                              </button>
-                            );
-                          })
-                        ) : (
-                          <div className="px-3 py-2 text-[11.5px] text-fg-subtle">No matching payment agent</div>
-                        )}
-                      </div>
-                    ) : null}
-                  </div>
-                  {splits.length > 1 ? (
-                    <button
-                      type="button"
-                      aria-label={`Remove payment agent ${index + 1}`}
-                      title="Remove payment agent"
-                      className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-border/60 bg-bg-card text-fg-subtle transition-colors hover:border-border hover:text-fg"
-                      onMouseDown={(event) => {
-                        event.preventDefault();
-                        setOpenRowId(null);
-                        onRemove(split.id);
-                      }}
-                    >
-                      <X size={12} />
-                    </button>
-                  ) : null}
-                </div>
+                <PaymentAgentPickerRow
+                  key={split.id}
+                  split={split}
+                  index={index}
+                  totalSplits={splits.length}
+                  paymentAgents={paymentAgents}
+                  query={query}
+                  duplicateKeys={duplicateKeys}
+                  open={openRowId === split.id}
+                  onOpen={() => setOpenRowId(split.id)}
+                  onClose={() => {
+                    setOpenRowId((current) => (current === split.id ? null : current));
+                    setQueries((current) => ({
+                      ...current,
+                      [split.id]: getSplitLabel(split),
+                    }));
+                  }}
+                  onQueryChange={(value) => {
+                    setQueries((current) => ({ ...current, [split.id]: value }));
+                  }}
+                  onSelect={(agent) => {
+                    setOpenRowId(null);
+                    setQueries((current) => ({ ...current, [split.id]: agent.name }));
+                    updateSplit(split.id, (current) => ({
+                      ...current,
+                      paymentAgentId: agent.id,
+                      paymentBy: agent.id,
+                      paymentAgentName: agent.name,
+                      paymentAgentSnapshot: { id: agent.id, name: agent.name, code: agent.agentCode },
+                    }));
+                  }}
+                  onClear={() => {
+                    setQueries((current) => ({ ...current, [split.id]: "" }));
+                    setOpenRowId(null);
+                    updateSplit(split.id, (current) => ({
+                      ...current,
+                      paymentAgentId: "",
+                      paymentBy: "",
+                      paymentAgentName: "",
+                      paymentAgentSnapshot: undefined,
+                    }));
+                  }}
+                  onRemove={() => {
+                    setOpenRowId(null);
+                    onRemove(split.id);
+                  }}
+                />
               );
             })}
           <Button

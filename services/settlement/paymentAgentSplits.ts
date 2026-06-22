@@ -151,6 +151,9 @@ export function validatePaymentAgentSplits(order: Order): PaymentAgentSplitValid
     if (normalizeAmount(split.assignedAmount) < 0) {
       issues.push(`Split ${index + 1}: assigned amount cannot be negative.`);
     }
+    if (normalizeAmount(split.paidNow) < 0) {
+      issues.push(`Split ${index + 1}: paid amount cannot be negative.`);
+    }
     if (agentKey) {
       if (seenAgents.has(agentKey.toLowerCase())) {
         issues.push(`Split ${index + 1}: duplicate payment agent split.`);
@@ -158,10 +161,6 @@ export function validatePaymentAgentSplits(order: Order): PaymentAgentSplitValid
       seenAgents.add(agentKey.toLowerCase());
     }
   });
-
-  if (splits.length > 0 && totalAssignedAmount !== expectedAmount) {
-    issues.push(`Split total ${totalAssignedAmount} does not match expected amount ${expectedAmount}.`);
-  }
 
   return {
     isValid: issues.length === 0,

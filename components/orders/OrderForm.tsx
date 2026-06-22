@@ -7,6 +7,7 @@ import { formatAmount } from "@/lib/data";
 import { OrderLineRow, LINE_GRID, LINE_GRID_TEMPLATE, LINE_TABLE_MIN_WIDTH } from "./OrderLineRow";
 import { Customer, Order, OrderLine, PaymentAgent } from "@/lib/types";
 import { resolveOrderPaymentAgent } from "@/lib/orderDisplay";
+import { getPaymentAgentDirectFinance } from "@/services/paymentAgentFinance";
 
 export function newLine(): OrderLine {
   return {
@@ -56,7 +57,10 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
       .slice(0, 4);
   }, [paymentAgents, paymentQuery]);
 
-  const paymentLabel = (p: PaymentAgent) => ((p.creditBalance ?? 0) > 0 ? `${p.name} - Credit: ${formatAmount(p.creditBalance ?? 0)}` : p.name);
+  const paymentLabel = (p: PaymentAgent) => {
+    const creditLeft = getPaymentAgentDirectFinance(p).creditLeft;
+    return creditLeft > 0 ? `${p.name} - Credit: ${formatAmount(creditLeft)}` : p.name;
+  };
 
   const updateLine = (id: string, patch: Partial<OrderLine>) =>
     setDraft((d) => ({

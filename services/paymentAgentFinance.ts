@@ -16,14 +16,14 @@ export type PaymentAgentDirectFinanceSnapshot = {
 
 export function getPaymentAgentDirectFinance(agent: PaymentAgent): PaymentAgentDirectFinanceSnapshot {
   const openingCredit = clampMoney(agent.openingCreditBalance);
+  const paymentsMade = clampMoney(agent.totalPaidAmount);
   const creditLeft = clampMoney(agent.creditBalance);
   const duePending = clampMoney(agent.currentDuePayable ?? agent.currentPayable);
-  const paymentsMade = clampMoney(agent.totalPaidAmount);
+  const totalUsed = clampMoney(agent.totalUsedAmount);
   const totalOrders = clampCount(agent.totalOrdersPaid);
   const totalPayable = clampMoney(agent.totalPayableAmount ?? agent.currentDuePayable ?? agent.currentPayable);
   const currentPayable = clampMoney(agent.currentPayable ?? agent.currentDuePayable);
   const totalAdvanced = clampMoney(openingCredit + paymentsMade);
-  const totalUsed = clampMoney(totalAdvanced - creditLeft);
 
   return {
     totalOrders,

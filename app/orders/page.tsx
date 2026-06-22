@@ -12,7 +12,6 @@ import { Customer, Order, OrderNumberSeries, PaymentAgent, PaymentAgentOrderSpli
 import { syncOrderLinesToProducts, archiveProductsForOrder, archiveProductsForRemovedOrderLines } from "@/services/productCatalogSync";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
-import { calculatePaymentAgentSettlement } from "@/services/settlement/paymentAgentSettlement";
 import { usePaymentAgents } from "@/hooks/usePaymentAgents";
 import { useOrders } from "@/hooks/useOrders";
 import { useOrderNumberSeries } from "@/hooks/useOrderNumberSeries";
@@ -46,6 +45,7 @@ import { getOrderNumberSeriesService } from "@/services/orderNumberSeriesService
 import { getPaymentAgentsService } from "@/services/paymentAgentsService";
 import { measurePerfAsync, measurePerfSync, runPerfAction } from "@/lib/perfDebug";
 import { getOrderPaymentAgentSplits } from "@/services/settlement/paymentAgentSplits";
+import { getPaymentAgentDirectFinance } from "@/services/paymentAgentFinance";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const createPaymentAgentSplitId = () => `pas-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -212,6 +212,15 @@ const normalizePaymentAgentValue = (value?: string) => (value || "").trim().toLo
 const normalizePaymentSplitAmount = (value: number | undefined) => {
   const next = Number(value);
   return Number.isFinite(next) ? next : 0;
+};
+const calculateOrderAgentPaidTotal = (splits: PaymentAgentOrderSplit[]) =>
+  splits.reduce((sum, split) => sum + normalizePaymentSplitAmount(split.paidNow), 0);
+const calculateOrderRemainingPayable = (orderAmount: number, splits: PaymentAgentOrderSplit[]) =>
+  Math.max(0, orderAmount - calculateOrderAgentPaidTotal(splits));
+const getOrderPaymentStatusFromDue = (totalAmount: number, dueAmount: number) => {
+  if (dueAmount <= 0) return "paid" as const;
+  if (dueAmount >= totalAmount) return "pending" as const;
+  return "partial" as const;
 };
 const normalizeDraftPaymentSplit = (split: PaymentAgentOrderSplit): PaymentAgentOrderSplit => ({
   ...split,
@@ -456,7 +465,7 @@ export default function OrdersPage() {
 }, [ordersSourceSelection]);
 
   const { orders, upsertOrder, deleteOrder, pushToast } = useStore();
-  const { data: paymentAgents, isLoading: paymentAgentsLoading, recalculateFromOrders, applyOrderSettlement, reverseOrderSettlement, upsertPaymentAgent, reload: reloadPaymentAgents } = usePaymentAgents();
+  const { data: paymentAgents, isLoading: paymentAgentsLoading, recalculateFromOrders, applyOrderSettlement, reverseOrderSettlement, reload: reloadPaymentAgents } = usePaymentAgents();
   const { data: firebaseOrders, isLoading: isOrdersLoading, error: ordersLoadError, draftOrders: firebaseDraftOrders, autosaveDraft, upsertOrder: upsertFirebaseOrder, reload: reloadFirebaseOrders } = useOrders();
   const { data: customers, isLoading: isCustomersLoading, reload: reloadCustomers, upsertCustomer } = useCustomers();
   const [query, setQuery] = useState("");
@@ -833,48 +842,27 @@ export default function OrdersPage() {
     }
   };
 
-  const resolveOrCreatePaymentAgentByName = async (rawName: string) => {
+  const resolveExistingPaymentAgentByName = async (rawName: string) => {
     const cleanName = rawName.trim();
     if (!cleanName) return null;
     const existing = paymentAgents.find((agent) => normalizePaymentAgentValue(agent.name) === normalizePaymentAgentValue(cleanName));
-    if (existing) {
-      return existing;
-    }
-    const now = new Date().toISOString();
-    const created: PaymentAgent = {
-      id: `pa-${Date.now()}`,
-      name: cleanName,
-      initials: cleanName.slice(0, 2).toUpperCase(),
-      agentCode: `AG-${Math.floor(Math.random() * 900 + 100)}`,
-      status: "active",
-      openingCreditBalance: 0,
-      creditBalance: 0,
-      totalOrderAmount: 0,
-      totalPaidAmount: 0,
-      currentDuePayable: 0,
-      createdAt: now,
-      updatedAt: now,
-    };
-    try {
-      await upsertPaymentAgent(created);
-      return created;
-    } catch (error) {
-      throw error;
-    }
+    return existing ?? null;
   };
 
   const resolvePaymentAgentSplitsForSave = async (
     rawSplits: PaymentAgentOrderSplit[] | undefined,
     expectedTotal: number,
   ): Promise<{ splits: PaymentAgentOrderSplit[]; primaryAgent: PaymentAgent | null }> => {
-    const normalizedSplits = (rawSplits ?? []).map(normalizeDraftPaymentSplit).filter((split) => !isPaymentAgentSplitEmpty(split));
+    const normalizedSplits = (rawSplits ?? [])
+      .map(normalizeDraftPaymentSplit)
+      .filter((split) => !isPaymentAgentSplitEmpty(split))
+      .filter((split) => normalizePaymentSplitAmount(split.paidNow) > 0);
     if (normalizedSplits.length === 0) {
       return { splits: [], primaryAgent: null };
     }
 
     const initialIssues = normalizedSplits.flatMap((split, index) => {
       const issues: string[] = [];
-      if (normalizePaymentSplitAmount(split.assignedAmount) < 0) issues.push(`Payment split ${index + 1}: amount cannot be negative.`);
       if (normalizePaymentSplitAmount(split.paidNow) < 0) issues.push(`Payment split ${index + 1}: paid now cannot be negative.`);
       if (!(split.paymentAgentId || split.paymentBy || split.paymentAgentName || split.paymentAgentSnapshot?.name)) {
         issues.push(`Payment split ${index + 1}: choose a payment agent.`);
@@ -897,33 +885,39 @@ export default function OrdersPage() {
         ?? null;
 
       if (!resolvedAgent && typedName.trim()) {
-        resolvedAgent = await resolveOrCreatePaymentAgentByName(typedName);
-        if (resolvedAgent && !localAgents.some((agent) => agent.id === resolvedAgent!.id)) {
-          localAgents.push(resolvedAgent);
-        }
+        resolvedAgent = await resolveExistingPaymentAgentByName(typedName);
       }
 
-      const nextName = resolvedAgent?.name || typedName.trim();
-      const nextSettlement = calculatePaymentAgentSettlement({
-        orderTotal: normalizePaymentSplitAmount(split.assignedAmount),
-        existingCredit: resolvedAgent?.creditBalance ?? 0,
-        paidNow: normalizePaymentSplitAmount(split.paidNow),
-      });
+      if (!resolvedAgent) {
+        throw new Error(`Payment split ${resolvedSplits.length + 1}: add the payment agent from the Payment Agents tab first, then select it here.`);
+      }
+
+      const paidAmount = normalizePaymentSplitAmount(split.paidNow);
+      const existingCredit = getPaymentAgentDirectFinance(resolvedAgent).creditLeft;
+      if (paidAmount > existingCredit) {
+        throw new Error(`Payment split ${resolvedSplits.length + 1}: paid amount cannot exceed available credit ${existingCredit}.`);
+      }
+
+      const nextName = resolvedAgent.name;
+      const splitStatus: "paid" | "unpaid" = paidAmount > 0 ? "paid" : "unpaid";
       resolvedSplits.push({
         ...split,
-        paymentAgentId: resolvedAgent?.id || split.paymentAgentId || "",
-        paymentBy: resolvedAgent?.id || split.paymentBy || nextName,
+        paymentAgentId: resolvedAgent.id,
+        paymentBy: resolvedAgent.id,
         paymentAgentName: nextName,
-        paymentAgentSnapshot: resolvedAgent
-          ? { id: resolvedAgent.id, name: resolvedAgent.name, code: resolvedAgent.agentCode }
-          : split.paymentAgentSnapshot && split.paymentAgentSnapshot.name
-            ? split.paymentAgentSnapshot
-            : undefined,
-        assignedAmount: normalizePaymentSplitAmount(split.assignedAmount),
-        paidNow: normalizePaymentSplitAmount(split.paidNow),
+        paymentAgentSnapshot: { id: resolvedAgent.id, name: resolvedAgent.name, code: resolvedAgent.agentCode },
+        assignedAmount: paidAmount,
+        paidNow: paidAmount,
         settlementSnapshot: {
-          ...nextSettlement,
-          orderPortionTotal: nextSettlement.orderTotal,
+          orderPortionTotal: paidAmount,
+          existingCredit,
+          creditUsed: paidAmount,
+          payableAfterCredit: 0,
+          remainingPayable: 0,
+          newCreditCreated: 0,
+          resultingCreditBalance: Math.max(0, existingCredit - paidAmount),
+          paidNow: 0,
+          status: splitStatus,
           createdAt: split.settlementSnapshot?.createdAt || new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         },
@@ -940,9 +934,9 @@ export default function OrdersPage() {
       duplicateKeys.add(key);
     }
 
-    const assignedTotal = resolvedSplits.reduce((sum, split) => sum + normalizePaymentSplitAmount(split.assignedAmount), 0);
-    if (Math.abs(assignedTotal - expectedTotal) > 0.0001) {
-      throw new Error(`Payment split total must equal ${expectedTotal}.`);
+    const usedTotal = calculateOrderAgentPaidTotal(resolvedSplits);
+    if (usedTotal > expectedTotal) {
+      throw new Error(`Total paid amount cannot exceed order total ${expectedTotal}.`);
     }
 
     return {
@@ -1458,29 +1452,62 @@ try {
         nextOrder.wechatId = trimmedValue;
       } else if (field === "payment") {
         let resolvedAgent = paymentAgents.find((agent) => agent.id === trimmedValue || normalizePaymentAgentValue(agent.name) === normalizePaymentAgentValue(trimmedValue)) ?? null;
-        if (trimmedValue && !resolvedAgent) resolvedAgent = await resolveOrCreatePaymentAgentByName(trimmedValue);
+        if (trimmedValue && !resolvedAgent) resolvedAgent = await resolveExistingPaymentAgentByName(trimmedValue);
+        if (trimmedValue && !resolvedAgent) throw new Error("Payment agent not found. Add it from the Payment Agents tab first.");
         const nextPaymentAgentId = resolvedAgent?.id || "";
-        const settlementPreview = calculatePaymentAgentSettlement({
-          orderTotal: orderTotal(nextOrder),
-          existingCredit: resolvedAgent?.creditBalance ?? 0,
-          paidNow: order.paidToPaymentAgentNow ?? 0,
-        });
+        const currentSplits = getEditablePaymentAgentSplits(nextOrder);
+        const primarySplit = currentSplits[0] ?? createEmptyPaymentAgentSplit();
+        const paidAmount = normalizePaymentSplitAmount(primarySplit.paidNow);
+        const existingCredit = resolvedAgent ? getPaymentAgentDirectFinance(resolvedAgent).creditLeft : 0;
+        const splitStatus: "paid" | "unpaid" = paidAmount > 0 ? "paid" : "unpaid";
+        const nextSplits = nextPaymentAgentId
+          ? [{
+              ...primarySplit,
+              paymentAgentId: nextPaymentAgentId,
+              paymentBy: nextPaymentAgentId,
+              paymentAgentName: resolvedAgent?.name || "",
+              paymentAgentSnapshot: resolvedAgent ? { id: resolvedAgent.id, name: resolvedAgent.name, code: resolvedAgent.agentCode } : undefined,
+              assignedAmount: paidAmount,
+              settlementSnapshot: {
+                orderPortionTotal: paidAmount,
+                existingCredit,
+                creditUsed: paidAmount,
+                payableAfterCredit: 0,
+                remainingPayable: 0,
+                newCreditCreated: 0,
+                resultingCreditBalance: Math.max(0, existingCredit - paidAmount),
+                paidNow: 0,
+                status: splitStatus,
+                updatedAt: new Date().toISOString(),
+                createdAt: primarySplit.settlementSnapshot?.createdAt || new Date().toISOString(),
+              },
+            }]
+          : [createEmptyPaymentAgentSplit()];
+        nextOrder.paymentAgentSplits = nextSplits;
         nextOrder.paymentAgentId = nextPaymentAgentId;
         nextOrder.paymentBy = nextPaymentAgentId || trimmedValue;
         nextOrder.paymentByName = resolvedAgent?.name || trimmedValue;
         nextOrder.paymentAgentName = resolvedAgent?.name || trimmedValue;
         nextOrder.paymentAgentSnapshot = nextPaymentAgentId
           ? { id: nextPaymentAgentId, name: resolvedAgent?.name || trimmedValue, code: resolvedAgent?.agentCode || "" }
-          : { id: "", name: "", code: "" };
-        nextOrder.paymentAgentSettlementSnapshot = {
-          ...settlementPreview,
-          orderTotal: settlementPreview.orderTotal,
-          existingCredit: settlementPreview.existingCredit,
-          paymentAgentId: nextPaymentAgentId,
-          paymentAgentName: resolvedAgent?.name || trimmedValue,
-          updatedAt: new Date().toISOString(),
-          createdAt: order.paymentAgentSettlementSnapshot?.createdAt || new Date().toISOString(),
-        };
+          : undefined;
+        nextOrder.paymentAgentSettlementSnapshot = nextSplits[0]?.settlementSnapshot
+          ? {
+              orderTotal: nextSplits[0].settlementSnapshot.orderPortionTotal,
+              existingCredit: nextSplits[0].settlementSnapshot.existingCredit,
+              creditUsed: nextSplits[0].settlementSnapshot.creditUsed,
+              payableAfterCredit: 0,
+              remainingPayable: 0,
+              newCreditCreated: 0,
+              resultingCreditBalance: nextSplits[0].settlementSnapshot.resultingCreditBalance,
+              paidNow: 0,
+              status: nextSplits[0].settlementSnapshot.status,
+              paymentAgentId: nextPaymentAgentId,
+              paymentAgentName: resolvedAgent?.name || trimmedValue,
+              updatedAt: new Date().toISOString(),
+              createdAt: nextSplits[0].settlementSnapshot.createdAt || order.paymentAgentSettlementSnapshot?.createdAt || new Date().toISOString(),
+            }
+          : undefined;
       } else if (field === "shipping") {
         nextOrder.shippingPrice = Math.max(0, Number(rawValue) || 0);
       } else {
@@ -1610,17 +1637,23 @@ try {
         const message = error instanceof Error ? error.message : String(error);
         setOrderSaveState("idle");
         saveAudit.flush("save:error", { stage: "payment_agent_resolve", message });
-        pushToast({ tone: "danger", text: `Payment agent create failed: ${message}` });
+        pushToast({ tone: "danger", text: `Payment agent selection failed: ${message}` });
         return;
       }
       const draftOrderBase = applyLegacyPaymentAgentFromSplits(cleanedDraft, draftSplitResolution.splits);
       const primaryDraftSplit = draftSplitResolution.splits[0];
+      const draftPaidAmount = calculateOrderAgentPaidTotal(draftSplitResolution.splits);
+      const draftTotalAmount = orderTotal({ ...cleanedDraft, lines: meaningfulLines });
+      const draftDueAmount = calculateOrderRemainingPayable(draftTotalAmount, draftSplitResolution.splits);
       const draftOrder = {
         ...draftOrderBase,
         number: cleanedDraft.number,
         orderNumber: cleanedDraft.orderNumber || cleanedDraft.number,
         ...deriveOrderSeriesFields(cleanedDraft.orderNumber || cleanedDraft.number),
         status: "draft" as const,
+        paidAmount: draftPaidAmount,
+        dueAmount: draftDueAmount,
+        paymentStatus: getOrderPaymentStatusFromDue(draftTotalAmount, draftDueAmount),
       paymentAgentSettlementSnapshot: (() => {
         const now = new Date().toISOString();
         return primaryDraftSplit?.settlementSnapshot
@@ -1755,7 +1788,7 @@ try {
       const message = error instanceof Error ? error.message : String(error);
       setOrderSaveState("idle");
       saveAudit.flush("save:error", { stage: "payment_agent_resolve", message });
-      pushToast({ tone: "danger", text: `Payment agent create failed: ${message}` });
+      pushToast({ tone: "danger", text: `Payment agent selection failed: ${message}` });
       return;
     }
     const resolvedAgent = splitResolution.primaryAgent;
@@ -1764,6 +1797,9 @@ try {
     const primaryResolvedSplit = splitResolution.splits[0];
     const primarySettlementSnapshot = primaryResolvedSplit?.settlementSnapshot;
     const finalOrderSeriesFields = deriveOrderSeriesFields(finalOrderNumber);
+    const finalTotalAmount = orderTotal({ ...cleanedDraft, lines: resolvedLines });
+    const finalPaidAmount = calculateOrderAgentPaidTotal(splitResolution.splits);
+    const finalDueAmount = calculateOrderRemainingPayable(finalTotalAmount, splitResolution.splits);
     let savedOrder: Order = {
       ...resolvedDraftWithSplits,
       number: finalOrderNumber,
@@ -1772,8 +1808,10 @@ try {
       lines: resolvedLines,
       status: "saved" as const,
       subtotal: orderLinesTotal({ ...cleanedDraft, lines: resolvedLines }),
-      grandTotal: orderTotal({ ...cleanedDraft, lines: resolvedLines }),
-      dueAmount: orderTotal({ ...cleanedDraft, lines: resolvedLines }),
+      grandTotal: finalTotalAmount,
+      paidAmount: finalPaidAmount,
+      dueAmount: finalDueAmount,
+      paymentStatus: getOrderPaymentStatusFromDue(finalTotalAmount, finalDueAmount),
       paymentAgentId: resolvedPaymentAgentId,
       paymentBy: resolvedPaymentAgentId || resolvedDraftWithSplits.paymentBy,
       paymentByName: resolvedDraftWithSplits.paymentByName || "",
