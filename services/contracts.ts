@@ -31,6 +31,7 @@ export interface PaymentAgentsService {
   upsertPaymentAgent(agent: PaymentAgent): Promise<PaymentAgent>;
   recalculatePaymentAgentsFromOrders(orders: Order[]): Promise<PaymentAgent[]>;
   recordPaymentToAgent(agentId: string, payment: { amount: number; paymentDate: string; note?: string; paymentMethod?: string }): Promise<PaymentAgent>;
+  deletePaymentAgentLedgerEntry?(entryId: string): Promise<PaymentAgent>;
   listPaymentAgentLedger(agentId?: string): Promise<PaymentAgentLedgerEntry[]>;
   deletePaymentAgent?(id: string): Promise<void>;
   applyOrderSettlement?(order: Order): Promise<void>;

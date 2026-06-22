@@ -25,6 +25,7 @@ export const paymentAgentsMockService: PaymentAgentsService = {
       paymentAgentsState[idx] = {
         ...paymentAgentsState[idx],
         currentDuePayable: Math.max(0, (paymentAgentsState[idx].currentDuePayable ?? 0) - (entry.dueReduced ?? 0)),
+        currentPayable: Math.max(0, (paymentAgentsState[idx].currentPayable ?? paymentAgentsState[idx].currentDuePayable ?? 0) - (entry.dueReduced ?? 0)),
         creditBalance: Math.max(0, (paymentAgentsState[idx].creditBalance ?? 0) + (entry.creditCreated ?? 0)),
         totalPaidAmount: Math.max(0, (paymentAgentsState[idx].totalPaidAmount ?? 0) + entry.amount),
       };
@@ -38,9 +39,65 @@ export const paymentAgentsMockService: PaymentAgentsService = {
     const due = Math.max(0, paymentAgentsState[idx].currentDuePayable ?? 0);
     const dueReduced = Math.min(due, amount);
     const creditCreated = Math.max(0, amount - dueReduced);
-    paymentAgentsState[idx] = { ...paymentAgentsState[idx], currentDuePayable: due - dueReduced, creditBalance: Math.max(0, (paymentAgentsState[idx].creditBalance ?? 0) + creditCreated), totalPaidAmount: Math.max(0, (paymentAgentsState[idx].totalPaidAmount ?? 0) + amount), updatedAt: new Date().toISOString() };
+    paymentAgentsState[idx] = {
+      ...paymentAgentsState[idx],
+      currentDuePayable: due - dueReduced,
+      currentPayable: due - dueReduced,
+      creditBalance: Math.max(0, (paymentAgentsState[idx].creditBalance ?? 0) + creditCreated),
+      totalPaidAmount: Math.max(0, (paymentAgentsState[idx].totalPaidAmount ?? 0) + amount),
+      updatedAt: new Date().toISOString(),
+    };
     paymentAgentLedgerState = [{ id: `led-${Date.now()}`, agentId, type: "agent_payment", amount, dueReduced, creditCreated, note: payment.note, paymentMethod: payment.paymentMethod, createdAt: payment.paymentDate || new Date().toISOString(), paymentDate: payment.paymentDate || new Date().toISOString() }, ...paymentAgentLedgerState];
     return deepClone(paymentAgentsState[idx]);
+  },
+  async deletePaymentAgentLedgerEntry(entryId) {
+    const entryIndex = paymentAgentLedgerState.findIndex((entry) => entry.id === entryId);
+    if (entryIndex < 0) throw new Error("Ledger entry not found.");
+    const entry = paymentAgentLedgerState[entryIndex];
+    if (!entry || entry.type !== "agent_payment") throw new Error("Only manual payment records can be deleted from this ledger.");
+    if (entry.active === false || entry.isReversed === true) throw new Error("This payment record has already been reversed.");
+    const agentIndex = paymentAgentsState.findIndex((agent) => agent.id === entry.agentId);
+    if (agentIndex < 0) throw new Error("Payment agent not found.");
+    const current = paymentAgentsState[agentIndex];
+    const creditCreated = Math.max(0, Number(entry.creditCreated) || 0);
+    if ((current.creditBalance ?? 0) < creditCreated) {
+      throw new Error("This payment cannot be deleted because its credit has already been used in later transactions.");
+    }
+    const now = new Date().toISOString();
+    paymentAgentsState[agentIndex] = {
+      ...current,
+      currentDuePayable: Math.max(0, (current.currentDuePayable ?? 0) + Math.max(0, Number(entry.dueReduced) || 0)),
+      currentPayable: Math.max(0, (current.currentPayable ?? current.currentDuePayable ?? 0) + Math.max(0, Number(entry.dueReduced) || 0)),
+      creditBalance: Math.max(0, (current.creditBalance ?? 0) - creditCreated),
+      totalPaidAmount: Math.max(0, (current.totalPaidAmount ?? 0) - Math.max(0, Number(entry.amount) || 0)),
+      updatedAt: now,
+    };
+    paymentAgentLedgerState[entryIndex] = {
+      ...entry,
+      active: false,
+      isReversed: true,
+      updatedAt: now,
+    };
+    paymentAgentLedgerState = [
+      {
+        id: `led-reversal-${Date.now()}`,
+        agentId: entry.agentId,
+        type: "agent_payment_reversal",
+        amount: entry.amount,
+        dueReduced: entry.dueReduced,
+        creditCreated: entry.creditCreated,
+        note: `Reversal of payment${entry.note ? `: ${entry.note}` : ""}`,
+        paymentMethod: entry.paymentMethod,
+        createdAt: now,
+        updatedAt: now,
+        paymentDate: now,
+        reversalOfId: entry.id,
+        active: true,
+        isReversed: false,
+      },
+      ...paymentAgentLedgerState,
+    ];
+    return deepClone(paymentAgentsState[agentIndex]);
   },
   async listPaymentAgentLedger(agentId) { return deepClone(agentId ? paymentAgentLedgerState.filter((x) => x.agentId === agentId) : paymentAgentLedgerState); },
   async deletePaymentAgent(id) {

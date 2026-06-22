@@ -34,16 +34,18 @@ export function usePaymentAgents() {
   }, [service]);
   const recalculateFromOrders = useCallback(async (orders: Order[]) => {
     const savedOrders = orders.filter((o) => o.status === "saved");
-    const selection = paymentAgentsDataSourceSelection();
-    if (selection.source !== "firebase") {
-      const next = await service.recalculatePaymentAgentsFromOrders(savedOrders);
-      if (Array.isArray(next)) setData(next);
-      return next;
-    }
-    return service.recalculatePaymentAgentsFromOrders(savedOrders);
+    const next = await service.recalculatePaymentAgentsFromOrders(savedOrders);
+    if (Array.isArray(next)) setData(next);
+    return next;
   }, [service]);
   const recordPaymentToAgent = useCallback(async (agentId: string, payment: { amount: number; paymentDate: string; note?: string; paymentMethod?: string }) => {
     const updated = await service.recordPaymentToAgent(agentId, payment);
+    setData((prev) => prev.map((entry) => (entry.id === updated.id ? updated : entry)));
+    return updated;
+  }, [service]);
+  const deletePaymentAgentLedgerEntry = useCallback(async (entryId: string) => {
+    if (!service.deletePaymentAgentLedgerEntry) throw new Error("Ledger delete flow is not enabled for this data source.");
+    const updated = await service.deletePaymentAgentLedgerEntry(entryId);
     setData((prev) => prev.map((entry) => (entry.id === updated.id ? updated : entry)));
     return updated;
   }, [service]);
@@ -54,5 +56,5 @@ export function usePaymentAgents() {
   const reverseOrderSettlement = useCallback(async (order: Order) => {
     if (service.reverseOrderSettlement) await service.reverseOrderSettlement(order);
   }, [service]);
-  return { data, isLoading, error, isEmpty: !isLoading && data.length === 0, reload, upsertPaymentAgent, deletePaymentAgent, recalculateFromOrders, recordPaymentToAgent, listPaymentAgentLedger, applyOrderSettlement, reverseOrderSettlement };
+  return { data, isLoading, error, isEmpty: !isLoading && data.length === 0, reload, upsertPaymentAgent, deletePaymentAgent, recalculateFromOrders, recordPaymentToAgent, deletePaymentAgentLedgerEntry, listPaymentAgentLedger, applyOrderSettlement, reverseOrderSettlement };
 }

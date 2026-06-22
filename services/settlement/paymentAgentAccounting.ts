@@ -140,6 +140,7 @@ export const buildPaymentAgentAccountingSummary = (
   orders: Order[],
   entries: PaymentAgentLedgerEntry[],
   customers: Customer[] = [],
+  options?: { allowSnapshotFallback?: boolean },
 ): PaymentAgentAccountingSummary => {
   return measurePerfSync("calc", "paymentAgentAccounting.buildSummary", { agentId: agent.id, ordersCount: orders.length, entriesCount: entries.length }, () => {
   const matchedOrders = orders.filter((order) => order.status !== "archived" && isOrderMatchedToPaymentAgent(order, agent));
@@ -176,10 +177,12 @@ export const buildPaymentAgentAccountingSummary = (
   );
 
   const settlementKeys = new Set(activeSettlementEntries.map((entry) => entry.sourceOrderId || entry.sourceOrderNumber || entry.id));
-  const fallbackSettlementEntries = matchedOrders
-    .map((order) => createFallbackSettlementEntry(order, agent))
-    .filter((entry): entry is PaymentAgentLedgerEntry => Boolean(entry))
-    .filter((entry) => !settlementKeys.has(entry.sourceOrderId || entry.sourceOrderNumber || entry.id));
+  const fallbackSettlementEntries = options?.allowSnapshotFallback === false
+    ? []
+    : matchedOrders
+      .map((order) => createFallbackSettlementEntry(order, agent))
+      .filter((entry): entry is PaymentAgentLedgerEntry => Boolean(entry))
+      .filter((entry) => !settlementKeys.has(entry.sourceOrderId || entry.sourceOrderNumber || entry.id));
 
   const netSettlementEntries = [...activeSettlementEntries, ...fallbackSettlementEntries];
   const reversalEntries = pickLatestByKey(

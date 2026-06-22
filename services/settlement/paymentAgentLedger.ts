@@ -36,16 +36,29 @@ export function recalculateAgentFromOpeningAndOrders(agent: PaymentAgent, orders
   let totalOrderAmount = 0;
   let totalPaidAmount = 0;
   let currentDuePayable = 0;
+  let totalUsedAmount = 0;
 
   for (const o of eligible) {
     const s = o.paymentAgentSettlementSnapshot!;
     totalOrderAmount += clamp(s.orderTotal);
     totalPaidAmount += clamp(s.paidNow);
     currentDuePayable += clamp(s.remainingPayable);
+    totalUsedAmount += clamp(s.creditUsed);
     creditBalance = clamp(creditBalance - clamp(s.creditUsed) + clamp(s.newCreditCreated));
   }
 
-  return { ...agent, creditBalance, totalOrderAmount, totalPaidAmount, currentDuePayable, updatedAt: new Date().toISOString() };
+  return {
+    ...agent,
+    totalOrdersPaid: eligible.length,
+    creditBalance,
+    totalOrderAmount,
+    totalPaidAmount,
+    totalPayableAmount: clamp(totalOrderAmount - totalUsedAmount),
+    currentDuePayable,
+    totalUsedAmount,
+    currentPayable: currentDuePayable,
+    updatedAt: new Date().toISOString(),
+  };
 }
 
 export function applyOrderSettlementToAgent(
@@ -55,10 +68,14 @@ export function applyOrderSettlementToAgent(
 ) {
   const updated = {
     ...agent,
+    totalOrdersPaid: Math.max(0, (agent.totalOrdersPaid ?? 0) + 1),
     creditBalance: clamp(settlement.resultingCreditBalance),
     totalOrderAmount: clamp((agent.totalOrderAmount ?? 0) + settlement.orderTotal),
     totalPaidAmount: clamp((agent.totalPaidAmount ?? 0) + settlement.paidNow),
+    totalPayableAmount: clamp((agent.totalPayableAmount ?? Math.max(0, (agent.totalOrderAmount ?? 0) - (agent.totalUsedAmount ?? 0))) + settlement.payableAfterCredit),
     currentDuePayable: clamp((agent.currentDuePayable ?? 0) + settlement.remainingPayable),
+    totalUsedAmount: clamp((agent.totalUsedAmount ?? 0) + settlement.creditUsed),
+    currentPayable: clamp((agent.currentPayable ?? agent.currentDuePayable ?? 0) + settlement.remainingPayable),
     updatedAt: new Date().toISOString(),
   };
   const entry: PaymentAgentLedgerEntry = {

@@ -2,13 +2,14 @@ import { collection, deleteDoc, doc, getDoc, getDocs, runTransaction, setDoc } f
 import { getFirestoreDb } from "@/lib/firebase/client";
 import { areBusinessValuesEqual } from "@/lib/firebase/noopWrite";
 import { measurePerfAsync, recordPerfEvent, recordPerfNoopWrite } from "@/lib/perfDebug";
-import { paymentAgentFromFirestore, paymentAgentLedgerEntryToFirestore, paymentAgentToFirestore } from "@/lib/firebase/mappers";
+import { paymentAgentFromFirestore, paymentAgentLedgerEntryFromFirestore, paymentAgentLedgerEntryToFirestore, paymentAgentToFirestore } from "@/lib/firebase/mappers";
 import { paymentAgentLedgerPath, paymentAgentsPath, paymentAgentPath } from "@/lib/firebase/paths";
 import type { PaymentAgentsService } from "@/services/contracts";
 import type { PaymentAgent, PaymentAgentLedgerEntry, PaymentAgentOrderSplit, PaymentAgentSplitSettlementSnapshot } from "@/lib/types";
 import { buildOrderSplitSettlementEntry, buildOrderSplitSettlementReversalEntry } from "@/services/settlement/paymentAgentLedger";
 import { isOrderEligibleForCreditSettlement } from "@/services/settlement/orderCreditEligibility";
 import { calculatePaymentAgentSettlement } from "@/services/settlement/paymentAgentSettlement";
+import { buildPaymentAgentAccountingSummary } from "@/services/settlement/paymentAgentAccounting";
 import {
   getOrderPaymentAgentLedgerEntryIds,
   getOrderPaymentAgentSplits,
@@ -71,6 +72,7 @@ const applySettlementDelta = (
     amount?: number;
     creditUsed?: number;
     paidNow?: number;
+    payableAfterCredit?: number;
     remainingPayable?: number;
     newCreditCreated?: number;
   },
@@ -78,10 +80,14 @@ const applySettlementDelta = (
   now: string,
 ): PaymentAgent => ({
   ...agent,
+  totalOrdersPaid: clamp((agent.totalOrdersPaid ?? 0) + direction),
   creditBalance: clamp((agent.creditBalance ?? 0) + direction * (-clamp(entry.creditUsed ?? 0) + clamp(entry.newCreditCreated ?? 0))),
   totalOrderAmount: clamp((agent.totalOrderAmount ?? 0) + direction * clamp(entry.amount ?? 0)),
   totalPaidAmount: clamp((agent.totalPaidAmount ?? 0) + direction * clamp(entry.paidNow ?? 0)),
+  totalPayableAmount: clamp((agent.totalPayableAmount ?? Math.max(0, (agent.totalOrderAmount ?? 0) - (agent.totalUsedAmount ?? 0))) + direction * clamp(entry.payableAfterCredit ?? 0)),
   currentDuePayable: clamp((agent.currentDuePayable ?? 0) + direction * clamp(entry.remainingPayable ?? 0)),
+  totalUsedAmount: clamp((agent.totalUsedAmount ?? 0) + direction * clamp(entry.creditUsed ?? 0)),
+  currentPayable: clamp((agent.currentPayable ?? agent.currentDuePayable ?? 0) + direction * clamp(entry.remainingPayable ?? 0)),
   updatedAt: now,
 });
 
@@ -104,7 +110,21 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
     const now = new Date().toISOString();
     const id = agent.id || makeId();
     const existing = await this.getPaymentAgentById(id);
-    const next: PaymentAgent = { ...agent, id, createdAt: existing?.createdAt || agent.createdAt || now, updatedAt: now, creditBalance: agent.creditBalance ?? agent.openingCreditBalance ?? 0, openingCreditBalance: agent.openingCreditBalance ?? 0, totalOrderAmount: agent.totalOrderAmount ?? 0, totalPaidAmount: agent.totalPaidAmount ?? 0, currentDuePayable: agent.currentDuePayable ?? 0 };
+    const next: PaymentAgent = {
+      ...agent,
+      id,
+      createdAt: existing?.createdAt || agent.createdAt || now,
+      updatedAt: now,
+      totalOrdersPaid: agent.totalOrdersPaid ?? existing?.totalOrdersPaid ?? 0,
+      creditBalance: agent.creditBalance ?? agent.openingCreditBalance ?? 0,
+      openingCreditBalance: agent.openingCreditBalance ?? 0,
+      totalOrderAmount: agent.totalOrderAmount ?? 0,
+      totalPaidAmount: agent.totalPaidAmount ?? 0,
+      totalPayableAmount: agent.totalPayableAmount ?? existing?.totalPayableAmount ?? 0,
+      currentDuePayable: agent.currentDuePayable ?? 0,
+      totalUsedAmount: agent.totalUsedAmount ?? existing?.totalUsedAmount ?? 0,
+      currentPayable: agent.currentPayable ?? agent.currentDuePayable ?? existing?.currentPayable ?? 0,
+    };
     if (existing) {
       if (areBusinessValuesEqual(paymentAgentToFirestore(existing), paymentAgentToFirestore(next))) {
         recordPerfNoopWrite("paymentAgents.upsertPaymentAgent", { path: paymentAgentPath(BUSINESS_ID, id), agentId: id });
@@ -128,7 +148,15 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
       const due = Math.max(0, current.currentDuePayable ?? 0);
       const dueReduced = Math.min(due, amount);
       const creditCreated = Math.max(0, amount - dueReduced);
-      const updated: PaymentAgent = { ...current, currentDuePayable: due - dueReduced, creditBalance: Math.max(0, (current.creditBalance ?? 0) + creditCreated), totalPaidAmount: Math.max(0, (current.totalPaidAmount ?? 0) + amount), updatedAt: now };
+      const nextDue = due - dueReduced;
+      const updated: PaymentAgent = {
+        ...current,
+        currentDuePayable: nextDue,
+        currentPayable: nextDue,
+        creditBalance: Math.max(0, (current.creditBalance ?? 0) + creditCreated),
+        totalPaidAmount: Math.max(0, (current.totalPaidAmount ?? 0) + amount),
+        updatedAt: now,
+      };
       recordPerfEvent("firestore-write", "paymentAgents.recordPaymentToAgent.agent", { path: paymentAgentPath(BUSINESS_ID, agentId), agentId });
       tx.set(agentRef, paymentAgentToFirestore(updated), { merge: true });
       recordPerfEvent("firestore-write", "paymentAgents.recordPaymentToAgent.ledger", { path: `${paymentAgentLedgerPath(BUSINESS_ID)}/${ledgerRef.id}`, agentId });
@@ -136,12 +164,93 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
       return updated;
     });
   },
+  async deletePaymentAgentLedgerEntry(entryId) {
+    const db = requireDb();
+    const entryRef = doc(db, paymentAgentLedgerPath(BUSINESS_ID), entryId);
+    const now = new Date().toISOString();
+    return runTransaction(db, async (tx) => {
+      const entrySnap = await tx.get(entryRef);
+      if (!entrySnap.exists()) throw new Error("Ledger entry not found.");
+      const currentEntry = paymentAgentLedgerEntryFromFirestore({ id: entrySnap.id, ...(entrySnap.data() as Record<string, unknown>) });
+      if (currentEntry.type !== "agent_payment") throw new Error("Only manual payment records can be deleted from this ledger.");
+      if (currentEntry.active === false || currentEntry.isReversed === true) throw new Error("This payment record has already been reversed.");
+      const agentRef = doc(db, paymentAgentPath(BUSINESS_ID, currentEntry.agentId));
+      const agentSnap = await tx.get(agentRef);
+      if (!agentSnap.exists()) throw new Error("Payment agent not found.");
+      const currentAgent = paymentAgentFromFirestore({ id: agentSnap.id, ...(agentSnap.data() as Record<string, unknown>) });
+      const creditCreated = clamp(currentEntry.creditCreated ?? 0);
+      if (clamp(currentAgent.creditBalance ?? 0) < creditCreated) {
+        throw new Error("This payment cannot be deleted because its credit has already been used in later transactions.");
+      }
+      const updatedAgent: PaymentAgent = {
+        ...currentAgent,
+        currentDuePayable: clamp((currentAgent.currentDuePayable ?? 0) + clamp(currentEntry.dueReduced ?? 0)),
+        currentPayable: clamp((currentAgent.currentPayable ?? currentAgent.currentDuePayable ?? 0) + clamp(currentEntry.dueReduced ?? 0)),
+        creditBalance: clamp((currentAgent.creditBalance ?? 0) - creditCreated),
+        totalPaidAmount: clamp((currentAgent.totalPaidAmount ?? 0) - clamp(currentEntry.amount)),
+        updatedAt: now,
+      };
+      const reversalRef = doc(collection(db, paymentAgentLedgerPath(BUSINESS_ID)));
+      tx.set(agentRef, paymentAgentToFirestore(updatedAgent), { merge: true });
+      tx.set(entryRef, { active: false, isReversed: true, updatedAt: now }, { merge: true });
+      tx.set(
+        reversalRef,
+        paymentAgentLedgerEntryToFirestore({
+          id: reversalRef.id,
+          agentId: currentEntry.agentId,
+          type: "agent_payment_reversal",
+          amount: clamp(currentEntry.amount),
+          dueReduced: clamp(currentEntry.dueReduced ?? 0),
+          creditCreated: creditCreated,
+          note: `Reversal of payment${currentEntry.note ? `: ${currentEntry.note}` : ""}`,
+          paymentMethod: currentEntry.paymentMethod,
+          createdAt: now,
+          updatedAt: now,
+          paymentDate: now,
+          reversalOfId: currentEntry.id,
+          active: true,
+          isReversed: false,
+        }),
+      );
+      return updatedAgent;
+    });
+  },
   async listPaymentAgentLedger(agentId?: string) {
     const { paymentAgentLedgerFirebaseService } = await import("@/services/firebase/paymentAgentLedgerFirebaseService");
     return paymentAgentLedgerFirebaseService.listPaymentAgentLedgerEntries(agentId);
   },
-  async recalculatePaymentAgentsFromOrders() {
-    return this.listPaymentAgents();
+  async recalculatePaymentAgentsFromOrders(orders) {
+    const agents = await this.listPaymentAgents();
+    const ledger = await this.listPaymentAgentLedger();
+    const now = new Date().toISOString();
+    const db = requireDb();
+    const updatedAgents: PaymentAgent[] = [];
+
+    for (const agent of agents) {
+      const summary = buildPaymentAgentAccountingSummary(agent, orders, ledger);
+      const settlementPaidNowTotal = summary.activeSettlementEntries.reduce((sum, entry) => sum + clamp(entry.paidNow ?? 0), 0);
+      const paymentsMade = summary.activePaymentEntries
+        .filter((entry) => entry.type === "agent_payment")
+        .reduce((sum, entry) => sum + clamp(entry.amount), 0);
+      const repaired: PaymentAgent = {
+        ...agent,
+        totalOrdersPaid: summary.totalOrders,
+        creditBalance: clamp(summary.creditLeft),
+        totalOrderAmount: clamp(summary.totalOrderAmount),
+        totalPaidAmount: clamp(settlementPaidNowTotal + paymentsMade),
+        totalPayableAmount: clamp(summary.totalOrderAmount - summary.totalUsed),
+        currentDuePayable: clamp(summary.duePending),
+        totalUsedAmount: clamp(summary.totalUsed),
+        currentPayable: clamp(summary.duePending),
+        updatedAt: now,
+      };
+      updatedAgents.push(repaired);
+      await measurePerfAsync("firestore-write", "paymentAgents.recalculatePaymentAgentsFromOrders.agent", { path: paymentAgentPath(BUSINESS_ID, repaired.id), agentId: repaired.id }, () =>
+        setDoc(doc(db, paymentAgentPath(BUSINESS_ID, repaired.id)), paymentAgentToFirestore(repaired), { merge: true }),
+      );
+    }
+
+    return updatedAgents.sort((a, b) => a.name.localeCompare(b.name));
   },
   async deletePaymentAgent(id: string) {
     const existing = await this.getPaymentAgentById(id);

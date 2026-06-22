@@ -21,6 +21,7 @@ import { orderLifecycleService } from "@/services/orderLifecycleService";
 import { buildPaymentAgentAccountingSummary, buildPaymentAgentOrderRows, buildPaymentAgentPaymentRows, buildPaymentAgentTransactionRows } from "@/services/settlement/paymentAgentAccounting";
 import { getLineCustomerDisplay } from "@/services/customers/customerResolution";
 import { measurePerfSync } from "@/lib/perfDebug";
+import { getPaymentAgentDirectFinance } from "@/services/paymentAgentFinance";
 
 const ALL_LEDGER_ROWS_KEY = "__all__";
 type LedgerViewRow = {
@@ -36,7 +37,7 @@ type LedgerViewRow = {
 
 export default function PaymentAgentsPage() {
   const PAGE_SIZE = 100;
-  const { data: agents, isLoading: isPaymentAgentsLoading, upsertPaymentAgent, deletePaymentAgent, recordPaymentToAgent, listPaymentAgentLedger, reload: reloadPaymentAgents } = usePaymentAgents();
+  const { data: agents, isLoading: isPaymentAgentsLoading, upsertPaymentAgent, deletePaymentAgent, recordPaymentToAgent, deletePaymentAgentLedgerEntry, listPaymentAgentLedger, recalculateFromOrders, reload: reloadPaymentAgents } = usePaymentAgents();
   const { data: customers } = useCustomers();
   const { orders, pushToast } = useStore();
   const { data: firebaseOrders } = useOrders();
@@ -68,6 +69,7 @@ export default function PaymentAgentsPage() {
     ledgerHistoryCount: number;
     riskDetected: boolean;
   }>(null);
+  const paymentAgentRepairTriggeredRef = useRef(false);
 
   useEffect(() => {
     logPageAccess("Payment Agents", { component: "app/payment-agents/page.tsx", source: process.env.NEXT_PUBLIC_PAYMENT_AGENTS_DATA_SOURCE ?? "mock" });
@@ -80,22 +82,33 @@ export default function PaymentAgentsPage() {
       .catch(() => {});
   }, [ledgerRows, listPaymentAgentLedger]);
 
+  useEffect(() => {
+    if (paymentAgentRepairTriggeredRef.current) return;
+    if (isPaymentAgentsLoading) return;
+    if (!sourceOrders.length && !agents.length) return;
+    paymentAgentRepairTriggeredRef.current = true;
+    void recalculateFromOrders(sourceOrders).catch(() => {
+      paymentAgentRepairTriggeredRef.current = false;
+    });
+  }, [agents.length, isPaymentAgentsLoading, recalculateFromOrders, sourceOrders]);
+
   const rows = useMemo(() => {
     return measurePerfSync("calc", "paymentAgentsPage.rows", { agentsCount: agents.length, ordersCount: sourceOrders.length, ledgerCount: (ledgerRows[ALL_LEDGER_ROWS_KEY] || []).length }, () => {
     const allLedger = ledgerRows[ALL_LEDGER_ROWS_KEY] || [];
     return agents.map((agent) => {
       const summary = buildPaymentAgentAccountingSummary(agent, sourceOrders, allLedger, customers);
+      const finance = getPaymentAgentDirectFinance(agent);
       const searchText = [
         agent.name,
         agent.wechatId || "",
         agent.phone || "",
         agent.country || "",
         agent.notes || "",
-        formatAmount(summary.totalAdvanced),
-        formatAmount(summary.totalUsed),
-        formatAmount(summary.duePending),
-        formatAmount(summary.creditLeft),
-        formatAmount(summary.paymentsMade),
+        formatAmount(finance.totalAdvanced),
+        formatAmount(finance.totalUsed),
+        formatAmount(finance.duePending),
+        formatAmount(finance.creditLeft),
+        formatAmount(finance.paymentsMade),
         summary.matchedOrders.map((order) => order.number || order.orderNumber || "").join(" "),
         summary.matchedOrders.flatMap((order) => order.lines.map((line) => getLineCustomerDisplay(line, customers))).join(" "),
         summary.matchedEntries.map((entry) => entry.note || "").join(" "),
@@ -106,6 +119,12 @@ export default function PaymentAgentsPage() {
 
       return {
         ...summary,
+        totalOrders: finance.totalOrders,
+        totalAdvanced: finance.totalAdvanced,
+        totalUsed: finance.totalUsed,
+        duePending: finance.duePending,
+        creditLeft: finance.creditLeft,
+        paymentsMade: finance.paymentsMade,
         searchText,
       };
     });
@@ -256,11 +275,34 @@ export default function PaymentAgentsPage() {
   const activeLedgerRows = ledgerRows[ALL_LEDGER_ROWS_KEY] || [];
   const activeLedgerError = ledgerErrors[ALL_LEDGER_ROWS_KEY] || null;
 
-  const handleLedgerPayment = async (agentId: string, input: { paymentDate: string; amount: number; paymentMethod?: string; note?: string }) => {
-    await recordPaymentToAgent(agentId, input);
+  const refreshPaymentAgentFinanceView = async () => {
+    await reloadPaymentAgents();
     const loaded = await listPaymentAgentLedger();
     setLedgerRows((prev) => ({ ...prev, [ALL_LEDGER_ROWS_KEY]: loaded }));
-    pushToast({ tone: "success", text: "Payment recorded." });
+  };
+
+  const handleLedgerPayment = async (agentId: string, input: { paymentDate: string; amount: number; paymentMethod?: string; note?: string }) => {
+    try {
+      await recordPaymentToAgent(agentId, input);
+      await refreshPaymentAgentFinanceView();
+      pushToast({ tone: "success", text: "Payment recorded." });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not record payment.";
+      pushToast({ tone: "danger", text: message });
+      throw error;
+    }
+  };
+
+  const handleLedgerPaymentDelete = async (entryId: string) => {
+    try {
+      await deletePaymentAgentLedgerEntry(entryId);
+      await refreshPaymentAgentFinanceView();
+      pushToast({ tone: "success", text: "Payment deleted and reversed." });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not delete payment.";
+      pushToast({ tone: "danger", text: message });
+      throw error;
+    }
   };
 
   const save = async () => {
@@ -285,7 +327,10 @@ export default function PaymentAgentsPage() {
       totalOrdersPaid: existing?.totalOrdersPaid ?? 0,
       totalPaidAmount: existing?.totalPaidAmount ?? 0,
       totalOrderAmount: existing?.totalOrderAmount ?? 0,
+      totalPayableAmount: existing?.totalPayableAmount ?? 0,
       currentDuePayable: existing?.currentDuePayable ?? 0,
+      totalUsedAmount: existing?.totalUsedAmount ?? 0,
+      currentPayable: existing?.currentPayable ?? existing?.currentDuePayable ?? 0,
     };
     await upsertPaymentAgent(agent);
     setOpen(false);
@@ -537,6 +582,7 @@ export default function PaymentAgentsPage() {
             onClose={() => setLedgerAgent(null)}
             onExport={exportLedgerStatement}
             onAddPayment={(input) => (activeLedgerSummary ? handleLedgerPayment(activeLedgerSummary.agent.id, input) : Promise.resolve())}
+            onDeletePayment={handleLedgerPaymentDelete}
           />
 
           {deleteModalOpen && deleteCtx ? (
