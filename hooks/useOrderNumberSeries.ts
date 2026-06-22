@@ -33,5 +33,13 @@ export function useOrderNumberSeries(orders: Order[]) {
     return created;
   }, [service, orders, reload]);
 
-  return { data, isLoading, error, reload, createSeries };
+  const deleteSeries = useCallback(async (id: string) => {
+    if (!service.deleteOrderNumberSeries) {
+      throw new Error("Deleting order series is not supported.");
+    }
+    await service.deleteOrderNumberSeries(id, orders);
+    await reload();
+  }, [service, orders, reload]);
+
+  return { data, isLoading, error, reload, createSeries, deleteSeries };
 }

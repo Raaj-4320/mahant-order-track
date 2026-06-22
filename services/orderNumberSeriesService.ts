@@ -22,5 +22,9 @@ export function getOrderNumberSeriesService(): OrderNumberSeriesService {
       const { orderNumberSeriesFirebaseService } = await import("@/services/firebase/orderNumberSeriesFirebaseService");
       return orderNumberSeriesFirebaseService.syncOrderNumberSeriesFromOrder(order, orders);
     },
+    async deleteOrderNumberSeries(id, orders) {
+      const { orderNumberSeriesFirebaseService } = await import("@/services/firebase/orderNumberSeriesFirebaseService");
+      return orderNumberSeriesFirebaseService.deleteOrderNumberSeries?.(id, orders);
+    },
   };
 }

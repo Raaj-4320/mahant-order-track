@@ -270,6 +270,71 @@ const normalizeEditableOrderNumber = (value?: string) => {
   return `${prefix}${String(Number(digits))}`;
 };
 
+const normalizeComposerLineForComparison = (line: Order["lines"][number]) => {
+  const seeded = seedDetailBoxesFromLegacy(line);
+  return {
+    supplierId: (seeded.supplierId || "").trim(),
+    picDim: (seeded.picDim || "").trim(),
+    productId: (seeded.productId || "").trim(),
+    marka: (seeded.marka || "").trim(),
+    details: (seeded.details || "").trim(),
+    detail1: (seeded.detail1 || "").trim(),
+    detail2: (seeded.detail2 || "").trim(),
+    detail3: (seeded.detail3 || "").trim(),
+    totalCtns: Number(seeded.totalCtns) || 0,
+    pcsPerCtn: Number(seeded.pcsPerCtn) || 0,
+    rmbPerPcs: Number(seeded.rmbPerPcs) || 0,
+    customerId: (seeded.customerId || "").trim(),
+    customerName: (seeded.customerName || "").trim(),
+    customerSnapshot: seeded.customerSnapshot
+      ? {
+          id: (seeded.customerSnapshot.id || "").trim(),
+          name: (seeded.customerSnapshot.name || "").trim(),
+        }
+      : undefined,
+    productPhotoUrl: (seeded.productPhotoUrl || "").trim(),
+    photoUrl: (seeded.photoUrl || "").trim(),
+  };
+};
+
+const normalizeComposerSplitForComparison = (split: PaymentAgentOrderSplit) => ({
+  paymentAgentId: (split.paymentAgentId || "").trim(),
+  paymentBy: (split.paymentBy || "").trim(),
+  paymentAgentName: (split.paymentAgentName || "").trim(),
+  paymentAgentSnapshot: split.paymentAgentSnapshot
+    ? {
+        id: (split.paymentAgentSnapshot.id || "").trim(),
+        name: (split.paymentAgentSnapshot.name || "").trim(),
+        code: (split.paymentAgentSnapshot.code || "").trim(),
+      }
+    : undefined,
+  assignedAmount: Number(split.assignedAmount) || 0,
+  paidNow: Number(split.paidNow) || 0,
+  note: (split.note || "").trim(),
+});
+
+const normalizeComposerOrderForComparison = (order: Order) => ({
+  date: order.date || "",
+  loadingDate: order.loadingDate || "",
+  wechatId: (order.wechatId || "").trim(),
+  number: normalizeEditableOrderNumber(order.number || order.orderNumber),
+  orderNumber: normalizeEditableOrderNumber(order.orderNumber || order.number),
+  paymentAgentId: (order.paymentAgentId || "").trim(),
+  paymentBy: (order.paymentBy || "").trim(),
+  paymentByName: (order.paymentByName || "").trim(),
+  paymentAgentName: (order.paymentAgentName || "").trim(),
+  paymentAgentSnapshot: order.paymentAgentSnapshot
+    ? {
+        id: (order.paymentAgentSnapshot.id || "").trim(),
+        name: (order.paymentAgentSnapshot.name || "").trim(),
+        code: (order.paymentAgentSnapshot.code || "").trim(),
+      }
+    : undefined,
+  shippingPrice: Number(order.shippingPrice) || 0,
+  lines: (order.lines || []).map(normalizeComposerLineForComparison),
+  paymentAgentSplits: getEditablePaymentAgentSplits(order).map(normalizeComposerSplitForComparison),
+});
+
 const getStoredSelectedSeriesId = () => {
   if (typeof window === "undefined") return "";
   return window.localStorage.getItem(LAST_SELECTED_ORDER_SERIES_KEY) || "";
@@ -439,6 +504,8 @@ export default function OrdersPage() {
   const [orderSaveState, setOrderSaveState] = useState<"idle" | "saving">("idle");
   const [pendingDeleteOrder, setPendingDeleteOrder] = useState<Order | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
+  const [pendingDeleteSeriesCategory, setPendingDeleteSeriesCategory] = useState<string | null>(null);
+  const [deleteSeriesBusy, setDeleteSeriesBusy] = useState(false);
   const [expandedOrderIds, setExpandedOrderIds] = useState<Record<string, boolean>>({});
   const [orderLineIndexes, setOrderLineIndexes] = useState<Record<string, number>>({});
   const wechatNormalizationStartedRef = useRef(false);
@@ -448,7 +515,7 @@ export default function OrdersPage() {
   const { theme, toggle } = useTheme();
 
   const activeOrders = useMemo(() => (isFirebaseOrdersMode ? firebaseOrders : orders).filter((o) => o.status !== "archived"), [isFirebaseOrdersMode, firebaseOrders, orders]);
-  const { data: orderSeries, isLoading: isOrderSeriesLoading, createSeries: createOrderSeries, reload: reloadOrderSeries } = useOrderNumberSeries(activeOrders);
+  const { data: orderSeries, isLoading: isOrderSeriesLoading, createSeries: createOrderSeries, deleteSeries: deleteOrderSeries, reload: reloadOrderSeries } = useOrderNumberSeries(activeOrders);
   const lineTotal = useMemo(() => orderLinesTotal(draft), [draft]);
   const total = useMemo(() => orderTotal(draft), [draft]);
   const orderCategoryTabs = useMemo(() => {
@@ -462,6 +529,19 @@ export default function OrdersPage() {
       if (parsed?.category) discovered.add(parsed.category);
     });
     return Array.from(discovered).sort((left, right) => left.localeCompare(right));
+  }, [orderSeries, activeOrders]);
+  const emptySeriesCategories = useMemo(() => {
+    const categoriesWithOrders = new Set(
+      activeOrders
+        .map((order) => parseOrderNumber(order.number || order.orderNumber)?.category || "")
+        .filter(Boolean),
+    );
+    const categories = new Set<string>();
+    orderSeries.forEach((series) => {
+      const label = normalizeSeriesLabel(series.label);
+      if (label && !categoriesWithOrders.has(label)) categories.add(label);
+    });
+    return categories;
   }, [orderSeries, activeOrders]);
   const effectiveOrderCategory = selectedOrderCategory || orderCategoryTabs[0] || "";
   const filteredOrders = useMemo(
@@ -720,6 +800,37 @@ export default function OrdersPage() {
     setSeriesCreateError("");
     setSeriesForm({ label: "", startNumber: "" });
     setShowCreateSeriesModal(true);
+  };
+
+  const requestDeleteSeriesCategory = (category: string) => {
+    if (!emptySeriesCategories.has(category)) return;
+    setPendingDeleteSeriesCategory(category);
+  };
+
+  const confirmDeleteSeriesCategory = async () => {
+    if (!pendingDeleteSeriesCategory) return;
+    const category = pendingDeleteSeriesCategory;
+    const matchingSeries = orderSeries.filter((series) => normalizeSeriesLabel(series.label) === category);
+    if (matchingSeries.length === 0) {
+      setPendingDeleteSeriesCategory(null);
+      return;
+    }
+    setDeleteSeriesBusy(true);
+    try {
+      for (const series of matchingSeries) {
+        await deleteOrderSeries(series.id);
+      }
+      if (selectedOrderCategory === category) {
+        const nextCategory = orderCategoryTabs.find((entry) => entry !== category) || "";
+        setSelectedOrderCategory(nextCategory);
+      }
+      setPendingDeleteSeriesCategory(null);
+      pushToast({ tone: "success", text: `Order series category ${category} deleted.` });
+    } catch (error) {
+      pushToast({ tone: "danger", text: error instanceof Error ? error.message : "Could not delete order series category." });
+    } finally {
+      setDeleteSeriesBusy(false);
+    }
   };
 
   const resolveOrCreatePaymentAgentByName = async (rawName: string) => {
@@ -1113,23 +1224,18 @@ export default function OrdersPage() {
   const hasComposerChanges = () => {
     if (editingOrderId) {
       if (!editingOrder) return false;
-      const baseline = {
-        ...editingOrder,
-        wechatId: (editingOrder.wechatId || "").trim(),
-        number: normalizeEditableOrderNumber(editingOrder.number || editingOrder.orderNumber),
-        orderNumber: normalizeEditableOrderNumber(editingOrder.orderNumber || editingOrder.number),
-        lines: (editingOrder.lines || []).map((line) => seedDetailBoxesFromLegacy(line)),
-      };
-      const current = {
-        ...draft,
-        wechatId: (draft.wechatId || "").trim(),
-        number: normalizeEditableOrderNumber(draft.number || draft.orderNumber),
-        orderNumber: normalizeEditableOrderNumber(draft.orderNumber || draft.number),
-        lines: (draft.lines || []).map((line) => seedDetailBoxesFromLegacy(line)),
-      };
+      const baseline = normalizeComposerOrderForComparison(editingOrder);
+      const current = normalizeComposerOrderForComparison(draft);
       return JSON.stringify(current) !== JSON.stringify(baseline);
     }
-    return hasAnyDraftContent(draft);
+    const preferredSeries = orderSeries.find((series) => series.id === selectedSeriesId) ?? orderSeries[0] ?? null;
+    const emptyDraft = createEmptyDraft(orders, preferredSeries ? getSeriesSuggestion(preferredSeries) : "");
+    const baseline = normalizeComposerOrderForComparison({
+      ...emptyDraft,
+      ...deriveOrderSeriesFields(emptyDraft.number || emptyDraft.orderNumber),
+    });
+    const current = normalizeComposerOrderForComparison(draft);
+    return JSON.stringify(current) !== JSON.stringify(baseline);
   };
   const resolveStatusOptions = (order: Order, rowValue: RowEditState) => {
     const options = rowValue.loadingDate ? STATUS_OPTIONS_WITH_DATE : STATUS_OPTIONS_NO_DATE;
@@ -2280,7 +2386,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
       </div>
       {ordersDataSource === "mock" ? <div className="border-b border-amber-300 bg-amber-50 px-5 py-2 text-[12px] font-medium text-amber-900">{ordersSourceSelection.hasFirebaseConfig ? "Mock mode is enabled; order and customer data is local and will not persist to Firebase." : "Firebase is not configured; app is running in mock mode and data will not persist."}</div> : null}
       <main className="min-h-0 flex-1 overflow-y-auto p-4 space-y-4">
-        {mode === "history" && orderCategoryTabs.length ? <section className="card p-2.5"><div className="flex flex-wrap items-center gap-2">{orderCategoryTabs.map((category) => { const isActive = effectiveOrderCategory === category; return <button key={category} type="button" onClick={() => setSelectedOrderCategory(category)} className={cn("rounded-full border px-3 py-1.5 text-[12px] font-medium transition-colors", isActive ? "border-brand bg-brand text-brand-fg" : "border-border bg-bg-card text-fg hover:bg-bg-subtle")}>{category}</button>; })}</div></section> : null}
+        {mode === "history" && orderCategoryTabs.length ? <section className="card p-2.5"><div className="flex flex-wrap items-center gap-2">{orderCategoryTabs.map((category) => { const isActive = effectiveOrderCategory === category; const canDeleteCategory = emptySeriesCategories.has(category); return <div key={category} className={cn("flex items-center gap-1 rounded-full border pr-2 transition-colors", isActive ? "border-brand bg-brand text-brand-fg" : "border-border bg-bg-card text-fg hover:bg-bg-subtle")}><button type="button" onClick={() => setSelectedOrderCategory(category)} className="rounded-full px-3 py-1.5 text-[12px] font-medium">{category}</button>{canDeleteCategory ? <button type="button" onClick={() => requestDeleteSeriesCategory(category)} className={cn("grid h-6 w-6 place-items-center rounded-full transition-colors", isActive ? "hover:bg-white/15" : "hover:bg-bg-subtle")} aria-label={`Delete ${category} category`} title={`Delete ${category} category`}><Trash2 size={12} /></button> : null}</div>; })}</div></section> : null}
         {mode === "drafts" && <section className="card overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-border"><h3 className="font-semibold">Draft Orders</h3><div className="text-[12px] text-fg-subtle">{drafts.length} draft{drafts.length === 1 ? "" : "s"}</div></div>
           <div className="overflow-x-auto">
@@ -2851,8 +2957,8 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
       </main>
       {isOrderModalOpen && <div className="fixed inset-0 z-50 bg-black/50 p-2 backdrop-blur-[2px] md:p-4">
         <div className="relative mx-auto flex h-[92vh] w-full max-w-[1520px] flex-col overflow-hidden rounded-[24px] border border-border bg-bg-card shadow-card" onClick={(e) => e.stopPropagation()}>
-          <div className="border-b border-border/70 px-4 py-4">
-            <div className="grid items-end gap-3 xl:grid-cols-[minmax(760px,2.8fr)_140px_minmax(340px,1.18fr)_minmax(175px,0.62fr)_44px]">
+          <div className="border-b border-border/70 px-4 py-4 pr-5">
+            <div className="grid items-end gap-3 xl:grid-cols-[minmax(720px,2.65fr)_132px_minmax(320px,1.08fr)_minmax(160px,0.58fr)_52px]">
               <section className="min-w-0">
                 <PaymentAgentHeaderPicker
                   splits={getEditablePaymentAgentSplits(draft)}
@@ -2962,6 +3068,16 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
         busy={deleteBusy}
         onCancel={() => { if (!deleteBusy) setPendingDeleteOrder(null); }}
         onConfirm={() => { void confirmRemoveOrder(); }}
+      />
+      <ConfirmDialog
+        open={Boolean(pendingDeleteSeriesCategory)}
+        title="Delete order series category?"
+        description={pendingDeleteSeriesCategory ? `Delete the ${pendingDeleteSeriesCategory} order number category? This option only appears because the category has no orders.` : ""}
+        confirmLabel="Delete Category"
+        danger
+        busy={deleteSeriesBusy}
+        onCancel={() => { if (!deleteSeriesBusy) setPendingDeleteSeriesCategory(null); }}
+        onConfirm={() => { void confirmDeleteSeriesCategory(); }}
       />
       <LoadingOverlay
         open={orderSaveState === "saving"}

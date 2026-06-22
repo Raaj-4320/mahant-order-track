@@ -51,6 +51,7 @@ export interface OrderNumberSeriesService {
   listOrderNumberSeries(orders?: Order[]): Promise<OrderNumberSeries[]>;
   createOrderNumberSeries(input: { label: string; startNumber: number }, orders?: Order[]): Promise<OrderNumberSeries>;
   syncOrderNumberSeriesFromOrder(order: Order, orders?: Order[]): Promise<OrderNumberSeries | null>;
+  deleteOrderNumberSeries?(id: string, orders?: Order[]): Promise<void>;
 }
 export interface DashboardReadService {
   getDashboardStats(): Promise<DashboardStats>;

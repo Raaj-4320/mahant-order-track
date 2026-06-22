@@ -89,6 +89,39 @@ export function OrderFooter({
 }: Props) {
   const [shippingInput, setShippingInput] = useState(shippingPrice ? String(shippingPrice) : "");
   const [isBreakdownExpanded, setIsBreakdownExpanded] = useState(false);
+  const [isSummaryExpanded, setIsSummaryExpanded] = useState(false);
+  const splitSummaries = useMemo(() => {
+    return paymentAgentSplits
+      .map((split, index) => {
+        const agent =
+          paymentAgents.find((candidate) => candidate.id === split.paymentAgentId)
+          ?? paymentAgents.find((candidate) => candidate.id === split.paymentBy)
+          ?? null;
+        const assignedAmount = Number(split.assignedAmount) || 0;
+        const paidNow = Number(split.paidNow) || 0;
+        const settlement = calculatePaymentAgentSettlement({
+          orderTotal: assignedAmount,
+          existingCredit: agent?.creditBalance ?? 0,
+          paidNow,
+        });
+        const label =
+          split.paymentAgentSnapshot?.name?.trim()
+          || split.paymentAgentName?.trim()
+          || split.paymentBy?.trim()
+          || (index === 0 ? "Primary payment agent" : `Payment agent ${index + 1}`);
+
+        return {
+          id: split.id,
+          label,
+          assignedAmount,
+          existingCredit: agent?.creditBalance ?? 0,
+          creditUsed: settlement.creditUsed,
+          payable: settlement.remainingPayable,
+          creditLeft: settlement.resultingCreditBalance,
+        };
+      })
+      .filter((entry) => entry.label || entry.assignedAmount > 0 || entry.creditUsed > 0 || entry.payable > 0 || entry.creditLeft > 0);
+  }, [paymentAgentSplits, paymentAgents]);
   const summary = useMemo(() => {
     const assigned = paymentAgentSplits.reduce((sum, split) => sum + (Number(split.assignedAmount) || 0), 0);
     const paidNow = paymentAgentSplits.reduce((sum, split) => sum + (Number(split.paidNow) || 0), 0);
@@ -155,53 +188,99 @@ export function OrderFooter({
           </div>
         </div>
 
-        <div className="min-w-0 lg:w-[48%] lg:pl-4">
-          <div className="rounded-2xl border border-border/60 bg-bg-subtle/10 p-3 lg:min-h-[192px]">
-            <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3 xl:grid-cols-[repeat(5,minmax(0,1fr))]">
-            <Metric label="Agent Credit" value={fmtFinal(summary.agentCredit)} tone="info" />
-            <Metric label="Order Total" value={fmtFinal(summary.orderTotal)} tone="warning" zeroDanger />
-            <Metric label="Credit Used" value={fmtFinal(summary.creditUsed)} tone="info" />
-            <Metric label="Payable" value={fmtFinal(summary.pendingDue)} tone="warning" />
-            <Metric label="Credit Left" value={fmtFinal(summary.creditLeft)} tone="info" />
-            </div>
+        <div className="relative min-w-0 lg:h-[192px] lg:w-[48%] lg:pl-4">
+          <div
+            className={cn(
+              "absolute inset-x-0 bottom-0 rounded-2xl border border-border/60 bg-bg-card transition-all duration-300 ease-out lg:left-4",
+              isSummaryExpanded ? "z-30 shadow-[0_-24px_80px_rgba(15,23,42,0.12)]" : "z-10",
+            )}
+          >
+            <div className={cn("transition-[max-height] duration-300 ease-out", isSummaryExpanded ? "max-h-[44vh] overflow-y-auto p-3" : "max-h-[192px] overflow-hidden p-3")}>
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <div className="text-[11px] font-semibold uppercase tracking-[0.1em] text-fg-subtle">Settlement Summary</div>
+                <button
+                  type="button"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-border/60 bg-bg-card text-fg shadow-sm transition-colors hover:bg-bg-subtle"
+                  onClick={() => setIsSummaryExpanded((current) => !current)}
+                  aria-label={isSummaryExpanded ? "Collapse settlement summary" : "Expand settlement summary"}
+                  title={isSummaryExpanded ? "Collapse settlement summary" : "Expand settlement summary"}
+                >
+                  <span className={cn("block h-2 w-2 rotate-45 border-b-2 border-r-2 border-current transition-transform duration-300", isSummaryExpanded ? "translate-y-0 rotate-[225deg]" : "translate-y-[-1px] rotate-45")} />
+                </button>
+              </div>
 
-            <div className="mt-3 flex flex-wrap items-end justify-end gap-2.5 border-t border-border/50 pt-3">
-              <label className="mr-auto flex flex-col gap-1">
-                <span className={METRIC_LABEL_CLASS}>Shipping</span>
-                <input
-                  type="number"
-                  min={0}
-                  step="any"
-                  value={shippingInput}
-                  onChange={(event) => {
-                    const nextValue = event.target.value;
-                    if (nextValue === "" || /^\d*\.?\d*$/.test(nextValue)) {
-                      setShippingInput(nextValue);
-                      onShippingPriceChange(nextValue === "" ? 0 : Number(nextValue));
-                    }
-                  }}
-                  onBlur={() => setShippingInput(shippingPrice ? String(shippingPrice) : "")}
-                  onWheel={(event) => event.currentTarget.blur()}
-                  className={cn(
-                    "no-spinner h-10 w-[112px] rounded-xl border border-border/60 bg-bg-card px-3 text-[13px] font-semibold tabular-nums outline-none transition-colors focus:border-brand",
-                    shippingPrice > 0 ? "text-fg" : "text-rose-600",
-                  )}
-                  placeholder="0"
-                />
-              </label>
-              {showCancel ? <Button size="sm" variant="secondary" className={ACTION_BUTTON_CLASS} onClick={onCancel}>Cancel</Button> : null}
-              <Button size="sm" variant="secondary" className={ACTION_BUTTON_CLASS} onClick={onSaveDraft} disabled={disableSaveDraft}>{saveDraftLabel}</Button>
-              <Button size="sm" variant="secondary" className={ACTION_BUTTON_CLASS} onClick={onViewDetails}>View Order Details -&gt;</Button>
-              <Button
-                size="sm"
-                variant="primary"
-                className="h-10 rounded-xl px-5 text-[13px] font-semibold"
-                onClick={onSaveOrder}
-                disabled={disableSaveOrder}
-                title={disableSaveOrder ? "Complete required fields before saving as order." : undefined}
-              >
-                {saveOrderLabel}
-              </Button>
+              {isSummaryExpanded ? (
+                <div className="mb-3 rounded-xl border border-border/60 bg-bg-subtle/10 p-3">
+                  <div className="grid grid-cols-[minmax(160px,1.2fr)_repeat(4,minmax(88px,1fr))] items-center gap-3 text-[10px] font-semibold uppercase tracking-[0.1em] text-fg-subtle">
+                    <span>Agent</span>
+                    <span className="text-right">Credit</span>
+                    <span className="text-right">Used</span>
+                    <span className="text-right">Payable</span>
+                    <span className="text-right">Left</span>
+                  </div>
+                  <div className="mt-2 space-y-2">
+                    {splitSummaries.length > 0 ? splitSummaries.map((entry) => (
+                      <div key={entry.id} className="grid grid-cols-[minmax(160px,1.2fr)_repeat(4,minmax(88px,1fr))] items-center gap-3 rounded-xl border border-border/60 bg-bg-card px-3 py-2">
+                        <div className="min-w-0">
+                          <div className="truncate text-[13px] font-semibold text-fg">{entry.label}</div>
+                          <div className="mt-0.5 text-[11px] text-fg-subtle">Assigned: {fmtFinal(entry.assignedAmount)}</div>
+                        </div>
+                        <div className="text-right text-[12px] font-semibold tabular-nums text-sky-600">{fmtFinal(entry.existingCredit)}</div>
+                        <div className="text-right text-[12px] font-semibold tabular-nums text-sky-600">{fmtFinal(entry.creditUsed)}</div>
+                        <div className="text-right text-[12px] font-semibold tabular-nums text-amber-600">{fmtFinal(entry.payable)}</div>
+                        <div className="text-right text-[12px] font-semibold tabular-nums text-[var(--success)]">{fmtFinal(entry.creditLeft)}</div>
+                      </div>
+                    )) : <div className="rounded-xl border border-border/60 bg-bg-card px-3 py-3 text-[12px] text-fg-subtle">No payment allocations yet.</div>}
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3 xl:grid-cols-[repeat(5,minmax(0,1fr))]">
+                <Metric label="Agent Credit" value={fmtFinal(summary.agentCredit)} tone="info" />
+                <Metric label="Order Total" value={fmtFinal(summary.orderTotal)} tone="warning" zeroDanger />
+                <Metric label="Credit Used" value={fmtFinal(summary.creditUsed)} tone="info" />
+                <Metric label="Payable" value={fmtFinal(summary.pendingDue)} tone="warning" />
+                <Metric label="Credit Left" value={fmtFinal(summary.creditLeft)} tone="info" />
+              </div>
+
+              <div className="mt-3 flex flex-wrap items-end justify-end gap-2.5 border-t border-border/50 pt-3">
+                <label className="mr-auto flex flex-col gap-1">
+                  <span className={METRIC_LABEL_CLASS}>Shipping</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step="any"
+                    value={shippingInput}
+                    onChange={(event) => {
+                      const nextValue = event.target.value;
+                      if (nextValue === "" || /^\d*\.?\d*$/.test(nextValue)) {
+                        setShippingInput(nextValue);
+                        onShippingPriceChange(nextValue === "" ? 0 : Number(nextValue));
+                      }
+                    }}
+                    onBlur={() => setShippingInput(shippingPrice ? String(shippingPrice) : "")}
+                    onWheel={(event) => event.currentTarget.blur()}
+                    className={cn(
+                      "no-spinner h-10 w-[112px] rounded-xl border border-border/60 bg-bg-card px-3 text-[13px] font-semibold tabular-nums outline-none transition-colors focus:border-brand",
+                      shippingPrice > 0 ? "text-fg" : "text-rose-600",
+                    )}
+                    placeholder="0"
+                  />
+                </label>
+                {showCancel ? <Button size="sm" variant="secondary" className={ACTION_BUTTON_CLASS} onClick={onCancel}>Cancel</Button> : null}
+                <Button size="sm" variant="secondary" className={ACTION_BUTTON_CLASS} onClick={onSaveDraft} disabled={disableSaveDraft}>{saveDraftLabel}</Button>
+                <Button size="sm" variant="secondary" className={ACTION_BUTTON_CLASS} onClick={onViewDetails}>View Order Details -&gt;</Button>
+                <Button
+                  size="sm"
+                  variant="primary"
+                  className="h-10 rounded-xl px-5 text-[13px] font-semibold"
+                  onClick={onSaveOrder}
+                  disabled={disableSaveOrder}
+                  title={disableSaveOrder ? "Complete required fields before saving as order." : undefined}
+                >
+                  {saveOrderLabel}
+                </Button>
+              </div>
             </div>
           </div>
         </div>

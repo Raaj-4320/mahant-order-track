@@ -1,4 +1,4 @@
-import { collection, doc, getDocs, runTransaction, setDoc } from "firebase/firestore";
+import { collection, deleteDoc, doc, getDocs, runTransaction, setDoc } from "firebase/firestore";
 import type { Order, OrderNumberSeries } from "@/lib/types";
 import type { OrderNumberSeriesService } from "@/services/contracts";
 import { backfillSeriesFromOrders, createSeriesRecord, formatSeriesOrderNumber, mergeOrderSeries, orderNumberExists, parseOrderNumber } from "@/lib/orderNumberSeries";
@@ -95,5 +95,17 @@ export const orderNumberSeriesFirebaseService: OrderNumberSeriesService = {
       transaction.set(seriesRef, updated, { merge: true });
       return updated;
     });
+  },
+  async deleteOrderNumberSeries(id, orders = []) {
+    const db = requireDb();
+    const businessId = requireFirebaseBusinessId();
+    const currentSeries = await this.listOrderNumberSeries(orders);
+    const target = currentSeries.find((series) => series.id === id);
+    if (!target) return;
+    const hasOrders = orders.some((order) => parseOrderNumber(order.number || order.orderNumber)?.category === target.label);
+    if (hasOrders) {
+      throw new Error("Cannot delete a series category that still has orders.");
+    }
+    await measurePerfAsync("firestore-write", "orderSeries.delete", { path: orderNumberSeriesDocPath(businessId, id), seriesId: id }, () => deleteDoc(doc(db, orderNumberSeriesDocPath(businessId, id))));
   },
 };

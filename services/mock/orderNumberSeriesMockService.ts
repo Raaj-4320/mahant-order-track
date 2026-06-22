@@ -40,4 +40,7 @@ export const orderNumberSeriesMockService: OrderNumberSeriesService = {
     mockSeries = mergeOrderSeries(mockSeries.filter((series) => series.prefix !== updated.prefix).concat(updated), []);
     return deepClone(updated);
   },
+  async deleteOrderNumberSeries(id) {
+    mockSeries = mockSeries.filter((series) => series.id !== id);
+  },
 };
