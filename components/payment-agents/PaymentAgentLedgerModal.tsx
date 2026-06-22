@@ -141,8 +141,8 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
   };
 
   const kpis = [
-    { label: "Total Advanced", value: formatAmount(directFinance.totalAdvanced), tone: "text-sky-700 bg-sky-50 border-sky-100", icon: <Wallet size={16} /> },
-    { label: "Total Used", value: formatAmount(directFinance.totalUsed), tone: "text-slate-700 bg-slate-50 border-slate-200", icon: <Download size={16} /> },
+    { label: "Advance Payments", value: formatAmount(directFinance.paymentsMade), tone: "text-sky-700 bg-sky-50 border-sky-100", icon: <Wallet size={16} /> },
+    { label: "Credit Used", value: formatAmount(directFinance.totalUsed), tone: "text-slate-700 bg-slate-50 border-slate-200", icon: <Download size={16} /> },
     { label: "Credit Left", value: formatAmount(directFinance.creditLeft), tone: "text-emerald-700 bg-emerald-50 border-emerald-100", icon: <Wallet size={16} /> },
     { label: "Due / Pending", value: formatAmount(directFinance.duePending), tone: "text-rose-700 bg-rose-50 border-rose-100", icon: <CalendarDays size={16} /> },
     { label: "Total Orders", value: directFinance.totalOrders.toLocaleString(), tone: "text-sky-700 bg-sky-50 border-sky-100", icon: <CalendarDays size={16} /> },

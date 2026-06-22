@@ -40,7 +40,7 @@ export default function PaymentAgentsPage() {
   const { data: agents, isLoading: isPaymentAgentsLoading, upsertPaymentAgent, deletePaymentAgent, recordPaymentToAgent, deletePaymentAgentLedgerEntry, listPaymentAgentLedger, recalculateFromOrders, reload: reloadPaymentAgents } = usePaymentAgents();
   const { data: customers } = useCustomers();
   const { orders, pushToast } = useStore();
-  const { data: firebaseOrders } = useOrders();
+  const { data: firebaseOrders, isLoading: isOrdersLoading } = useOrders();
   const ordersSource = ordersDataSource();
   const sourceOrders = ordersSource === "firebase" ? firebaseOrders : orders;
 
@@ -85,12 +85,13 @@ export default function PaymentAgentsPage() {
   useEffect(() => {
     if (paymentAgentRepairTriggeredRef.current) return;
     if (isPaymentAgentsLoading) return;
+    if (ordersSource === "firebase" && isOrdersLoading) return;
     if (!sourceOrders.length && !agents.length) return;
     paymentAgentRepairTriggeredRef.current = true;
     void recalculateFromOrders(sourceOrders).catch(() => {
       paymentAgentRepairTriggeredRef.current = false;
     });
-  }, [agents.length, isPaymentAgentsLoading, recalculateFromOrders, sourceOrders]);
+  }, [agents.length, isOrdersLoading, isPaymentAgentsLoading, ordersSource, recalculateFromOrders, sourceOrders]);
 
   const rows = useMemo(() => {
     return measurePerfSync("calc", "paymentAgentsPage.rows", { agentsCount: agents.length, ordersCount: sourceOrders.length, ledgerCount: (ledgerRows[ALL_LEDGER_ROWS_KEY] || []).length }, () => {
@@ -163,13 +164,12 @@ export default function PaymentAgentsPage() {
   }, [totalPages]);
 
   const exportVisible = () => {
-    const header = ["Agent", "WeChat ID", "Phone", "Total Orders", "Total Advanced", "Total Used", "Due / Pending", "Credit Left", "Payments Made"];
+    const header = ["Agent", "WeChat ID", "Phone", "Total Orders", "Credit Used", "Due / Pending", "Credit Left", "Advance Payments"];
     const csvRows = filteredAndSorted.map((row) => [
       row.agent.name,
       row.agent.wechatId || "Not Set",
       row.agent.phone || "Not Set",
       String(row.totalOrders),
-      formatAmount(row.totalAdvanced),
       formatAmount(row.totalUsed),
       formatAmount(row.duePending),
       formatAmount(row.creditLeft),
@@ -416,11 +416,10 @@ export default function PaymentAgentsPage() {
                 options={[
                   { value: "name", label: "Sort: Agent Name" },
                   { value: "orders", label: "Sort: Total Orders High to Low" },
-                  { value: "credit", label: "Sort: Total Advanced High to Low" },
-                  { value: "used", label: "Sort: Used High to Low" },
+                  { value: "used", label: "Sort: Credit Used High to Low" },
                   { value: "due", label: "Sort: Due / Pending High to Low" },
                   { value: "balance", label: "Sort: Credit Left High to Low" },
-                  { value: "payments", label: "Sort: Payments Made High to Low" },
+                  { value: "payments", label: "Sort: Advance Payments High to Low" },
                 ]}
               />
             </div>
@@ -448,8 +447,7 @@ export default function PaymentAgentsPage() {
                     <tr className="border-b border-border text-[11px] uppercase tracking-[0.01em] text-fg-muted">
                       <th className="px-3 py-2 text-left">Agent</th>
                       <th className="px-2 py-2 text-center">Orders</th>
-                      <th className="px-2 py-2 text-right">Total Advanced</th>
-                      <th className="px-2 py-2 text-right">Used</th>
+                      <th className="px-2 py-2 text-right">Credit Used</th>
                       <th className="px-2 py-2 text-right">Due / Pending</th>
                       <th className="px-2 py-2 text-right">Credit Left</th>
                       <th className="px-2 py-2 text-right">Advance Payments</th>
@@ -464,7 +462,6 @@ export default function PaymentAgentsPage() {
                           <div className="mt-0.5 text-[12px] text-fg-subtle">{row.agent.wechatId?.trim() || row.agent.phone?.trim() || "No WeChat ID"}</div>
                         </td>
                         <td className="px-2 py-2.5 text-center font-semibold">{row.totalOrders}</td>
-                        <td className="px-2 py-2.5 text-right font-semibold tabular-nums text-sky-700">{formatAmount(row.totalAdvanced)}</td>
                         <td className="px-2 py-2.5 text-right font-semibold tabular-nums text-slate-900">{formatAmount(row.totalUsed)}</td>
                         <td className="px-2 py-2.5 text-right font-semibold tabular-nums text-rose-600">{formatAmount(row.duePending)}</td>
                         <td className="px-2 py-2.5 text-right font-semibold tabular-nums text-emerald-700">{formatAmount(row.creditLeft)}</td>
@@ -515,14 +512,14 @@ export default function PaymentAgentsPage() {
                     ))}
                     {isPaymentAgentsLoading ? (
                       <tr>
-                        <td colSpan={8} className="px-4 py-8 text-center text-fg-subtle">
+                        <td colSpan={7} className="px-4 py-8 text-center text-fg-subtle">
                           Loading payment agents...
                         </td>
                       </tr>
                     ) : null}
                     {!isPaymentAgentsLoading && pagedRows.length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="px-4 py-8 text-center text-fg-subtle">
+                        <td colSpan={7} className="px-4 py-8 text-center text-fg-subtle">
                           No payment agents found.
                         </td>
                       </tr>
