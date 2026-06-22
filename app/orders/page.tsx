@@ -2618,7 +2618,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
           {/* <div className="flex items-center justify-between px-4 py-3 border-b border-border"><h3 className="font-semibold">Order History</h3><div className="text-[12px] text-fg-subtle">Showing 1 to {pagedHistory.length} of {history.length} rows</div></div> */}
           <div className="overflow-x-auto">
             <div className="w-full min-w-0 px-0.5 py-1">
-              <div className="sticky top-0 z-20 grid items-center border-b border-border bg-white text-[12px] font-semibold uppercase tracking-[0.01em] text-fg-muted shadow-[0_1px_0_rgba(15,23,42,0.06)]" style={{ gridTemplateColumns: historyGridTemplate }}>
+              <div className="sticky top-0 z-20 grid items-center border-b border-border bg-white text-[12.5px] font-semibold uppercase tracking-[0.01em] text-fg-muted shadow-[0_1px_0_rgba(15,23,42,0.06)]" style={{ gridTemplateColumns: historyGridTemplate }}>
                 <div className="px-1 py-1.5 text-center">Order Number</div>
                 <div className="px-1 py-1.5 text-left">WeChat ID</div>
                 <div className="px-1 py-1.5 text-center">Product Photo</div>
@@ -2849,18 +2849,11 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
         }}
       />
       </main>
-      {isOrderModalOpen && <div className="fixed inset-0 z-50 bg-black/45 p-2 md:p-4">
-        <div className="relative mx-auto flex h-[88vh] w-full max-w-[1500px] flex-col overflow-hidden rounded-2xl border border-border bg-bg-card shadow-card" onClick={(e) => e.stopPropagation()}>
-          <div className="border-b border-border/70 px-3 py-2">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h3 className="text-[17px] font-semibold leading-tight">{editingOrder ? (editingOrder.status === "draft" ? "Complete Draft" : "Edit Order") : "Add Order"}</h3>
-                {isFirebaseOrdersMode && <div className="mt-0.5 text-[10.5px] text-fg-subtle">{autosaveStatus === "saving" ? "Saving draft..." : autosaveStatus === "saved" ? "Draft saved" : autosaveStatus === "error" ? "Draft autosave failed" : ""}</div>}
-              </div>
-              <Button size="sm" variant="secondary" onClick={requestExitComposer} aria-label="Close order editor"><X size={16} /></Button>
-            </div>
-            <div className="mt-2 flex items-end gap-2.5">
-              <div className="min-w-[440px] max-w-[700px] flex-1">
+      {isOrderModalOpen && <div className="fixed inset-0 z-50 bg-black/50 p-2 backdrop-blur-[2px] md:p-4">
+        <div className="relative mx-auto flex h-[92vh] w-full max-w-[1520px] flex-col overflow-hidden rounded-[24px] border border-border bg-bg-card shadow-card" onClick={(e) => e.stopPropagation()}>
+          <div className="border-b border-border/70 px-4 py-4">
+            <div className="grid items-end gap-3 xl:grid-cols-[minmax(760px,2.8fr)_140px_minmax(340px,1.18fr)_minmax(175px,0.62fr)_44px]">
+              <section className="min-w-0">
                 <PaymentAgentHeaderPicker
                   splits={getEditablePaymentAgentSplits(draft)}
                   paymentAgents={paymentAgents}
@@ -2868,13 +2861,30 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                   onAdd={() => setDraftPaymentAgentSplits((current) => [...current, createEmptyPaymentAgentSplit()])}
                   onRemove={(splitId) => setDraftPaymentAgentSplits((current) => current.length <= 1 ? [createEmptyPaymentAgentSplit()] : current.filter((split) => split.id !== splitId))}
                 />
-              </div>
-              <div className="grid min-w-0 flex-[1.35] grid-cols-[112px_124px_minmax(340px,1fr)_176px] items-end gap-2">
-                <label className="flex flex-col gap-0.5 text-[10.5px] text-fg-muted"><span>Date</span><Input className="h-10 px-3 text-[12px]" type="date" value={draft.date} onChange={(e)=>setDraft((d)=>({...d,date:e.target.value}))} /></label>
-                <label className="flex flex-col gap-0.5 text-[10.5px] text-fg-muted"><span>Loading Date</span><Input className="h-10 px-3 text-[12px]" type="date" value={draft.loadingDate || ""} onChange={(e)=>setDraft((d)=>({...d,loadingDate:e.target.value || undefined}))} /></label>
-                <label className="flex flex-col gap-0.5 text-[10.5px] text-fg-muted"><span>Order Number / Series</span><div className="grid grid-cols-[170px_minmax(0,1fr)_132px] gap-2"><div className="relative" ref={seriesPickerRef}><button type="button" className={cn("flex h-10 w-full items-center justify-between rounded-xl border border-border/60 bg-bg-card px-3 text-left text-[12px] shadow-none transition-colors", seriesPickerOpen ? "border-brand ring-2 ring-brand/15" : "hover:border-border-strong hover:bg-bg-subtle/40", (isOrderSeriesLoading || orderSeries.length === 0) && "cursor-not-allowed opacity-70")} onClick={() => { if (!isOrderSeriesLoading && orderSeries.length > 0) setSeriesPickerOpen((open) => !open); }} disabled={isOrderSeriesLoading || orderSeries.length === 0}><div className="min-w-0 truncate font-semibold text-fg">{selectedOrderSeries ? getSeriesSuggestion(selectedOrderSeries) : isOrderSeriesLoading ? "Loading series..." : "No series yet"}</div><ChevronDown size={14} className={cn("ml-2 shrink-0 text-fg-subtle transition-transform", seriesPickerOpen && "rotate-180")} /></button>{seriesPickerOpen ? <div className="absolute left-0 top-full z-40 mt-2 w-[320px] max-w-[calc(100vw-3rem)] overflow-hidden rounded-2xl border border-border bg-bg-card shadow-card"><div className="border-b border-border/80 px-3 py-2"><div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-fg-subtle">Order Series</div></div><div className="max-h-72 overflow-y-auto p-1.5">{seriesSuggestions.map((series) => <button key={series.id} type="button" className={cn("block w-full rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-bg-subtle", selectedOrderSeries?.id === series.id && "bg-bg-subtle")} onClick={() => handleSeriesChange(series.id)}><div className="text-[13px] font-semibold text-fg">{series.suggestion}</div></button>)}<button type="button" className="mt-1 block w-full rounded-xl border border-dashed border-border px-3 py-2.5 text-left transition-colors hover:border-brand hover:bg-bg-subtle" onClick={openCreateSeriesModal}><div className="text-[13px] font-semibold text-fg">+ Add New Series</div></button></div></div> : null}</div><Input className="min-w-0 h-10 px-3 text-[12px]" value={draft.number} onChange={(e)=>handleOrderNumberInputChange(e.target.value)} placeholder={selectedOrderSeries ? getSeriesSuggestion(selectedOrderSeries) : orderSeries.length ? "Type full order number" : "Create a series first"} /><Button type="button" size="sm" variant="secondary" className="h-10 whitespace-nowrap px-3 text-[12px]" onClick={openCreateSeriesModal}>Add New Series</Button></div>{orderSeries.length === 0 ? <div className="pt-0.5 text-[10.5px] text-amber-700">No order number series yet. Create one before saving a new order number.</div> : null}</label>
-                <label className="flex flex-col gap-0.5 text-[10.5px] text-fg-muted"><span>WeChat ID</span><div className="relative"><Input className="h-10 px-3 text-[12px]" value={draft.wechatId} onFocus={() => setHeaderWechatOpen(true)} onBlur={() => window.setTimeout(() => setHeaderWechatOpen(false), 120)} onChange={(e)=>{const next=e.target.value; setHeaderWechatOpen(true); setDraft((d)=>({...d,wechatId:next}));}} />{headerWechatOpen && headerWechatSuggestions.length>0 ? <div className="absolute z-30 mt-1 max-h-44 w-full overflow-auto rounded-lg border border-border bg-bg-card shadow-card">{headerWechatSuggestions.map((w)=><button key={w} type="button" className="block w-full px-2 py-1.5 text-left text-[12px] hover:bg-bg-subtle" onMouseDown={(e)=>{e.preventDefault(); setHeaderWechatOpen(false); setDraft((d)=>({...d,wechatId:w}));}}>{w}</button>)}</div> : null}</div></label>
-              </div>
+              </section>
+              <section className="min-w-0">
+                <label className="flex flex-col gap-1.5 text-[14px] text-fg-muted"><span className="font-medium tracking-[0.01em]">Date</span><Input className="h-10 rounded-xl px-3 text-[13px]" type="date" value={draft.date} onChange={(e)=>setDraft((d)=>({...d,date:e.target.value}))} /></label>
+              </section>
+              <section className="min-w-0 xl:col-span-1">
+                <label className="flex flex-col gap-1.5 text-[14px] text-fg-muted"><span className="font-medium tracking-[0.01em]">Order Number</span><div className="grid gap-2 lg:grid-cols-[168px_minmax(156px,1fr)]"><div className="relative" ref={seriesPickerRef}><button type="button" className={cn("flex h-10 w-full items-center justify-between rounded-xl border border-border/60 bg-bg-card px-3 text-left text-[13px] shadow-none transition-colors", seriesPickerOpen ? "border-brand ring-2 ring-brand/15" : "hover:border-border-strong hover:bg-bg-subtle/40", (isOrderSeriesLoading || orderSeries.length === 0) && "cursor-not-allowed opacity-70")} onClick={() => { if (!isOrderSeriesLoading && orderSeries.length > 0) setSeriesPickerOpen((open) => !open); }} disabled={isOrderSeriesLoading || orderSeries.length === 0}><div className="min-w-0 truncate font-semibold text-fg">{selectedOrderSeries ? getSeriesSuggestion(selectedOrderSeries) : isOrderSeriesLoading ? "Loading series..." : "No series yet"}</div><ChevronDown size={14} className={cn("ml-2 shrink-0 text-fg-subtle transition-transform", seriesPickerOpen && "rotate-180")} /></button>{seriesPickerOpen ? <div className="absolute left-0 top-full z-40 mt-2 w-[320px] max-w-[calc(100vw-3rem)] overflow-hidden rounded-2xl border border-border bg-bg-card shadow-card"><div className="border-b border-border/80 px-3 py-2"><div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-fg-subtle">Order Series</div></div><div className="max-h-72 overflow-y-auto p-1.5">{seriesSuggestions.map((series) => <button key={series.id} type="button" className={cn("block w-full rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-bg-subtle", selectedOrderSeries?.id === series.id && "bg-bg-subtle")} onClick={() => handleSeriesChange(series.id)}><div className="text-[13px] font-semibold text-fg">{series.suggestion}</div></button>)}<button type="button" className="mt-1 block w-full rounded-xl border border-dashed border-border px-3 py-2.5 text-left transition-colors hover:border-brand hover:bg-bg-subtle" onClick={openCreateSeriesModal}><div className="text-[13px] font-semibold text-fg">+ Add New Series</div></button></div></div> : null}</div><Input className="min-w-0 h-10 rounded-xl px-3 text-[13px]" value={draft.number} onChange={(e)=>handleOrderNumberInputChange(e.target.value)} placeholder={selectedOrderSeries ? getSeriesSuggestion(selectedOrderSeries) : orderSeries.length ? "Type full order number" : "Create a series first"} /></div>{orderSeries.length === 0 ? <div className="pt-0.5 text-[10.5px] text-amber-700">No order number series yet. Create one before saving a new order number.</div> : null}</label>
+              </section>
+              <section className="min-w-0">
+                <label className="flex flex-col gap-1.5 text-[14px] text-fg-muted"><span className="font-medium tracking-[0.01em]">WeChat ID</span><div className="relative"><Input className="h-10 rounded-xl px-3 text-[13px]" value={draft.wechatId} onFocus={() => setHeaderWechatOpen(true)} onBlur={() => window.setTimeout(() => setHeaderWechatOpen(false), 120)} onChange={(e)=>{const next=e.target.value; setHeaderWechatOpen(true); setDraft((d)=>({...d,wechatId:next}));}} />{headerWechatOpen && headerWechatSuggestions.length>0 ? <div className="absolute z-30 mt-1.5 max-h-44 w-full overflow-auto rounded-xl border border-border bg-bg-card shadow-card">{headerWechatSuggestions.map((w)=><button key={w} type="button" className="block w-full px-3 py-2 text-left text-[12px] hover:bg-bg-subtle" onMouseDown={(e)=>{e.preventDefault(); setHeaderWechatOpen(false); setDraft((d)=>({...d,wechatId:w}));}}>{w}</button>)}</div> : null}</div></label>
+              </section>
+              <section className="min-w-0">
+                <div className="flex h-full items-end justify-end">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="h-10 w-10 rounded-xl p-0"
+                    onClick={requestExitComposer}
+                    aria-label="Close order editor"
+                    title="Close"
+                  >
+                    <X size={15} />
+                  </Button>
+                </div>
+              </section>
             </div>
           </div>
           {validationWarning.visible ? <div className="absolute left-1/2 top-[84px] z-[70] w-[92%] max-w-[560px] -translate-x-1/2 rounded-xl border border-amber-400 bg-amber-50 p-3 shadow-lg">
@@ -2886,10 +2896,10 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
               <button className="text-amber-800 text-xs rounded px-1 py-0.5 hover:bg-amber-100" onClick={() => setValidationWarning({ visible: false, items: [] })}><X size={14} /></button>
             </div>
           </div> : null}
-          <div className="overflow-visible">
+          <div className="min-h-0 flex-1 overflow-hidden bg-bg-subtle/20">
             <OrderForm showOrderInfo={false} draft={draft} setDraft={(u) => setDraft((d) => u(d))} paymentAgents={paymentAgents} customers={customers} onUploadingChange={onUploadingChange} onRemoveLine={handleRemoveLine} wechatSuggestions={wechatSuggestions.filter((w) => draft.wechatId.trim() ? w.toLowerCase().includes(draft.wechatId.trim().toLowerCase()) : false)} customerSuggestions={customerSuggestions} onPreviewImage={(src) => setPreviewImage({ src, alt: "Order line photo preview" })} onCustomerValidityChange={(lineId, issue) => setPopupCustomerIssues((prev) => ({ ...prev, [lineId]: issue }))} />
           </div>
-          <OrderFooter lineTotal={lineTotal} shippingPrice={getOrderShippingAmount(draft)} total={total} onSaveDraft={() => onSave("draft")} onSaveOrder={() => onSave("saved")} onViewDetails={() => setViewOrder(draft)} saveOrderLabel={orderSaveState === "saving" ? "Saving Order..." : (editingOrderId ? "Save Changes" : "Save Order")} saveDraftLabel={orderSaveState === "saving" ? "Saving Draft..." : "Save as Draft"} disableSaveDraft={orderSaveState !== "idle"} disableSaveOrder={orderSaveState !== "idle"} paymentAgents={paymentAgents} paymentAgentSplits={getEditablePaymentAgentSplits(draft)} onPaymentAgentSplitsChange={setDraftPaymentAgentSplits} onShippingPriceChange={(value) => setDraft((d) => ({ ...d, shippingPrice: value }))} />
+          <OrderFooter lineTotal={lineTotal} shippingPrice={getOrderShippingAmount(draft)} total={total} onCancel={requestExitComposer} showCancel={false} onSaveDraft={() => onSave("draft")} onSaveOrder={() => onSave("saved")} onViewDetails={() => setViewOrder(draft)} saveOrderLabel={orderSaveState === "saving" ? "Saving Order..." : (editingOrderId ? "Save Changes" : "Save Order")} saveDraftLabel={orderSaveState === "saving" ? "Saving Draft..." : "Save as Draft"} disableSaveDraft={orderSaveState !== "idle"} disableSaveOrder={orderSaveState !== "idle"} paymentAgents={paymentAgents} paymentAgentSplits={getEditablePaymentAgentSplits(draft)} onPaymentAgentSplitsChange={setDraftPaymentAgentSplits} onShippingPriceChange={(value) => setDraft((d) => ({ ...d, shippingPrice: value }))} />
         </div>
       </div>}
       {showExitConfirm ? <div className="fixed inset-0 z-[65] bg-black/50 grid place-items-center p-4"><div className="card w-full max-w-lg p-4 space-y-3"><div className="text-lg font-semibold">{editingOrderId ? "Save changes before closing?" : "Save order before closing?"}</div><div className="text-sm text-fg-subtle">{editingOrderId ? "You made changes to this order. Save them now or discard them." : "Save this order as a draft before closing, or discard it."}</div><div className="flex flex-wrap justify-end gap-2"><Button variant="secondary" onClick={() => { setShowExitConfirm(false); resetOrderComposer(); }}>{editingOrderId ? "Discard Changes" : "Discard Order"}</Button><Button variant="primary" onClick={() => { setShowExitConfirm(false); void onSave(editingOrderId ? "saved" : "draft", true); }}>{editingOrderId ? "Save Changes" : "Save Draft"}</Button></div></div></div> : null}

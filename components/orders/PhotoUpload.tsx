@@ -128,12 +128,12 @@ export function PhotoUpload({
     }
   };
 
-  const boxClasses = compact ? "h-[56px] w-full max-w-[58px] rounded-md" : "h-[72px] w-full max-w-[110px] rounded-lg";
+  const boxClasses = compact ? "h-[64px] w-full max-w-[64px] rounded-xl" : "h-[72px] w-full max-w-[110px] rounded-lg";
 
   useEffect(() => () => { clearLocalPreview(); }, []);
 
   return (
-    <div className="flex w-full flex-col items-center gap-0.5 min-w-0">
+    <div className="flex min-w-0 w-full flex-col items-center gap-1">
       <div
         tabIndex={0}
         role="button"
@@ -161,7 +161,7 @@ export function PhotoUpload({
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
         className={cn(
-          "group relative grid cursor-default place-items-center overflow-hidden border border-dashed border-border/70 bg-bg-subtle/80 text-fg-subtle transition-all",
+          "group relative grid cursor-pointer place-items-center overflow-hidden border border-dashed border-border/70 bg-bg-subtle/80 text-fg-subtle transition-all",
           boxClasses,
           "hover:border-fg-subtle hover:bg-bg",
           (dragOver || focused) && "border-fg ring-2 ring-fg/15",
@@ -195,9 +195,11 @@ export function PhotoUpload({
             </button>
           </>
         ) : compact ? (
-          <div className="flex flex-col items-center gap-0.5 px-1 text-center">
-            <Plus size={14} />
-            <span className="text-[8.5px] leading-tight text-fg-subtle">Click to select - Paste image - Double-click</span>
+          <div className="flex flex-col items-center gap-1 px-1.5 text-center">
+            <div className="grid h-6 w-6 place-items-center rounded-full border border-dashed border-fg-subtle/50">
+              <Plus size={13} />
+            </div>
+            <span className="text-[8px] font-medium leading-tight text-fg-subtle">Upload</span>
           </div>
         ) : (
           <div className="flex flex-col items-center gap-0.5 px-1 text-center">
@@ -207,7 +209,7 @@ export function PhotoUpload({
         )}
         <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onPick} disabled={isUploading} />
       </div>
-      {error && <div className="text-[9px] text-[var(--danger)] text-center leading-tight">{error}</div>}
+      {error && <div className="text-center text-[9px] leading-tight text-[var(--danger)]">{error}</div>}
       {error && lastFile && (
         <div className="flex items-center gap-1 text-[9px]">
           <button type="button" onClick={onRetry} className="rounded border border-border px-1.5 py-0.5 hover:bg-bg-subtle">Retry</button>
@@ -219,7 +221,7 @@ export function PhotoUpload({
           value={dimLabel ?? ""}
           onChange={(e) => onDimChange(e.target.value)}
           placeholder="dim"
-          className={cn("w-full rounded border-0 bg-transparent px-1 text-center text-fg-muted leading-tight focus:bg-bg-subtle min-w-0", compact ? "max-w-[60px] text-[9.5px]" : "max-w-[100px] text-[10.5px]")}
+          className={cn("min-w-0 w-full rounded-lg border border-transparent bg-transparent px-1.5 text-center leading-tight text-fg-muted transition-colors focus:border-border focus:bg-bg-subtle", compact ? "max-w-[64px] text-[9.5px]" : "max-w-[100px] text-[10.5px]")}
         />
       )}
     </div>

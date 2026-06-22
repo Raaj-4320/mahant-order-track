@@ -59,7 +59,7 @@ export function Field({
 }) {
   return (
     <label className="flex flex-col gap-1">
-      <span className="text-[11.5px] font-medium text-fg-muted">{label}</span>
+      <span className="text-[14px] font-medium text-fg-muted">{label}</span>
       {children}
     </label>
   );

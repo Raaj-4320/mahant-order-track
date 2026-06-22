@@ -4,7 +4,7 @@ import { Pencil, Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Field, Input } from "@/components/ui/Input";
 import { formatAmount } from "@/lib/data";
-import { OrderLineRow, LINE_GRID } from "./OrderLineRow";
+import { OrderLineRow, LINE_GRID, LINE_GRID_TEMPLATE, LINE_TABLE_MIN_WIDTH } from "./OrderLineRow";
 import { Customer, Order, OrderLine, PaymentAgent } from "@/lib/types";
 import { resolveOrderPaymentAgent } from "@/lib/orderDisplay";
 
@@ -41,6 +41,8 @@ type Props = {
 };
 
 export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, wechatSuggestions = [], customerSuggestions = [], customers = [], paymentAgents = [], showOrderInfo = true, onPreviewImage, onCustomerValidityChange }: Props) {
+  const sectionShellClass = showOrderInfo ? "card flex min-h-0 flex-1 flex-col overflow-visible" : "flex min-h-0 flex-1 flex-col overflow-visible";
+  const sectionBodyClass = showOrderInfo ? "min-h-0 overflow-x-auto overflow-y-visible px-2.5 py-2.5" : "min-h-0 flex-1 overflow-x-auto overflow-y-auto bg-bg-card px-1 py-1.5";
   const [paymentQuery, setPaymentQuery] = useState("");
   const [paymentOpen, setPaymentOpen] = useState(false);
 
@@ -73,9 +75,9 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
   }, [selectedLabel, draft.paymentAgentSnapshot?.name, draft.paymentByName, draft.paymentAgentName, draft.paymentBy, paymentOpen]);
 
   return (
-    <div className="flex flex-col gap-1.5 px-3 py-1.5">
+    <div className="flex h-full min-h-0 flex-col gap-2.5 px-3 py-2.5">
       {showOrderInfo ? (
-        <section className="card p-3.5">
+        <section className="card p-4">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-[minmax(180px,0.7fr)_minmax(145px,0.55fr)_minmax(145px,0.55fr)_minmax(150px,0.55fr)_minmax(180px,0.7fr)]">
             <Field label="Payment By">
               <div className="relative">
@@ -157,25 +159,29 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
         </section>
       ) : null}
 
-      <section className={showOrderInfo ? "card overflow-visible" : "overflow-visible"}>
-        <div className={showOrderInfo ? "overflow-x-auto overflow-y-visible px-1 py-0.5" : "max-h-[48vh] overflow-x-auto overflow-y-auto px-1 py-0.5"}>
-          <div className="flex justify-end px-1 pb-0.5 text-[10.5px] text-fg-subtle">{draft.lines.length} line{draft.lines.length === 1 ? "" : "s"}</div>
-          <div className="min-w-[960px]">
-            <div className={`${LINE_GRID} border-b border-border/60 px-1.5 py-1 text-[11px] font-medium uppercase tracking-wide text-fg-subtle`}>
+      <section className={sectionShellClass}>
+        <div className={sectionBodyClass}>
+          <div className="min-w-0" style={{ minWidth: `${LINE_TABLE_MIN_WIDTH}px` }}>
+            <div
+              className={`${LINE_GRID} sticky top-0 z-10 border-b border-border/60 bg-bg-card/95 px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.04em] text-fg-subtle backdrop-blur`}
+              style={{ gridTemplateColumns: LINE_GRID_TEMPLATE }}
+            >
               <span className="text-center">Pic + Dim</span>
               <span className="text-center">Product</span>
               <span>MARKA</span>
-              <span>Details</span>
+              <span>Detail 1</span>
+              <span>Detail 2</span>
+              <span>Detail 3</span>
               <span className="text-center">CTNs</span>
               <span className="text-center">pcs / ctn</span>
               <span className="text-center">Total PCS</span>
               <span className="text-center">Rate / PCS</span>
               <span className="text-center">Total Amount</span>
               <span className="text-center">Customer</span>
-              <span className="text-center">|</span>
+              <span className="text-center">Action</span>
             </div>
 
-            <div className="flex flex-col py-0.5">
+            <div className="flex flex-col gap-1 py-1.5">
               {draft.lines.map((l) => (
                 <OrderLineRow
                   key={l.id}
@@ -191,14 +197,14 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
                   onPreviewImage={onPreviewImage}
                 />
               ))}
-              {draft.lines.length === 0 ? <div className="py-4 text-center text-[12px] text-fg-subtle">No lines yet</div> : null}
+              {draft.lines.length === 0 ? <div className="rounded-xl bg-bg-subtle/30 py-8 text-center text-[13px] text-fg-subtle">No lines yet</div> : null}
             </div>
 
             <button
               onClick={addLine}
-              className="mt-0.5 flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border/70 bg-transparent py-1.5 text-[12px] text-fg-muted transition-colors hover:bg-bg-subtle hover:text-fg"
+              className="mt-1 flex w-full items-center justify-center gap-2 rounded-xl py-2.5 text-[14px] font-medium text-fg-muted transition-colors hover:bg-bg-subtle/40 hover:text-fg"
             >
-              <Plus size={14} />
+              <Plus size={15} />
               Add New Line
             </button>
           </div>

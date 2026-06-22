@@ -10,7 +10,6 @@ import { getLineDetailsParts } from "@/lib/orderLineDetails";
 import { formatAmount } from "@/lib/data";
 import { formatWholeMoney } from "@/lib/numbers";
 import { cn } from "@/lib/cn";
-import { UserRound } from "lucide-react";
 
 type Props = {
   line: OrderLine;
@@ -24,8 +23,10 @@ type Props = {
 };
 
 // Columns: pic+dim | product | marka | details | ctns | pcs/ctn | total pcs | rmb/pcs | line total | customer | action
-export const LINE_GRID =
-  "grid grid-cols-[58px_58px_minmax(0,0.56fr)_minmax(0,0.64fr)_52px_68px_56px_68px_112px_minmax(0,0.52fr)_22px] items-center gap-1";
+export const LINE_GRID_TEMPLATE =
+  "82px 72px 180px 112px 112px 112px 68px 84px 84px 92px 124px 172px 32px";
+export const LINE_TABLE_MIN_WIDTH = 1344;
+export const LINE_GRID = "grid items-center gap-2";
 
 export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, customerSuggestions = [], customers = [], onPreviewImage, onCustomerValidityChange }: Props) {
   const pcs = lineTotalPcs(line);
@@ -92,7 +93,8 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
 
   return (
     <div
-      className={`${LINE_GRID} rounded-md px-1 py-0.5 text-[12.5px] transition-colors hover:bg-bg-subtle/35`}
+      className={`${LINE_GRID} rounded-lg px-2 py-1.5 text-[13px] transition-colors hover:bg-bg-subtle/30`}
+      style={{ gridTemplateColumns: LINE_GRID_TEMPLATE }}
     >
       <PhotoUpload
         compact
@@ -119,11 +121,11 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
         placeholder="MARKA"
       />
 
-      <div className="grid grid-cols-3 gap-0.5">
-        <Input compact value={detailParts.detail1} onChange={(e) => onChange({ detail1: e.target.value })} placeholder="Detail 1" />
-        <Input compact value={detailParts.detail2} onChange={(e) => onChange({ detail2: e.target.value })} placeholder="Detail 2" />
-        <Input compact value={detailParts.detail3} onChange={(e) => onChange({ detail3: e.target.value })} placeholder="Detail 3" />
-      </div>
+      <Input compact value={detailParts.detail1} onChange={(e) => onChange({ detail1: e.target.value })} placeholder="Detail 1" />
+
+      <Input compact value={detailParts.detail2} onChange={(e) => onChange({ detail2: e.target.value })} placeholder="Detail 2" />
+
+      <Input compact value={detailParts.detail3} onChange={(e) => onChange({ detail3: e.target.value })} placeholder="Detail 3" />
 
       <Input
         compact
@@ -134,7 +136,7 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
         value={totalCtnsInput}
         onChange={(e) => handleDecimalInput(e.target.value, (value) => onChange({ totalCtns: value }), setTotalCtnsInput)}
         onBlur={() => normalizeDecimalInput(line.totalCtns, setTotalCtnsInput)}
-        className="text-center no-spinner"
+        className="no-spinner tabular-nums"
         onWheel={(e) => (e.currentTarget as HTMLInputElement).blur()}
       />
 
@@ -147,11 +149,11 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
         value={pcsPerCtnInput}
         onChange={(e) => handleDecimalInput(e.target.value, (value) => onChange({ pcsPerCtn: value }), setPcsPerCtnInput)}
         onBlur={() => normalizeDecimalInput(line.pcsPerCtn, setPcsPerCtnInput)}
-        className="text-center no-spinner"
+        className="text-left no-spinner tabular-nums"
         onWheel={(e) => (e.currentTarget as HTMLInputElement).blur()}
       />
 
-      <div className="text-center text-[12px] font-semibold text-[var(--success)] tabular-nums">
+      <div className="rounded-lg bg-emerald-500/10 px-2 py-1.5 text-center text-[12.5px] font-semibold text-[var(--success)] tabular-nums">
         {formatAmount(pcs)}
       </div>
 
@@ -164,11 +166,11 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
         value={rateInput}
         onChange={(e) => handleDecimalInput(e.target.value, (value) => onChange({ rmbPerPcs: value }), setRateInput)}
         onBlur={() => normalizeDecimalInput(line.rmbPerPcs, setRateInput)}
-        className="text-center no-spinner"
+        className="text-left no-spinner tabular-nums"
         onWheel={(e) => (e.currentTarget as HTMLInputElement).blur()}
       />
 
-      <div className="rounded-md border border-border/40 bg-bg-subtle/55 px-1.5 py-0.5 text-center tabular-nums leading-tight text-[13px] font-semibold">
+      <div className="rounded-lg bg-bg-subtle/70 px-2 py-1.5 text-center tabular-nums leading-tight text-[13.5px] font-semibold">
         <span className={totalRmb > 0 ? "text-fg" : "text-[var(--danger)]"}>{formatWholeMoney(totalRmb)}</span>
       </div>
 
@@ -176,7 +178,6 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
         <Input
           compact
           value={customerInput}
-          leadingIcon={<UserRound size={14} />}
           onFocus={() => setCustomerOpen(true)}
           onBlur={() => window.setTimeout(() => {
             setCustomerOpen(false);
@@ -219,9 +220,9 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
       <button
         onClick={onRemove}
         aria-label="Remove line"
-        className="mx-auto grid h-5 w-5 place-items-center rounded text-[var(--danger)] transition-colors hover:bg-[var(--danger)]/10"
+        className="mx-auto grid h-8 w-8 place-items-center rounded-lg text-[var(--danger)] transition-colors hover:bg-[var(--danger)]/10"
       >
-        <Trash2 size={13} />
+        <Trash2 size={14} />
       </button>
     </div>
   );
