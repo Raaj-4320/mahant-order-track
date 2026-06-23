@@ -46,21 +46,32 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
   const sectionBodyClass = showOrderInfo ? "min-h-0 overflow-x-auto overflow-y-visible px-2.5 py-2.5" : "min-h-0 flex-1 overflow-x-auto overflow-y-auto bg-bg-card px-1 py-1.5";
   const [paymentQuery, setPaymentQuery] = useState("");
   const [paymentOpen, setPaymentOpen] = useState(false);
+  const [wechatOpen, setWechatOpen] = useState(false);
+  const collator = useMemo(() => new Intl.Collator(undefined, { sensitivity: "base", numeric: true }), []);
 
   const paymentSuggestions = useMemo(() => {
     const q = paymentQuery.trim().toLowerCase();
     return paymentAgents
       .filter((p) => {
         if (!q) return true;
-        return p.name.toLowerCase().includes(q) || (p.agentCode || "").toLowerCase().includes(q) || p.id.toLowerCase().includes(q);
+        return p.name.toLowerCase().startsWith(q) || (p.agentCode || "").toLowerCase().startsWith(q) || p.id.toLowerCase().startsWith(q);
       })
+      .sort((left, right) => collator.compare(left.name, right.name))
       .slice(0, 4);
-  }, [paymentAgents, paymentQuery]);
+  }, [collator, paymentAgents, paymentQuery]);
 
   const paymentLabel = (p: PaymentAgent) => {
     const creditLeft = getPaymentAgentDirectFinance(p).creditLeft;
     return creditLeft > 0 ? `${p.name} - Credit: ${formatAmount(creditLeft)}` : p.name;
   };
+
+  const filteredWechatSuggestions = useMemo(() => {
+    const q = draft.wechatId.trim().toLowerCase();
+    return Array.from(new Set(wechatSuggestions.filter(Boolean)))
+      .sort((left, right) => collator.compare(left, right))
+      .filter((entry) => !q || entry.toLowerCase().startsWith(q))
+      .slice(0, 4);
+  }, [collator, draft.wechatId, wechatSuggestions]);
 
   const updateLine = (id: string, patch: Partial<OrderLine>) =>
     setDraft((d) => ({
@@ -87,6 +98,10 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
               <div className="relative">
                 <Input
                   value={paymentQuery}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   onFocus={() => setPaymentOpen(true)}
                   onBlur={() => window.setTimeout(() => setPaymentOpen(false), 120)}
                   onChange={(e) => {
@@ -155,8 +170,38 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
 
             <Field label="WeChat ID">
               <div className="relative">
-                <Input value={draft.wechatId} onChange={(e) => setDraft((d) => ({ ...d, wechatId: e.target.value }))} placeholder="Enter WeChat ID" list="wechat-suggestions" />
-                <datalist id="wechat-suggestions">{wechatSuggestions.map((w) => <option key={w} value={w} />)}</datalist>
+                <Input
+                  value={draft.wechatId}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  onFocus={() => setWechatOpen(true)}
+                  onBlur={() => window.setTimeout(() => setWechatOpen(false), 120)}
+                  onChange={(e) => {
+                    setWechatOpen(true);
+                    setDraft((d) => ({ ...d, wechatId: e.target.value }));
+                  }}
+                  placeholder="Enter WeChat ID"
+                />
+                {wechatOpen && filteredWechatSuggestions.length > 0 ? (
+                  <div className="absolute z-30 mt-1 max-h-44 w-full overflow-auto rounded-lg border border-border bg-bg-card shadow-card">
+                    {filteredWechatSuggestions.map((w) => (
+                      <button
+                        key={w}
+                        type="button"
+                        className="block w-full px-2 py-1.5 text-left text-[12px] hover:bg-bg-subtle"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          setWechatOpen(false);
+                          setDraft((d) => ({ ...d, wechatId: w }));
+                        }}
+                      >
+                        {w}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             </Field>
           </div>

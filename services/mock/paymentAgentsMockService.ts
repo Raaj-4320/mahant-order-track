@@ -1,7 +1,7 @@
 import { paymentAgents } from "@/lib/data";
 import type { PaymentAgentsService } from "@/services/contracts";
 import { deepClone } from "./utils";
-import { recalculateAgentFromOpeningAndOrders } from "@/services/settlement/paymentAgentLedger";
+import { computePaymentAgentDirectFinance } from "@/services/paymentAgentDirectFinanceSync";
 import type { PaymentAgentLedgerEntry } from "@/lib/types";
 import { isDemoDataEnabled } from "@/lib/runtimeConfig";
 
@@ -18,18 +18,12 @@ export const paymentAgentsMockService: PaymentAgentsService = {
     return deepClone(agent);
   },
   async recalculatePaymentAgentsFromOrders(orders) {
-    paymentAgentsState = paymentAgentsState.map((a) => recalculateAgentFromOpeningAndOrders(a, orders));
-    for (const entry of paymentAgentLedgerState.filter((x) => x.type === "agent_payment")) {
-      const idx = paymentAgentsState.findIndex((a) => a.id === entry.agentId);
-      if (idx < 0) continue;
-      paymentAgentsState[idx] = {
-        ...paymentAgentsState[idx],
-        currentDuePayable: Math.max(0, (paymentAgentsState[idx].currentDuePayable ?? 0) - (entry.dueReduced ?? 0)),
-        currentPayable: Math.max(0, (paymentAgentsState[idx].currentPayable ?? paymentAgentsState[idx].currentDuePayable ?? 0) - (entry.dueReduced ?? 0)),
-        creditBalance: Math.max(0, (paymentAgentsState[idx].creditBalance ?? 0) + (entry.creditCreated ?? 0)),
-        totalPaidAmount: Math.max(0, (paymentAgentsState[idx].totalPaidAmount ?? 0) + entry.amount),
-      };
-    }
+    const savedOrders = orders.filter((order) => order.status === "saved");
+    paymentAgentsState = paymentAgentsState.map((agent) => ({
+      ...agent,
+      ...computePaymentAgentDirectFinance(agent, savedOrders, paymentAgentLedgerState),
+      updatedAt: new Date().toISOString(),
+    }));
     return deepClone(paymentAgentsState);
   },
   async recordPaymentToAgent(agentId, payment) {

@@ -14,12 +14,12 @@ import {
   getPaymentAgentSplitAgentId,
   validatePaymentAgentSplits,
 } from "@/services/settlement/paymentAgentSplits";
+import { computePaymentAgentDirectFinance } from "@/services/paymentAgentDirectFinanceSync";
 
 const BUSINESS_ID = process.env.NEXT_PUBLIC_FIREBASE_BUSINESS_ID ?? "mahant";
 const makeId = () => (globalThis.crypto?.randomUUID?.() ?? `pa-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
 const requireDb = () => { const db = getFirestoreDb(); if (!db) throw new Error("Firebase not configured."); return db; };
 const clamp = (n: number) => Math.max(0, Number.isFinite(n) ? n : 0);
-const normalizeText = (value?: string | null) => (value || "").trim().toLowerCase();
 
 const toSplitSettlementSnapshot = (
   split: Pick<PaymentAgentOrderSplit, "assignedAmount" | "paidNow" | "settlementSnapshot">,
@@ -61,12 +61,6 @@ const toSplitSettlementSnapshot = (
 const isActiveSettlementEntry = (entry: PaymentAgentLedgerEntry | null | undefined) =>
   Boolean(entry && entry.active !== false && entry.isReversed !== true);
 
-type AgentOrderFact = {
-  orderId: string;
-  time: string;
-  usedAmount: number;
-};
-
 type AgentFinanceComputation = {
   totalOrdersPaid: number;
   creditBalance: number;
@@ -78,92 +72,12 @@ type AgentFinanceComputation = {
   currentPayable: number;
 };
 
-const paymentEventTime = (entry: PaymentAgentLedgerEntry) => entry.updatedAt || entry.createdAt || entry.paymentDate || "";
-const orderEventTime = (order: Order, split: PaymentAgentOrderSplit) => split.updatedAt || split.createdAt || order.savedAt || order.updatedAt || order.createdAt || order.date || "";
-
-const splitBelongsToAgent = (agent: PaymentAgent, split: PaymentAgentOrderSplit) => {
-  const agentName = normalizeText(agent.name);
-  const directId = normalizeText(agent.id);
-  const splitAgentId = normalizeText(getPaymentAgentSplitAgentId(split));
-  const splitName = normalizeText(split.paymentAgentName || split.paymentAgentSnapshot?.name || split.paymentBy);
-  return splitAgentId === directId || (!splitAgentId && splitName === agentName);
-};
-
-const buildAgentOrderFacts = (agent: PaymentAgent, orders: Order[]): AgentOrderFact[] =>
-  orders
-    .filter((order) => order.status === "saved")
-    .flatMap((order) =>
-      getOrderPaymentAgentSplits(order)
-        .filter((split) => splitBelongsToAgent(agent, split))
-        .map((split) => {
-          const snapshotCreditUsed = clamp(split.settlementSnapshot?.creditUsed ?? 0);
-          const savedPaidAmount = clamp(split.paidNow ?? 0);
-          const fallbackAssignedAmount = clamp(split.assignedAmount ?? split.settlementSnapshot?.orderPortionTotal ?? 0);
-          const usedAmount = snapshotCreditUsed > 0
-            ? snapshotCreditUsed
-            : savedPaidAmount > 0
-              ? savedPaidAmount
-              : fallbackAssignedAmount;
-
-          return {
-            orderId: order.id,
-            time: orderEventTime(order, split),
-            usedAmount,
-          };
-        }),
-    );
-
 const computeAgentFinanceFromRawFacts = (
   agent: PaymentAgent,
   orders: Order[],
   ledger: PaymentAgentLedgerEntry[],
 ): AgentFinanceComputation => {
-  const orderFacts = buildAgentOrderFacts(agent, orders);
-  const activePayments = ledger
-    .filter((entry) => entry.agentId === agent.id && entry.type === "agent_payment" && entry.active !== false && entry.isReversed !== true)
-    .map((entry) => ({ amount: clamp(entry.amount), time: paymentEventTime(entry) }));
-
-  const events = [
-    ...orderFacts.map((fact) => ({ kind: "order" as const, time: fact.time, orderId: fact.orderId, usedAmount: fact.usedAmount })),
-    ...activePayments.map((fact, index) => ({ kind: "payment" as const, time: fact.time, index, amount: fact.amount })),
-  ].sort((left, right) => {
-    const byTime = left.time.localeCompare(right.time);
-    if (byTime !== 0) return byTime;
-    if (left.kind !== right.kind) return left.kind === "order" ? -1 : 1;
-    return (left.kind === "order" ? left.orderId : String(left.index)).localeCompare(right.kind === "order" ? right.orderId : String(right.index));
-  });
-
-  let creditBalance = clamp(agent.openingCreditBalance ?? 0);
-  let currentDuePayable = 0;
-  let totalUsedAmount = 0;
-
-  for (const event of events) {
-    if (event.kind === "order") {
-      const creditUsed = clamp(event.usedAmount);
-      totalUsedAmount += creditUsed;
-      creditBalance = clamp(creditBalance - creditUsed);
-      continue;
-    }
-
-    const dueReduced = Math.min(currentDuePayable, clamp(event.amount));
-    const creditCreated = clamp(event.amount) - dueReduced;
-    currentDuePayable = clamp(currentDuePayable - dueReduced);
-    creditBalance = clamp(creditBalance + creditCreated);
-  }
-
-  const totalOrderAmount = orderFacts.reduce((sum, fact) => sum + clamp(fact.usedAmount), 0);
-  const totalPaidAmount = activePayments.reduce((sum, fact) => sum + clamp(fact.amount), 0);
-
-  return {
-    totalOrdersPaid: orderFacts.length,
-    creditBalance,
-    totalOrderAmount,
-    totalPaidAmount,
-    totalPayableAmount: 0,
-    currentDuePayable,
-    totalUsedAmount,
-    currentPayable: currentDuePayable,
-  };
+  return computePaymentAgentDirectFinance(agent, orders, ledger);
 };
 
 const writeRecomputedAgentFinance = async (
@@ -180,6 +94,19 @@ const writeRecomputedAgentFinance = async (
     ...recomputed,
     updatedAt: new Date().toISOString(),
   };
+  const financeUnchanged =
+    clamp(current.totalOrdersPaid ?? 0) === clamp(updated.totalOrdersPaid ?? 0)
+    && clamp(current.creditBalance ?? 0) === clamp(updated.creditBalance ?? 0)
+    && clamp(current.totalOrderAmount ?? 0) === clamp(updated.totalOrderAmount ?? 0)
+    && clamp(current.totalPaidAmount ?? 0) === clamp(updated.totalPaidAmount ?? 0)
+    && clamp(current.totalPayableAmount ?? 0) === clamp(updated.totalPayableAmount ?? 0)
+    && clamp(current.currentDuePayable ?? 0) === clamp(updated.currentDuePayable ?? 0)
+    && clamp(current.totalUsedAmount ?? 0) === clamp(updated.totalUsedAmount ?? 0)
+    && clamp(current.currentPayable ?? 0) === clamp(updated.currentPayable ?? 0);
+  if (financeUnchanged) {
+    recordPerfNoopWrite("paymentAgents.writeRecomputedAgentFinance", { path: paymentAgentPath(BUSINESS_ID, agentId), agentId });
+    return current;
+  }
   await measurePerfAsync("firestore-write", "paymentAgents.writeRecomputedAgentFinance", { path: paymentAgentPath(BUSINESS_ID, agentId), agentId }, () =>
     setDoc(doc(db, paymentAgentPath(BUSINESS_ID, agentId)), paymentAgentToFirestore(updated), { merge: true }),
   );
@@ -209,12 +136,12 @@ const applySettlementDelta = (
 ): PaymentAgent => ({
   ...agent,
   totalOrdersPaid: clamp((agent.totalOrdersPaid ?? 0) + direction),
-  creditBalance: clamp((agent.creditBalance ?? 0) + direction * -clamp(entry.creditUsed ?? entry.amount ?? 0)),
-  totalOrderAmount: clamp((agent.totalOrderAmount ?? 0) + direction * clamp(entry.creditUsed ?? entry.amount ?? 0)),
+  creditBalance: clamp((agent.creditBalance ?? 0) + direction * -clamp(entry.paidNow ?? 0)),
+  totalOrderAmount: clamp((agent.totalOrderAmount ?? 0) + direction * clamp(entry.amount ?? 0)),
   totalPaidAmount: clamp(agent.totalPaidAmount ?? 0),
   totalPayableAmount: 0,
   currentDuePayable: 0,
-  totalUsedAmount: clamp((agent.totalUsedAmount ?? 0) + direction * clamp(entry.creditUsed ?? 0)),
+  totalUsedAmount: clamp((agent.totalUsedAmount ?? 0) + direction * clamp(entry.paidNow ?? 0)),
   currentPayable: 0,
   updatedAt: now,
 });
@@ -356,7 +283,7 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
   async recalculatePaymentAgentsFromOrders(orders) {
     const agents = await this.listPaymentAgents();
     const ledger = await this.listPaymentAgentLedger();
-    const savedOrders = orders.filter((order) => order.status === "saved");
+    const savedOrders = await listSavedOrdersFromDb();
     const updatedAgents = await Promise.all(agents.map((agent) => writeRecomputedAgentFinance(agent.id, savedOrders, ledger)));
     return updatedAgents.sort((a, b) => a.name.localeCompare(b.name));
   },

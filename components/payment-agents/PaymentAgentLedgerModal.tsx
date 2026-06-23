@@ -102,6 +102,18 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
     setOrdersPage((page) => Math.min(page, Math.max(1, Math.ceil(orderRows.length / PAGE_SIZE))));
   }, [orderRows.length]);
 
+  useEffect(() => {
+    if (!open) return;
+    const previousOverflow = document.body.style.overflow;
+    const previousOverscrollBehavior = document.body.style.overscrollBehavior;
+    document.body.style.overflow = "hidden";
+    document.body.style.overscrollBehavior = "none";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.body.style.overscrollBehavior = previousOverscrollBehavior;
+    };
+  }, [open]);
+
   if (!open || !summary || !accounting || !directFinance) return null;
 
   const deletePayment = async (entryId: string) => {
@@ -149,8 +161,8 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
   ];
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/45 p-4">
-      <div className="mx-auto my-4 flex max-h-[calc(100vh-2rem)] w-full max-w-[1680px] flex-col overflow-hidden rounded-2xl border border-border bg-bg-card shadow-card">
+    <div className="fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/45 p-4">
+      <div className="mx-auto my-4 flex max-h-[calc(100vh-2rem)] w-full max-w-[1680px] flex-col overflow-hidden rounded-2xl border border-border bg-bg-card shadow-[0_28px_90px_rgba(15,23,42,0.22)]">
         <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3">
           <div>
             <div className="text-[24px] font-bold text-fg">{summary.agent.name}</div>
@@ -172,7 +184,7 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
           </div>
         </div>
 
-        <div className="overflow-y-auto overflow-x-hidden px-5 py-3">
+        <div className="overflow-y-auto overflow-x-hidden overscroll-contain px-5 py-3">
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-5">
             {kpis.map((kpi) => (
               <div key={kpi.label} className={cn("rounded-xl border px-3 py-2.5", kpi.tone)}>
@@ -186,7 +198,7 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
           </div>
 
           <div className="mt-3 grid min-h-0 grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] xl:items-start">
-            <section className="min-w-0 min-h-[170px] self-start rounded-2xl border border-border bg-white">
+            <section className="min-w-0 min-h-[170px] self-start overflow-hidden rounded-2xl border border-border bg-white">
               <div className="border-b border-border px-4 py-3">
                 <div className="text-[16px] font-semibold leading-tight text-fg">Credit Activity</div>
               </div>
@@ -227,7 +239,7 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
               <TablePagination total={transactionRows.length} currentPage={transactionsPage} pageSize={PAGE_SIZE} onPageChange={setTransactionsPage} label="transactions" />
             </section>
 
-            <section className="min-w-0 min-h-[170px] self-start rounded-2xl border border-border bg-white">
+            <section className="min-w-0 min-h-[170px] self-start overflow-hidden rounded-2xl border border-border bg-white">
               <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
                 <div>
                   <div className="text-[16px] font-semibold leading-tight text-fg">Advance Payments</div>
@@ -284,7 +296,7 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
             </section>
           </div>
 
-          <section className="mt-3 min-w-0 min-h-[170px] self-start rounded-2xl border border-border bg-white">
+          <section className="mt-3 min-w-0 min-h-[170px] self-start overflow-hidden rounded-2xl border border-border bg-white">
             <div className="border-b border-border px-4 py-3">
               <div className="text-[16px] font-semibold leading-tight text-fg">Orders</div>
             </div>

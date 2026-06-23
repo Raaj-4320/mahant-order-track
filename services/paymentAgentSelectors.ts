@@ -10,7 +10,7 @@ export function getPaymentAgentFinanceSummary(agents: PaymentAgent[], orders: Or
       agent,
       orders: summary.matchedOrders,
       totalOrders: finance.totalOrders,
-      totalOrderAmount: summary.totalOrderAmount,
+      totalOrderAmount: Math.max(0, Number(agent.totalOrderAmount) || 0),
       totalPaidAmount: finance.paymentsMade,
       totalPayableAmount: finance.totalPayable,
       currentDuePayable: finance.duePending,

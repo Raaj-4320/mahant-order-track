@@ -353,6 +353,16 @@ const getStoredSelectedCategory = () => {
   return window.localStorage.getItem(LAST_SELECTED_ORDER_CATEGORY_KEY) || "";
 };
 
+const sortSuggestionsAlphabetically = (items: string[]) =>
+  [...items].sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base", numeric: true }));
+
+const getTopPrefixSuggestions = (items: string[], query: string, limit = 4) => {
+  const normalizedQuery = query.trim().toLowerCase();
+  const uniqueSorted = sortSuggestionsAlphabetically(Array.from(new Set(items.filter(Boolean))));
+  if (!normalizedQuery) return uniqueSorted.slice(0, limit);
+  return uniqueSorted.filter((item) => item.toLowerCase().startsWith(normalizedQuery)).slice(0, limit);
+};
+
 function OutsideCustomerEditor({
   value,
   inputClassName,
@@ -455,6 +465,113 @@ function OutsideCustomerEditor({
   );
 }
 
+function OutsideSuggestionEditor({
+  value,
+  inputClassName,
+  placeholder,
+  saving,
+  suspendCancel,
+  options,
+  emptyLabel,
+  onChange,
+  onEnter,
+  onEscape,
+  onCancel,
+  onSelect,
+}: {
+  value: string;
+  inputClassName: string;
+  placeholder: string;
+  saving: boolean;
+  suspendCancel: boolean;
+  options: string[];
+  emptyLabel: string;
+  onChange: (nextValue: string) => void;
+  onEnter: () => void;
+  onEscape: () => void;
+  onCancel: () => void;
+  onSelect: (option: string) => void;
+}) {
+  const anchorRef = useRef<HTMLDivElement | null>(null);
+  const [layout, setLayout] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  useEffect(() => {
+    const updateLayout = () => {
+      const rect = anchorRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setLayout({
+        top: rect.bottom + 4,
+        left: rect.left,
+        width: rect.width,
+      });
+    };
+
+    updateLayout();
+    window.addEventListener("resize", updateLayout);
+    window.addEventListener("scroll", updateLayout, true);
+    return () => {
+      window.removeEventListener("resize", updateLayout);
+      window.removeEventListener("scroll", updateLayout, true);
+    };
+  }, []);
+
+  return (
+    <div ref={anchorRef} className="relative z-30">
+      <Input
+        value={value}
+        autoFocus
+        autoComplete="off"
+        autoCorrect="off"
+        autoCapitalize="none"
+        spellCheck={false}
+        placeholder={placeholder}
+        className={inputClassName}
+        onChange={(event) => onChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            onEnter();
+          }
+          if (event.key === "Escape") {
+            event.preventDefault();
+            onEscape();
+          }
+        }}
+        onBlur={() => {
+          if (!saving && !suspendCancel) {
+            window.setTimeout(() => onCancel(), 120);
+          }
+        }}
+      />
+      {layout && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className="fixed z-[9999] max-h-52 overflow-auto rounded-xl border border-black/10 bg-white shadow-[0_12px_30px_rgba(15,23,42,0.12)]"
+              style={{ top: layout.top, left: layout.left, width: layout.width }}
+            >
+              {options.length === 0 ? (
+                <div className="px-3 py-2 text-[11.5px] text-slate-500">{emptyLabel}</div>
+              ) : options.map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  className="block w-full px-3 py-2 text-left text-[12.5px] text-slate-700 transition-colors hover:bg-slate-50"
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    onSelect(option);
+                  }}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>,
+            document.body,
+          )
+        : null}
+    </div>
+  );
+}
+
 export default function OrdersPage() {
   type OrdersMode = "history" | "add" | "drafts" | "edit";
   const ordersSourceSelection = useMemo(() => ordersDataSourceSelection(), []);
@@ -497,7 +614,7 @@ export default function OrdersPage() {
   const isOrderModalOpen = mode === "add" || mode === "edit";
   const [view, setView] = useState<"list" | "grid" | "calendar">("list");
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [selectedOrderCategory, setSelectedOrderCategory] = useState("");
+  const [selectedOrderCategory, setSelectedOrderCategory] = useState(() => getStoredSelectedCategory());
   const [selectedSeriesId, setSelectedSeriesId] = useState("");
   const [seriesPickerOpen, setSeriesPickerOpen] = useState(false);
   const [showCreateSeriesModal, setShowCreateSeriesModal] = useState(false);
@@ -694,10 +811,7 @@ export default function OrdersPage() {
   }, [seriesForm.label, seriesForm.startNumber]);
   const seriesSuggestions = useMemo(() => orderSeries.map((series) => ({ ...series, suggestion: getSeriesSuggestion(series) })), [orderSeries]);
   const headerWechatSuggestions = useMemo(() => {
-    const q = (draft.wechatId || "").trim().toLowerCase();
-    return wechatSuggestions
-      .filter((w) => w && (!q || w.toLowerCase().includes(q)))
-      .slice(0, 4);
+    return getTopPrefixSuggestions(wechatSuggestions, draft.wechatId || "", 4);
   }, [wechatSuggestions, draft.wechatId]);
   useEffect(() => {
     if (editingOrderId) return;
@@ -734,14 +848,15 @@ export default function OrdersPage() {
   useEffect(() => {
     if (!orderCategoryTabs.length) {
       if (selectedOrderCategory) setSelectedOrderCategory("");
+      if (typeof window !== "undefined") {
+        window.localStorage.removeItem(LAST_SELECTED_ORDER_CATEGORY_KEY);
+      }
       return;
     }
-    if (!selectedOrderCategory) {
-      const storedCategory = getStoredSelectedCategory();
-      if (storedCategory && orderCategoryTabs.includes(storedCategory)) {
-        setSelectedOrderCategory(storedCategory);
-        return;
-      }
+    const storedCategory = getStoredSelectedCategory();
+    if (storedCategory && orderCategoryTabs.includes(storedCategory) && selectedOrderCategory !== storedCategory) {
+      setSelectedOrderCategory(storedCategory);
+      return;
     }
     if (!selectedOrderCategory || !orderCategoryTabs.includes(selectedOrderCategory)) {
       setSelectedOrderCategory(orderCategoryTabs[0]);
@@ -1427,7 +1542,7 @@ try {
       }
       const trimmedValue = rawValue.trim();
       const clearingCustomer = field === "customer" && !trimmedValue;
-      if (!clearingCustomer && field !== "customer" && !trimmedValue) {
+      if (!clearingCustomer && field !== "customer" && field !== "payment" && field !== "wechat" && field !== "shipping" && !trimmedValue) {
         setOutsideEditConfirm(null);
         cancelOutsideField(order.id);
         return;
@@ -1451,63 +1566,67 @@ try {
       } else if (field === "wechat") {
         nextOrder.wechatId = trimmedValue;
       } else if (field === "payment") {
-        let resolvedAgent = paymentAgents.find((agent) => agent.id === trimmedValue || normalizePaymentAgentValue(agent.name) === normalizePaymentAgentValue(trimmedValue)) ?? null;
-        if (trimmedValue && !resolvedAgent) resolvedAgent = await resolveExistingPaymentAgentByName(trimmedValue);
-        if (trimmedValue && !resolvedAgent) throw new Error("Payment agent not found. Add it from the Payment Agents tab first.");
-        const nextPaymentAgentId = resolvedAgent?.id || "";
-        const currentSplits = getEditablePaymentAgentSplits(nextOrder);
-        const primarySplit = currentSplits[0] ?? createEmptyPaymentAgentSplit();
-        const paidAmount = normalizePaymentSplitAmount(primarySplit.paidNow);
-        const existingCredit = resolvedAgent ? getPaymentAgentDirectFinance(resolvedAgent).creditLeft : 0;
-        const splitStatus: "paid" | "unpaid" = paidAmount > 0 ? "paid" : "unpaid";
-        const nextSplits = nextPaymentAgentId
-          ? [{
-              ...primarySplit,
-              paymentAgentId: nextPaymentAgentId,
-              paymentBy: nextPaymentAgentId,
-              paymentAgentName: resolvedAgent?.name || "",
-              paymentAgentSnapshot: resolvedAgent ? { id: resolvedAgent.id, name: resolvedAgent.name, code: resolvedAgent.agentCode } : undefined,
-              assignedAmount: paidAmount,
-              settlementSnapshot: {
-                orderPortionTotal: paidAmount,
-                existingCredit,
-                creditUsed: paidAmount,
-                payableAfterCredit: 0,
-                remainingPayable: 0,
-                newCreditCreated: 0,
-                resultingCreditBalance: Math.max(0, existingCredit - paidAmount),
-                paidNow: 0,
-                status: splitStatus,
-                updatedAt: new Date().toISOString(),
-                createdAt: primarySplit.settlementSnapshot?.createdAt || new Date().toISOString(),
-              },
-            }]
-          : [createEmptyPaymentAgentSplit()];
-        nextOrder.paymentAgentSplits = nextSplits;
-        nextOrder.paymentAgentId = nextPaymentAgentId;
-        nextOrder.paymentBy = nextPaymentAgentId || trimmedValue;
-        nextOrder.paymentByName = resolvedAgent?.name || trimmedValue;
-        nextOrder.paymentAgentName = resolvedAgent?.name || trimmedValue;
-        nextOrder.paymentAgentSnapshot = nextPaymentAgentId
-          ? { id: nextPaymentAgentId, name: resolvedAgent?.name || trimmedValue, code: resolvedAgent?.agentCode || "" }
-          : undefined;
-        nextOrder.paymentAgentSettlementSnapshot = nextSplits[0]?.settlementSnapshot
-          ? {
-              orderTotal: nextSplits[0].settlementSnapshot.orderPortionTotal,
-              existingCredit: nextSplits[0].settlementSnapshot.existingCredit,
-              creditUsed: nextSplits[0].settlementSnapshot.creditUsed,
+        if (!trimmedValue) {
+          nextOrder.paymentAgentSplits = [createEmptyPaymentAgentSplit()];
+          nextOrder.paymentAgentId = "";
+          nextOrder.paymentBy = "";
+          nextOrder.paymentByName = "";
+          nextOrder.paymentAgentName = "";
+          nextOrder.paymentAgentSnapshot = undefined;
+          nextOrder.paymentAgentSettlementSnapshot = undefined;
+        } else {
+          let resolvedAgent = paymentAgents.find((agent) => agent.id === trimmedValue || normalizePaymentAgentValue(agent.name) === normalizePaymentAgentValue(trimmedValue)) ?? null;
+          if (trimmedValue && !resolvedAgent) resolvedAgent = await resolveExistingPaymentAgentByName(trimmedValue);
+          if (trimmedValue && !resolvedAgent) throw new Error("Payment agent not found. Add it from the Payment Agents tab first.");
+          const nextPaymentAgentId = resolvedAgent?.id || "";
+          const currentSplits = getEditablePaymentAgentSplits(nextOrder);
+          const primarySplit = currentSplits[0] ?? createEmptyPaymentAgentSplit();
+          const paidAmount = normalizePaymentSplitAmount(primarySplit.paidNow);
+          const existingCredit = resolvedAgent ? getPaymentAgentDirectFinance(resolvedAgent).creditLeft : 0;
+          const splitStatus: "paid" | "unpaid" = paidAmount > 0 ? "paid" : "unpaid";
+          const nextSplits = [{
+            ...primarySplit,
+            paymentAgentId: nextPaymentAgentId,
+            paymentBy: nextPaymentAgentId,
+            paymentAgentName: resolvedAgent?.name || "",
+            paymentAgentSnapshot: resolvedAgent ? { id: resolvedAgent.id, name: resolvedAgent.name, code: resolvedAgent.agentCode } : undefined,
+            assignedAmount: paidAmount,
+            settlementSnapshot: {
+              orderPortionTotal: paidAmount,
+              existingCredit,
+              creditUsed: paidAmount,
               payableAfterCredit: 0,
               remainingPayable: 0,
               newCreditCreated: 0,
-              resultingCreditBalance: nextSplits[0].settlementSnapshot.resultingCreditBalance,
+              resultingCreditBalance: Math.max(0, existingCredit - paidAmount),
               paidNow: 0,
-              status: nextSplits[0].settlementSnapshot.status,
-              paymentAgentId: nextPaymentAgentId,
-              paymentAgentName: resolvedAgent?.name || trimmedValue,
+              status: splitStatus,
               updatedAt: new Date().toISOString(),
-              createdAt: nextSplits[0].settlementSnapshot.createdAt || order.paymentAgentSettlementSnapshot?.createdAt || new Date().toISOString(),
-            }
-          : undefined;
+              createdAt: primarySplit.settlementSnapshot?.createdAt || new Date().toISOString(),
+            },
+          }];
+          nextOrder.paymentAgentSplits = nextSplits;
+          nextOrder.paymentAgentId = nextPaymentAgentId;
+          nextOrder.paymentBy = nextPaymentAgentId;
+          nextOrder.paymentByName = resolvedAgent?.name || "";
+          nextOrder.paymentAgentName = resolvedAgent?.name || "";
+          nextOrder.paymentAgentSnapshot = { id: nextPaymentAgentId, name: resolvedAgent?.name || "", code: resolvedAgent?.agentCode || "" };
+          nextOrder.paymentAgentSettlementSnapshot = {
+            orderTotal: nextSplits[0].settlementSnapshot.orderPortionTotal,
+            existingCredit: nextSplits[0].settlementSnapshot.existingCredit,
+            creditUsed: nextSplits[0].settlementSnapshot.creditUsed,
+            payableAfterCredit: 0,
+            remainingPayable: 0,
+            newCreditCreated: 0,
+            resultingCreditBalance: nextSplits[0].settlementSnapshot.resultingCreditBalance,
+            paidNow: 0,
+            status: nextSplits[0].settlementSnapshot.status,
+            paymentAgentId: nextPaymentAgentId,
+            paymentAgentName: resolvedAgent?.name || "",
+            updatedAt: new Date().toISOString(),
+            createdAt: nextSplits[0].settlementSnapshot.createdAt || order.paymentAgentSettlementSnapshot?.createdAt || new Date().toISOString(),
+          };
+        }
       } else if (field === "shipping") {
         nextOrder.shippingPrice = Math.max(0, Number(rawValue) || 0);
       } else {
@@ -2160,7 +2279,6 @@ try {
     type = "text",
     inputMode,
     numeric = false,
-    listId,
     listOptions = [],
   }: {
     order: Order;
@@ -2174,7 +2292,6 @@ try {
     type?: "text" | "number";
     inputMode?: "text" | "decimal" | "numeric" | "search" | "email" | "tel" | "url" | "none";
     numeric?: boolean;
-    listId?: string;
     listOptions?: string[];
   }) => {
     const outsideEdit = getOutsideEditValue(order);
@@ -2183,6 +2300,9 @@ try {
       const normalizedValue = outsideEdit.value.trim().toLowerCase();
       const customerOptions = field === "customer"
         ? listOptions.filter((option) => option && option.toLowerCase().includes(normalizedValue)).slice(0, 4)
+        : [];
+      const suggestionOptions = field === "wechat" || field === "payment"
+        ? getTopPrefixSuggestions(listOptions, outsideEdit.value, 4)
         : [];
       if (field === "customer") {
         return (
@@ -2213,14 +2333,37 @@ try {
           />
         );
       }
+      if (field === "wechat" || field === "payment") {
+        return (
+          <OutsideSuggestionEditor
+            value={outsideEdit.value}
+            inputClassName={inputClassName}
+            placeholder={placeholder}
+            saving={outsideEdit.saving}
+            suspendCancel={outsideEditConfirm?.orderId === order.id}
+            options={suggestionOptions}
+            emptyLabel={field === "payment" ? "No matching payment agent" : "No matching WeChat ID"}
+            onChange={(nextValue) => setOutsideEditValue(order.id, { value: nextValue })}
+            onEnter={() => requestOutsideFieldSave(order, field, line)}
+            onEscape={() => cancelOutsideField(order.id)}
+            onCancel={() => cancelOutsideField(order.id)}
+            onSelect={(option) => {
+              setOutsideEditValue(order.id, { value: option });
+            }}
+          />
+        );
+      }
       return (
         <div className="relative z-30">
           <Input
             value={outsideEdit.value}
             type={numeric ? "text" : type}
             inputMode={inputMode}
-            list={field === "customer" ? undefined : listId}
             autoFocus
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="none"
+            spellCheck={false}
             placeholder={placeholder}
             className={cn(inputClassName, numeric && "[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none")}
             compact={field === "customer"}
@@ -2245,7 +2388,6 @@ try {
               }
             }}
           />
-          {field !== "customer" && listId && listOptions.length > 0 ? <datalist id={listId}>{listOptions.map((option) => <option key={option} value={option} />)}</datalist> : null}
         </div>
       );
     }
@@ -2512,7 +2654,6 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                             title: customerValue,
                             buttonClassName: cn("block w-full rounded-xl px-2 py-1 text-left text-[21px] font-bold leading-tight transition-colors hover:bg-white/70", customerMissing && "text-[var(--danger)]"),
                             inputClassName: "h-10 min-w-0 text-[15px] font-semibold",
-                            listId: `outside-customer-${order.id}-${line.id}`,
                             listOptions: customerSuggestions,
                           }) : <span className="min-w-0 break-words">-</span>}
                         </div>
@@ -2533,7 +2674,6 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                             placeholder: "Set WeChat ID",
                             buttonClassName: cn("block w-full rounded-xl px-2 py-1 text-left text-[21px] font-bold leading-tight transition-colors hover:bg-white/70", !order.wechatId?.trim() && "text-[var(--danger)]"),
                             inputClassName: "h-10 min-w-0 text-[15px] font-semibold",
-                            listId: `outside-wechat-${order.id}`,
                             listOptions: wechatSuggestions,
                           })}
                         </div>
@@ -2554,7 +2694,6 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                             placeholder: "Set Paid By",
                             buttonClassName: cn("block w-full rounded-xl px-2 py-1 text-left text-[21px] font-bold leading-tight transition-colors hover:bg-white/70", paymentMeta.isMissing && "text-[var(--danger)]"),
                             inputClassName: "h-10 min-w-0 text-[15px] font-semibold",
-                            listId: `outside-payment-${order.id}`,
                             listOptions: paymentAgents.map((agent) => agent.name),
                           })}
                         </div>
@@ -2644,7 +2783,6 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                           placeholder: "Set customer",
                           buttonClassName: cn("block w-full rounded-md px-1 py-0.5 text-center text-[13px] font-semibold transition-colors hover:bg-white/70", isMissingCustomerDisplay(getCardCustomerValue(extraLine)) && "text-[var(--danger)]"),
                           inputClassName: "h-8 min-w-0 text-[12px]",
-                          listId: `outside-customer-${order.id}-${extraLine.id}`,
                           listOptions: customerSuggestions,
                         })}</div>
                       </div>)}
@@ -2822,7 +2960,6 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                           placeholder: "Set WeChat ID",
                           buttonClassName: cn("block w-full rounded-md px-1 py-1 text-center text-[14.5px] font-semibold leading-tight transition-colors hover:bg-bg-subtle", !order.wechatId?.trim() && "text-[var(--danger)]"),
                           inputClassName: "h-8 min-w-0 text-[13px]",
-                          listId: `outside-wechat-${order.id}`,
                           listOptions: wechatSuggestions,
                         })}
                       </div>
@@ -2934,7 +3071,6 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                         placeholder: "Set customer",
                         buttonClassName: cn("block w-full rounded-md px-1 py-1 text-center text-[14.5px] font-semibold leading-tight transition-colors hover:bg-bg-subtle", customerMissing && "text-[var(--danger)]"),
                         inputClassName: "h-8 min-w-0 text-[13px]",
-                        listId: `outside-customer-${order.id}-${selectedLine.id}`,
                         listOptions: customerSuggestions,
                       }) : customerName}</div></div>
                       <div className="min-w-0 pl-1 pr-2 py-1.5 text-center">
@@ -2951,7 +3087,6 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                           placeholder: "Set Paid By",
                           buttonClassName: cn("block w-full rounded-md px-1 py-1 text-center text-[14.5px] font-semibold leading-tight transition-colors hover:bg-bg-subtle", paymentMeta.isMissing && "text-[var(--danger)]"),
                           inputClassName: "h-8 min-w-0 text-[13px]",
-                          listId: `outside-payment-${order.id}`,
                           listOptions: paymentAgents.map((agent) => agent.name),
                         })}
                       </div>
@@ -3061,7 +3196,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                 </label>
               </section>
               <section className="min-w-0">
-                <label className="flex flex-col gap-1.5 text-[14px] text-fg-muted"><span className="font-medium tracking-[0.01em]">WeChat ID</span><div className="relative"><Input className="h-10 rounded-xl px-3 text-[13px]" value={draft.wechatId} onFocus={() => setHeaderWechatOpen(true)} onBlur={() => window.setTimeout(() => setHeaderWechatOpen(false), 120)} onChange={(e)=>{const next=e.target.value; setHeaderWechatOpen(true); setDraft((d)=>({...d,wechatId:next}));}} />{headerWechatOpen && headerWechatSuggestions.length>0 ? <div className="absolute z-30 mt-1.5 max-h-44 w-full overflow-auto rounded-xl border border-border bg-bg-card shadow-card">{headerWechatSuggestions.map((w)=><button key={w} type="button" className="block w-full px-3 py-2 text-left text-[12px] hover:bg-bg-subtle" onMouseDown={(e)=>{e.preventDefault(); setHeaderWechatOpen(false); setDraft((d)=>({...d,wechatId:w}));}}>{w}</button>)}</div> : null}</div></label>
+                <label className="flex flex-col gap-1.5 text-[14px] text-fg-muted"><span className="font-medium tracking-[0.01em]">WeChat ID</span><div className="relative"><Input className="h-10 rounded-xl px-3 text-[13px]" autoComplete="off" autoCorrect="off" autoCapitalize="none" spellCheck={false} value={draft.wechatId} onFocus={() => setHeaderWechatOpen(true)} onBlur={() => window.setTimeout(() => setHeaderWechatOpen(false), 120)} onChange={(e)=>{const next=e.target.value; setHeaderWechatOpen(true); setDraft((d)=>({...d,wechatId:next}));}} />{headerWechatOpen && headerWechatSuggestions.length>0 ? <div className="absolute z-30 mt-1.5 max-h-44 w-full overflow-auto rounded-xl border border-border bg-bg-card shadow-card">{headerWechatSuggestions.map((w)=><button key={w} type="button" className="block w-full px-3 py-2 text-left text-[12px] hover:bg-bg-subtle" onMouseDown={(e)=>{e.preventDefault(); setHeaderWechatOpen(false); setDraft((d)=>({...d,wechatId:w}));}}>{w}</button>)}</div> : null}</div></label>
               </section>
               <section className="min-w-0">
                 <div className="flex h-full items-end justify-end">

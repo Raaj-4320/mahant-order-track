@@ -59,10 +59,12 @@ function PaymentAgentPickerRow({
   const anchorRef = useRef<HTMLDivElement | null>(null);
   const [layout, setLayout] = useState<{ top: number; left: number; width: number } | null>(null);
   const normalizedQuery = normalizeValue(query);
+  const collator = useMemo(() => new Intl.Collator(undefined, { sensitivity: "base", numeric: true }), []);
   const suggestions = paymentAgents
     .filter((agent) => agent.status !== "inactive" && agent.lifecycle?.status !== "deleted")
-    .filter((agent) => !normalizedQuery || normalizeValue(agent.name).includes(normalizedQuery) || normalizeValue(agent.agentCode).includes(normalizedQuery) || normalizeValue(agent.id).includes(normalizedQuery))
-    .slice(0, 8);
+    .filter((agent) => !normalizedQuery || normalizeValue(agent.name).startsWith(normalizedQuery) || normalizeValue(agent.agentCode).startsWith(normalizedQuery) || normalizeValue(agent.id).startsWith(normalizedQuery))
+    .sort((left, right) => collator.compare(left.name, right.name))
+    .slice(0, 4);
   const typedDuplicate = Boolean(normalizedQuery && duplicateKeys.has(normalizedQuery));
 
   useEffect(() => {
@@ -91,6 +93,10 @@ function PaymentAgentPickerRow({
       <div ref={anchorRef} className="relative min-w-0 flex-1">
         <Input
           value={query}
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="none"
+          spellCheck={false}
           onFocus={onOpen}
           onBlur={() => window.setTimeout(onClose, 120)}
           onChange={(event) => {
