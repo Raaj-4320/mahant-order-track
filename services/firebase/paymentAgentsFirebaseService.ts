@@ -136,13 +136,13 @@ const applySettlementDelta = (
 ): PaymentAgent => ({
   ...agent,
   totalOrdersPaid: clamp((agent.totalOrdersPaid ?? 0) + direction),
-  creditBalance: clamp((agent.creditBalance ?? 0) + direction * -clamp(entry.paidNow ?? 0)),
+  creditBalance: clamp((agent.creditBalance ?? 0) + direction * -clamp(entry.creditUsed ?? 0) + direction * clamp(entry.newCreditCreated ?? 0)),
   totalOrderAmount: clamp((agent.totalOrderAmount ?? 0) + direction * clamp(entry.amount ?? 0)),
   totalPaidAmount: clamp(agent.totalPaidAmount ?? 0),
-  totalPayableAmount: 0,
-  currentDuePayable: 0,
-  totalUsedAmount: clamp((agent.totalUsedAmount ?? 0) + direction * clamp(entry.paidNow ?? 0)),
-  currentPayable: 0,
+  totalPayableAmount: clamp((agent.totalPayableAmount ?? 0) + direction * clamp(entry.payableAfterCredit ?? 0)),
+  currentDuePayable: clamp((agent.currentDuePayable ?? 0) + direction * clamp(entry.remainingPayable ?? 0)),
+  totalUsedAmount: clamp((agent.totalUsedAmount ?? 0) + direction * clamp(entry.creditUsed ?? 0)),
+  currentPayable: clamp((agent.currentPayable ?? agent.currentDuePayable ?? 0) + direction * clamp(entry.remainingPayable ?? 0)),
   updatedAt: now,
 });
 
@@ -331,6 +331,7 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
       ...(order.dependencyMap?.paymentAgentLedgerEntryIds ?? []),
       ...getOrderPaymentAgentLedgerEntryIds(order),
     ]));
+    const affectedAgentIds = new Set<string>(preparedSplits.map((split) => split.paymentAgentId).filter(Boolean));
 
     await runTransaction(db, async (tx) => {
       const existingEntries = new Map<string, PaymentAgentLedgerEntry>();
@@ -338,7 +339,11 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
         const settlementRef = doc(db, paymentAgentLedgerPath(BUSINESS_ID), entryId);
         const snap = await tx.get(settlementRef);
         if (snap.exists()) {
-          existingEntries.set(entryId, { id: snap.id, ...(snap.data() as Record<string, unknown>) } as PaymentAgentLedgerEntry);
+          const existingEntry = { id: snap.id, ...(snap.data() as Record<string, unknown>) } as PaymentAgentLedgerEntry;
+          existingEntries.set(entryId, existingEntry);
+          if (typeof existingEntry.agentId === "string" && existingEntry.agentId.trim()) {
+            affectedAgentIds.add(existingEntry.agentId.trim());
+          }
         }
       }
 
@@ -397,14 +402,14 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
         tx.set(doc(db, paymentAgentPath(BUSINESS_ID, agentId)), paymentAgentToFirestore(updatedAgent), { merge: true });
       }
     });
-    const affectedAgentIds = Array.from(new Set(preparedSplits.map((split) => split.paymentAgentId)));
     const [orders, ledger] = await Promise.all([listSavedOrdersFromDb(), this.listPaymentAgentLedger()]);
-    await Promise.all(affectedAgentIds.map((agentId) => writeRecomputedAgentFinance(agentId, orders, ledger)));
+    await Promise.all(Array.from(affectedAgentIds).map((agentId) => writeRecomputedAgentFinance(agentId, orders, ledger)));
   },
   async reverseOrderSettlement(order) {
     if (!order.id) return;
     const db = requireDb();
     const now = new Date().toISOString();
+    const affectedAgentIds = new Set<string>();
     await runTransaction(db, async (tx) => {
       const entryIds = Array.from(new Set([
         ...(order.dependencyMap?.paymentAgentLedgerEntryIds ?? []),
@@ -423,7 +428,9 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
         if (!isActiveSettlementEntry(existing)) continue;
         existingEntries.push(existing);
         if (typeof existing.agentId === "string" && existing.agentId.trim()) {
-          agentIds.add(existing.agentId.trim());
+          const agentId = existing.agentId.trim();
+          agentIds.add(agentId);
+          affectedAgentIds.add(agentId);
         }
       }
 
@@ -456,8 +463,7 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
         tx.set(doc(db, paymentAgentPath(BUSINESS_ID, agentId)), paymentAgentToFirestore(updated), { merge: true });
       }
     });
-    const affectedAgentIds = Array.from(new Set(getOrderPaymentAgentSplits(order).map((split) => getPaymentAgentSplitAgentId(split)).filter(Boolean)));
     const [orders, ledger] = await Promise.all([listSavedOrdersFromDb(), this.listPaymentAgentLedger()]);
-    await Promise.all(affectedAgentIds.map((agentId) => writeRecomputedAgentFinance(agentId, orders, ledger)));
+    await Promise.all(Array.from(affectedAgentIds).map((agentId) => writeRecomputedAgentFinance(agentId, orders, ledger)));
   },
 };

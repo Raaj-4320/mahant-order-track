@@ -2,7 +2,7 @@
 
 import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
 import { formatAmount } from "@/lib/data";
-import { formatWholeMoney } from "@/lib/numbers";
+import { formatDisplayNumber, formatWholeMoney } from "@/lib/numbers";
 import { Order, lineTotalPcs, lineTotalRmb, orderShippingPrice, orderTotal } from "@/lib/types";
 import { Button } from "@/components/ui/Button";
 import { ImageLightbox } from "@/components/ui/ImageLightbox";
@@ -18,6 +18,7 @@ type OrderLinesDetailModalProps = {
 
 const formatPlainAmount = (value: number) => formatAmount(value);
 const formatFinalAmount = (value: number) => formatWholeMoney(value);
+const formatRateAmount = (value: number) => formatDisplayNumber(value, { maxFractionDigits: 1 });
 
 const EXPORT_HIDDEN_ATTR = "data-export-hidden";
 const TwoLineHeader = ({ zh, en }: { zh: string; en?: string }) => (
@@ -382,7 +383,7 @@ export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDeta
                       <td className="border border-border px-1.5 py-1.5 text-center text-[18px] font-bold leading-tight tabular-nums whitespace-nowrap">{line.pcsPerCtn || 0}</td>
                       <td className="border border-border px-1.5 py-1.5 text-center text-[18px] font-bold leading-tight tabular-nums whitespace-nowrap">{totalPcs || 0}</td>
                       <td className="border border-border px-1.5 py-1.5 text-center text-[18px] font-bold leading-tight tabular-nums whitespace-nowrap">
-                        {formatPlainAmount(line.rmbPerPcs || 0)}
+                        {formatRateAmount(line.rmbPerPcs || 0)}
                       </td>
                       <td className={`border border-border px-1.5 py-1.5 text-center text-[18px] font-bold leading-tight tabular-nums whitespace-nowrap ${lineTotal > 0 ? "text-fg" : "text-[var(--danger)]"}`}>
                         {formatFinalAmount(lineTotal || 0)}
