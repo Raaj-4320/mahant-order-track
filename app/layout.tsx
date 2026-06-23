@@ -6,6 +6,8 @@ import { ThemeProvider } from "@/components/ThemeProvider";
 import { StoreProvider } from "@/lib/store";
 import { Toasts } from "@/components/ui/Toasts";
 import { DebugAppLoaded } from "@/components/DebugAppLoaded";
+import { AppUpdateNotifier } from "@/components/app/AppUpdateNotifier";
+import { getCurrentAppUpdateManifest } from "@/lib/appUpdateManifest";
 
 export const metadata: Metadata = {
   title: "TradeFlow - Order Booking",
@@ -13,6 +15,8 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
+  const initialUpdateManifest = getCurrentAppUpdateManifest();
+
   return (
     <html lang="en" suppressHydrationWarning>
       <body>
@@ -21,6 +25,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             <DebugAppLoaded />
             <AppAuthShell>{children}</AppAuthShell>
             <Toasts />
+            <AppUpdateNotifier initialManifest={initialUpdateManifest} />
           </StoreProvider>
         </ThemeProvider>
       </body>

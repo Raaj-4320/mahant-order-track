@@ -2187,6 +2187,7 @@ try {
   const draftTotalPages = Math.max(1, Math.ceil(drafts.length / PAGE_SIZE));
   const pagedDrafts = useMemo(() => drafts.slice((draftPage - 1) * PAGE_SIZE, draftPage * PAGE_SIZE), [drafts, draftPage]);
   const formatPlainAmount = (value: number) => formatAmount(value);
+  const formatRateAmount = (value: number) => formatDisplayNumber(value, { maxFractionDigits: 1 });
   const formatPlainNumber = (value: number) => formatDisplayNumber(value, { maxFractionDigits: 6 });
   const formatFinalAmount = (value: number) => formatWholeMoney(value);
   const getPaymentAgentMeta = (order: Order) => getOrderPaymentAgentDisplay(order, paymentAgents);
@@ -2790,7 +2791,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                         { label: "CTNS", value: formatPlainAmount(ctns), editableField: "totalCtns" as const, icon: <Package2 size={21} />, tint: "bg-violet-100 text-violet-700", valueClass: "text-slate-950" },
                         { label: "PCS/CTN", value: formatPlainAmount(pcsPerCtn), editableField: "pcsPerCtn" as const, icon: <Boxes size={21} />, tint: "bg-orange-100 text-orange-700", valueClass: "text-slate-950" },
                         { label: "TOTAL PCS", value: formatPlainAmount(totalPcs), editableField: null, icon: <ShoppingBag size={21} />, tint: "bg-sky-100 text-sky-700", valueClass: "text-slate-950" },
-                        { label: "RATE", value: formatPlainAmount(rate), editableField: "rate" as const, icon: <BadgePercent size={21} />, tint: "bg-rose-100 text-rose-700", valueClass: "text-slate-950" },
+                        { label: "RATE", value: formatRateAmount(rate), editableField: "rate" as const, icon: <BadgePercent size={21} />, tint: "bg-rose-100 text-rose-700", valueClass: "text-slate-950" },
                         { label: "TOTAL AMOUNT", value: formatFinalAmount(amount), editableField: null, icon: <IndianRupee size={23} />, tint: "bg-emerald-100 text-emerald-700", valueClass: amount > 0 ? "text-emerald-700 text-[30px]" : "text-[var(--danger)] text-[30px]" },
                       ].map((stat, index) => (
                       <div key={`${row.key}-${stat.label}`} className={cn("flex min-w-0 items-center gap-4 rounded-2xl lg:rounded-none", index < 6 && "lg:pr-4", index < 5 && "lg:border-r lg:border-[#e8ebef]")}>
@@ -3032,13 +3033,13 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                           order,
                           field: "rate",
                           line: selectedLine,
-                          displayValue: formatPlainAmount(rate),
+                          displayValue: formatRateAmount(rate),
                           placeholder: "Set rate",
                           buttonClassName: "block w-full rounded-md px-1 py-1 text-center transition-colors hover:bg-bg-subtle",
                           inputClassName: "h-8 min-w-0 text-center text-[13px]",
                           inputMode: "decimal",
                           numeric: true,
-                        }) : formatPlainAmount(rate)}
+                        }) : formatRateAmount(rate)}
                       </div>
                       <div className="px-0.5 py-1.5 tabular-nums">
                         <div className="flex flex-col items-center justify-center gap-0.5 text-center">
