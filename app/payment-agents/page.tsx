@@ -24,6 +24,8 @@ import { measurePerfSync } from "@/lib/perfDebug";
 import { getPaymentAgentDirectFinance } from "@/services/paymentAgentFinance";
 
 const ALL_LEDGER_ROWS_KEY = "__all__";
+const clampPercent = (value: number) => Math.max(0, Math.min(100, value));
+const formatPercent = (value: number) => `${Number(clampPercent(value).toFixed(1)).toString()}%`;
 type LedgerViewRow = {
   id: string;
   date: string;
@@ -129,6 +131,8 @@ export default function PaymentAgentsPage() {
         duePending: finance.duePending,
         creditLeft: finance.creditLeft,
         paymentsMade: finance.totalAdvanced,
+        usagePercent: finance.totalAdvanced > 0 ? clampPercent((finance.totalUsed / finance.totalAdvanced) * 100) : 0,
+        availablePercent: finance.totalAdvanced > 0 ? clampPercent((finance.creditLeft / finance.totalAdvanced) * 100) : 0,
         searchText,
       };
     });
@@ -167,16 +171,16 @@ export default function PaymentAgentsPage() {
   }, [totalPages]);
 
   const exportVisible = () => {
-    const header = ["Agent", "WeChat ID", "Phone", "Total Orders", "Net Credit Used", "Due / Pending", "Credit Left", "Advance Payments"];
+    const header = ["Agent", "WeChat ID", "Phone", "Total Orders", "Available Credit", "Advance Payments", "Net Credit Used", "Due / Pending"];
     const csvRows = filteredAndSorted.map((row) => [
       row.agent.name,
       row.agent.wechatId || "Not Set",
       row.agent.phone || "Not Set",
       String(row.totalOrders),
-      formatAmount(row.totalUsed),
-      formatAmount(row.duePending),
       formatAmount(row.creditLeft),
       formatAmount(row.totalAdvanced),
+      formatAmount(row.totalUsed),
+      formatAmount(row.duePending),
     ]);
     const csv = [header, ...csvRows].map((line) => line.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -421,7 +425,7 @@ export default function PaymentAgentsPage() {
                   { value: "orders", label: "Sort: Total Orders High to Low" },
                   { value: "used", label: "Sort: Net Credit Used High to Low" },
                   { value: "due", label: "Sort: Due / Pending High to Low" },
-                  { value: "balance", label: "Sort: Credit Left High to Low" },
+                  { value: "balance", label: "Sort: Available Credit High to Low" },
                   { value: "payments", label: "Sort: Advance Payments High to Low" },
                 ]}
               />
@@ -450,25 +454,40 @@ export default function PaymentAgentsPage() {
                     <tr className="border-b border-border text-[11px] uppercase tracking-[0.01em] text-fg-muted">
                       <th className="px-3 py-2 text-left">Agent</th>
                       <th className="px-2 py-2 text-center">Orders</th>
+                      <th className="px-2 py-2 text-right">Available Credit</th>
+                      <th className="px-2 py-2 text-right">Advance Payments</th>
                       <th className="px-2 py-2 text-right">Net Credit Used</th>
                       <th className="px-2 py-2 text-right">Due / Pending</th>
-                      <th className="px-2 py-2 text-right">Credit Left</th>
-                      <th className="px-2 py-2 text-right">Advance Payments</th>
                       <th className="px-3 py-2 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {pagedRows.map((row) => (
+                    {pagedRows.map((row) => {
+                      const healthBadge = row.totalAdvanced <= 0
+                        ? { label: "No Advance", className: "border-border bg-bg-subtle/40 text-fg-subtle" }
+                        : row.creditLeft / row.totalAdvanced >= 0.5
+                          ? { label: "Healthy", className: "border-emerald-200 bg-emerald-50 text-emerald-700" }
+                          : row.creditLeft / row.totalAdvanced >= 0.2
+                            ? { label: "Medium", className: "border-amber-200 bg-amber-50 text-amber-700" }
+                            : { label: "Low Credit", className: "border-rose-200 bg-rose-50 text-rose-700" };
+                      return (
                       <tr key={row.agent.id} className="border-b border-border transition-colors last:border-b-0 hover:bg-bg-subtle/40">
                         <td className="px-3 py-2.5">
                           <div className="font-semibold text-fg">{row.agent.name}</div>
                           <div className="mt-0.5 text-[12px] text-fg-subtle">{row.agent.wechatId?.trim() || row.agent.phone?.trim() || "No WeChat ID"}</div>
+                          <div className="mt-1.5 flex items-center gap-2 text-[11px] text-fg-subtle">
+                            <span>{`Used ${formatPercent(row.usagePercent)} · Available ${formatPercent(row.availablePercent)}`}</span>
+                            <span className={`inline-flex rounded-full border px-2 py-0.5 font-medium ${healthBadge.className}`}>{healthBadge.label}</span>
+                          </div>
+                          <div className="mt-1 h-1.5 w-full max-w-[220px] overflow-hidden rounded-full bg-slate-100">
+                            <div className="h-full rounded-full bg-slate-300" style={{ width: `${row.usagePercent}%` }} />
+                          </div>
                         </td>
                         <td className="px-2 py-2.5 text-center font-semibold">{row.totalOrders}</td>
-                        <td className="px-2 py-2.5 text-right font-semibold tabular-nums text-slate-900">{formatAmount(row.totalUsed)}</td>
-                        <td className="px-2 py-2.5 text-right font-semibold tabular-nums text-rose-600">{formatAmount(row.duePending)}</td>
                         <td className="px-2 py-2.5 text-right font-semibold tabular-nums text-emerald-700">{formatAmount(row.creditLeft)}</td>
                         <td className="px-2 py-2.5 text-right font-semibold tabular-nums text-sky-700">{formatAmount(row.paymentsMade)}</td>
+                        <td className="px-2 py-2.5 text-right font-semibold tabular-nums text-slate-900">{formatAmount(row.totalUsed)}</td>
+                        <td className={`px-2 py-2.5 text-right font-semibold tabular-nums ${row.duePending > 0 ? "text-rose-600" : "text-fg-subtle"}`}>{formatAmount(row.duePending)}</td>
                         <td className="px-3 py-2.5">
                           <div className="flex justify-end gap-1.5">
                             <button
@@ -512,7 +531,8 @@ export default function PaymentAgentsPage() {
                           </div>
                         </td>
                       </tr>
-                    ))}
+                    );
+                    })}
                     {isPaymentAgentsLoading ? (
                       <tr>
                         <td colSpan={7} className="px-4 py-8 text-center text-fg-subtle">

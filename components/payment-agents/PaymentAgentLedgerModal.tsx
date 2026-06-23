@@ -216,7 +216,7 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
                         <th className="px-3 py-2 text-left">Customer</th>
                         <th className="px-3 py-2 text-left">Type</th>
                         <th className="px-3 py-2 text-right">Amount</th>
-                        <th className="px-3 py-2 text-right">Credit Left</th>
+                        <th className="px-3 py-2 text-right">Balance After Entry</th>
                         <th className="px-3 py-2 text-left">Notes</th>
                       </tr>
                     </thead>
