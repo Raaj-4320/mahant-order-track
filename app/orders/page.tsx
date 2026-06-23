@@ -846,6 +846,7 @@ export default function OrdersPage() {
   }, [query, filters, rowsPerPage, mode, selectedOrderCategory]);
 
   useEffect(() => {
+    if (isOrderSeriesLoading || isOrdersLoading) return;
     if (!orderCategoryTabs.length) {
       if (selectedOrderCategory) setSelectedOrderCategory("");
       if (typeof window !== "undefined") {
@@ -856,7 +857,7 @@ export default function OrdersPage() {
     if (!selectedOrderCategory || !orderCategoryTabs.includes(selectedOrderCategory)) {
       setSelectedOrderCategory(orderCategoryTabs[0]);
     }
-  }, [orderCategoryTabs, selectedOrderCategory]);
+  }, [isOrderSeriesLoading, isOrdersLoading, orderCategoryTabs, selectedOrderCategory]);
 
   useEffect(() => {
     if (!selectedOrderCategory || typeof window === "undefined") return;
