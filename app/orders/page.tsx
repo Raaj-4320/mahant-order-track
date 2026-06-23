@@ -853,11 +853,6 @@ export default function OrdersPage() {
       }
       return;
     }
-    const storedCategory = getStoredSelectedCategory();
-    if (storedCategory && orderCategoryTabs.includes(storedCategory) && selectedOrderCategory !== storedCategory) {
-      setSelectedOrderCategory(storedCategory);
-      return;
-    }
     if (!selectedOrderCategory || !orderCategoryTabs.includes(selectedOrderCategory)) {
       setSelectedOrderCategory(orderCategoryTabs[0]);
     }
