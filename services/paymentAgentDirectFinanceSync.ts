@@ -15,7 +15,14 @@ export type PaymentAgentDirectFinanceFields = {
   currentPayable: number;
 };
 
-const splitBelongsToAgent = (agent: PaymentAgent, split: PaymentAgentOrderSplit) => {
+export type PaymentAgentDirectOrderFact = {
+  order: Order;
+  split: PaymentAgentOrderSplit;
+  orderPortionAmount: number;
+  usedAmount: number;
+};
+
+export const splitBelongsToAgent = (agent: PaymentAgent, split: PaymentAgentOrderSplit) => {
   const agentId = normalizeText(agent.id);
   const agentName = normalizeText(agent.name);
   const splitAgentId = normalizeText(getPaymentAgentSplitAgentId(split));
@@ -23,7 +30,7 @@ const splitBelongsToAgent = (agent: PaymentAgent, split: PaymentAgentOrderSplit)
   return splitAgentId === agentId || (!splitAgentId && splitName === agentName);
 };
 
-const splitOrderPortionAmount = (order: Order, split: PaymentAgentOrderSplit) => {
+export const splitOrderPortionAmount = (order: Order, split: PaymentAgentOrderSplit) => {
   const fromSnapshot = clamp(split.settlementSnapshot?.orderPortionTotal);
   if (fromSnapshot > 0) return fromSnapshot;
   const fromAssigned = clamp(split.assignedAmount);
@@ -33,7 +40,7 @@ const splitOrderPortionAmount = (order: Order, split: PaymentAgentOrderSplit) =>
   return getOrderPaymentAgentSplits(order).length === 1 ? clamp(order.grandTotal ?? order.subtotal ?? 0) : 0;
 };
 
-const splitUsedAmount = (split: PaymentAgentOrderSplit) => {
+export const splitUsedAmount = (split: PaymentAgentOrderSplit) => {
   const fromCreditUsed = clamp(split.settlementSnapshot?.creditUsed);
   if (fromCreditUsed > 0) return fromCreditUsed;
   const paidNow = clamp(split.paidNow);
@@ -41,21 +48,33 @@ const splitUsedAmount = (split: PaymentAgentOrderSplit) => {
   return clamp(split.settlementSnapshot?.paidNow);
 };
 
+export function getPaymentAgentDirectOrderFacts(
+  agent: PaymentAgent,
+  orders: Order[],
+): PaymentAgentDirectOrderFact[] {
+  const savedOrders = orders.filter((order) => order.status === "saved");
+  return savedOrders.flatMap((order) =>
+    getOrderPaymentAgentSplits(order)
+      .filter((split) => splitBelongsToAgent(agent, split))
+      .map((split) => ({
+        order,
+        split,
+        orderPortionAmount: splitOrderPortionAmount(order, split),
+        usedAmount: splitUsedAmount(split),
+      })),
+  );
+}
+
 export function computePaymentAgentDirectFinance(
   agent: PaymentAgent,
   orders: Order[],
   ledger: PaymentAgentLedgerEntry[],
 ): PaymentAgentDirectFinanceFields {
-  const savedOrders = orders.filter((order) => order.status === "saved");
-  const agentOrders = savedOrders.flatMap((order) =>
-    getOrderPaymentAgentSplits(order)
-      .filter((split) => splitBelongsToAgent(agent, split))
-      .map((split) => ({
-        orderId: order.id,
-        orderPortionAmount: splitOrderPortionAmount(order, split),
-        usedAmount: splitUsedAmount(split),
-      })),
-  );
+  const agentOrders = getPaymentAgentDirectOrderFacts(agent, orders).map((entry) => ({
+    orderId: entry.order.id,
+    orderPortionAmount: entry.orderPortionAmount,
+    usedAmount: entry.usedAmount,
+  }));
 
   const uniqueOrderIds = new Set(agentOrders.map((entry) => entry.orderId));
   const totalOrderAmount = agentOrders.reduce((sum, entry) => sum + clamp(entry.orderPortionAmount), 0);

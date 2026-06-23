@@ -1,17 +1,17 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
-import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
 import { formatAmount } from "@/lib/data";
 import { formatIndianDate } from "@/lib/dateFormat";
 import type { Customer, Order, PaymentAgent, PaymentAgentLedgerEntry } from "@/lib/types";
 import { CalendarDays, Download, Plus, Trash2, Wallet, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { TablePagination } from "@/components/table/TablePagination";
-import { buildPaymentAgentAccountingSummary, buildPaymentAgentOrderRows, buildPaymentAgentPaymentRows, buildPaymentAgentTransactionRows } from "@/services/settlement/paymentAgentAccounting";
 import { getPaymentAgentDirectFinance } from "@/services/paymentAgentFinance";
+import { getLineCustomerDisplay } from "@/services/customers/customerResolution";
+import { getPaymentAgentDirectOrderFacts } from "@/services/paymentAgentDirectFinanceSync";
 
 type AgentSummary = {
   agent: PaymentAgent;
@@ -30,10 +30,49 @@ type Props = {
   onDeletePayment: (entryId: string) => Promise<void>;
 };
 
+type CreditUsageRow = {
+  id: string;
+  date: string;
+  orderNumber: string;
+  customer: string;
+  amount: number;
+  runningCreditLeft: number;
+};
+
+type PaymentRow = {
+  id: string;
+  date: string;
+  amount: number;
+  method: string;
+  notes: string;
+  canDelete: boolean;
+  createdSortAt?: string;
+};
+
+type OrderRow = {
+  id: string;
+  date: string;
+  orderNumber: string;
+  customer: string;
+  lineLabel: string;
+  amount: number;
+  showOrderNumber: boolean;
+};
+
 const formatDateLabel = (value?: string) => {
-  if (!value) return "—";
+  if (!value) return "-";
   return formatIndianDate(value);
 };
+
+const clampMoney = (value: number | undefined | null) => Math.max(0, Number.isFinite(Number(value)) ? Number(value) : 0);
+const sortableTime = (value?: string) => {
+  if (!value) return 0;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+const entryTime = (entry: PaymentAgentLedgerEntry) => entry.paymentDate || entry.updatedAt || entry.createdAt || "";
+const getOrderCustomerSummary = (order: Order, customers: Customer[]) =>
+  Array.from(new Set((order.lines || []).map((line) => getLineCustomerDisplay(line, customers)).filter(Boolean))).join(", ") || "-";
 
 export function PaymentAgentLedgerModal({ open, summary, entries, orders, customers, error, onClose, onExport, onAddPayment, onDeletePayment }: Props) {
   const PAGE_SIZE = 100;
@@ -51,17 +90,137 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
   const [deletingPaymentId, setDeletingPaymentId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const accounting = useMemo(
-    () => (summary ? buildPaymentAgentAccountingSummary(summary.agent, orders, entries, customers) : null),
-    [summary, orders, entries, customers],
-  );
   const directFinance = useMemo(
     () => (summary ? getPaymentAgentDirectFinance(summary.agent) : null),
     [summary],
   );
-  const transactionRows = useMemo(() => (accounting ? buildPaymentAgentTransactionRows(accounting) : []), [accounting]);
-  const paymentRows = useMemo(() => (accounting ? buildPaymentAgentPaymentRows(accounting) : []), [accounting]);
-  const orderRows = useMemo(() => (accounting ? buildPaymentAgentOrderRows(accounting) : []), [accounting]);
+  const directOrderFacts = useMemo(
+    () => (summary ? getPaymentAgentDirectOrderFacts(summary.agent, orders) : []),
+    [summary, orders],
+  );
+  const transactionRows = useMemo<CreditUsageRow[]>(() => {
+    if (!summary) return [];
+
+    const usageRows = directOrderFacts
+      .filter((fact) => fact.usedAmount > 0)
+      .map((fact) => ({
+        id: `${fact.order.id}:${fact.split.id}`,
+        date:
+          fact.split.settlementSnapshot?.updatedAt
+          || fact.split.settlementSnapshot?.createdAt
+          || fact.split.updatedAt
+          || fact.split.createdAt
+          || fact.order.updatedAt
+          || fact.order.createdAt
+          || fact.order.date
+          || "",
+        orderNumber: fact.order.number || fact.order.orderNumber || "-",
+        customer: getOrderCustomerSummary(fact.order, customers),
+        amount: clampMoney(fact.usedAmount),
+        runningCreditLeft: 0,
+      }));
+
+    const datedEvents = [
+      ...(clampMoney(summary.agent.openingCreditBalance) > 0
+        ? [{
+            id: `opening-${summary.agent.id}`,
+            date: summary.agent.createdAt || summary.agent.updatedAt || "",
+            delta: clampMoney(summary.agent.openingCreditBalance),
+            usageRowId: "",
+          }]
+        : []),
+      ...entries
+        .filter((entry) => entry.agentId === summary.agent.id && entry.type === "agent_payment" && entry.active !== false && entry.isReversed !== true)
+        .map((entry) => ({
+          id: `payment-${entry.id}`,
+          date: entryTime(entry),
+          delta: clampMoney(entry.amount),
+          usageRowId: "",
+        })),
+      ...usageRows.map((row) => ({
+        id: `usage-${row.id}`,
+        date: row.date,
+        delta: -row.amount,
+        usageRowId: row.id,
+      })),
+    ].sort((left, right) => sortableTime(left.date) - sortableTime(right.date) || left.id.localeCompare(right.id));
+
+    let runningCredit = 0;
+    const runningByUsageId = new Map<string, number>();
+    datedEvents.forEach((event) => {
+      runningCredit = Math.max(0, runningCredit + event.delta);
+      if (event.usageRowId) {
+        runningByUsageId.set(event.usageRowId, runningCredit);
+      }
+    });
+
+    return usageRows
+      .map((row) => ({
+        ...row,
+        runningCreditLeft: runningByUsageId.get(row.id) ?? directFinance?.creditLeft ?? 0,
+      }))
+      .sort((left, right) => sortableTime(right.date) - sortableTime(left.date) || right.id.localeCompare(left.id));
+  }, [customers, directFinance?.creditLeft, directOrderFacts, entries, summary]);
+  const paymentRows = useMemo<PaymentRow[]>(() => {
+    if (!summary) return [];
+    const rows: PaymentRow[] = [];
+    const openingAmount = clampMoney(summary.agent.openingCreditBalance);
+    if (openingAmount > 0) {
+      rows.push({
+        id: `opening-${summary.agent.id}`,
+        date: summary.agent.createdAt || summary.agent.updatedAt || "",
+        amount: openingAmount,
+        method: "Opening Balance",
+        notes: "Opening advance balance",
+        canDelete: false,
+        createdSortAt: summary.agent.createdAt || summary.agent.updatedAt || "",
+      });
+    }
+    entries
+      .filter((entry) => entry.agentId === summary.agent.id && entry.type === "agent_payment" && entry.active !== false && entry.isReversed !== true)
+      .forEach((entry) => {
+        rows.push({
+          id: entry.id,
+          date: entry.paymentDate || entry.createdAt || "",
+          amount: clampMoney(entry.amount),
+          method: entry.paymentMethod?.trim() || "Manual Payment",
+          notes: entry.note?.trim() || "-",
+          canDelete: true,
+          createdSortAt: entry.createdAt || entry.updatedAt || entry.paymentDate || "",
+        });
+      });
+    return rows.sort((left, right) => sortableTime(right.createdSortAt) - sortableTime(left.createdSortAt) || sortableTime(right.date) - sortableTime(left.date) || right.id.localeCompare(left.id));
+  }, [entries, summary]);
+  const orderRows = useMemo<OrderRow[]>(() => {
+    return directOrderFacts
+      .flatMap((fact) => {
+        const orderNumber = fact.order.number || fact.order.orderNumber || "-";
+        const orderDate = fact.order.date || fact.order.createdAt || fact.order.updatedAt || "";
+        const customer = getOrderCustomerSummary(fact.order, customers);
+        const lineCount = Math.max(1, fact.order.lines?.length || 0);
+        const perLineAmount = lineCount > 0 ? clampMoney(fact.orderPortionAmount) / lineCount : clampMoney(fact.orderPortionAmount);
+
+        return (fact.order.lines?.length ? fact.order.lines : [null]).map((line, index) => ({
+          id: `${fact.order.id}-${line?.id || index}`,
+          date: orderDate,
+          orderNumber,
+          customer,
+          lineLabel:
+            line
+              ? [line.marka, line.detail1 || line.details, line.detail2, line.detail3].filter(Boolean).join(" · ") || `Line ${index + 1}`
+              : `Line ${index + 1}`,
+          amount: perLineAmount,
+          showOrderNumber: index === 0,
+        }));
+      })
+      .sort((left, right) => {
+        const dateDiff = sortableTime(right.date) - sortableTime(left.date);
+        if (dateDiff !== 0) return dateDiff;
+        const orderDiff = right.orderNumber.localeCompare(left.orderNumber, undefined, { numeric: true, sensitivity: "base" });
+        if (orderDiff !== 0) return orderDiff;
+        return left.id.localeCompare(right.id);
+      });
+  }, [customers, directOrderFacts]);
   const pagedTransactionRows = useMemo(
     () => transactionRows.slice((transactionsPage - 1) * PAGE_SIZE, transactionsPage * PAGE_SIZE),
     [transactionRows, transactionsPage],
@@ -73,14 +232,6 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
   const pagedOrderRows = useMemo(
     () => orderRows.slice((ordersPage - 1) * PAGE_SIZE, ordersPage * PAGE_SIZE),
     [orderRows, ordersPage],
-  );
-  const groupedPagedOrderRows = useMemo(
-    () =>
-      pagedOrderRows.map((row, index) => ({
-        ...row,
-        showOrderNumber: index === 0 || pagedOrderRows[index - 1]?.orderNumber !== row.orderNumber,
-      })),
-    [pagedOrderRows],
   );
 
   useEffect(() => {
@@ -114,15 +265,15 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
     };
   }, [open]);
 
-  if (!open || !summary || !accounting || !directFinance) return null;
+  if (!open || !summary || !directFinance) return null;
 
   const deletePayment = async (entryId: string) => {
     setDeletingPaymentId(entryId);
     setActionError(null);
     try {
       await onDeletePayment(entryId);
-    } catch (error) {
-      setActionError(error instanceof Error ? error.message : "Could not delete payment.");
+    } catch (nextError) {
+      setActionError(nextError instanceof Error ? nextError.message : "Could not delete payment.");
     } finally {
       setDeletingPaymentId((current) => (current === entryId ? null : current));
     }
@@ -155,7 +306,7 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
   const kpis = [
     { label: "Advance Payments", value: formatAmount(directFinance.totalAdvanced), tone: "text-sky-700 bg-sky-50 border-sky-100", icon: <Wallet size={16} /> },
     { label: "Net Credit Used", value: formatAmount(directFinance.totalUsed), tone: "text-slate-700 bg-slate-50 border-slate-200", icon: <Download size={16} /> },
-    { label: "Credit Left", value: formatAmount(directFinance.creditLeft), tone: "text-emerald-700 bg-emerald-50 border-emerald-100", icon: <Wallet size={16} /> },
+    { label: "Available Credit", value: formatAmount(directFinance.creditLeft), tone: "text-emerald-700 bg-emerald-50 border-emerald-100", icon: <Wallet size={16} /> },
     { label: "Due / Pending", value: formatAmount(directFinance.duePending), tone: "text-rose-700 bg-rose-50 border-rose-100", icon: <CalendarDays size={16} /> },
     { label: "Total Orders", value: directFinance.totalOrders.toLocaleString(), tone: "text-sky-700 bg-sky-50 border-sky-100", icon: <CalendarDays size={16} /> },
   ];
@@ -204,20 +355,18 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
               </div>
               {transactionRows.length === 0 ? (
                 <div className="px-4 py-8 text-center text-[12px] text-fg-subtle">
-                  {error ? "Ledger transactions could not be loaded right now." : "No order transactions available for this payment agent."}
+                  {error ? "Ledger transactions could not be loaded right now." : "No order credit usage found for this payment agent."}
                 </div>
               ) : (
-                <div className="max-h-[44vh] overflow-x-auto overflow-y-auto">
-                  <table className="w-full min-w-[760px] text-[12px]">
+                <div className="max-h-[44vh] overflow-y-auto overflow-x-hidden">
+                  <table className="w-full text-[12px]">
                     <thead className="bg-white">
                       <tr className="border-b border-border text-[10px] uppercase tracking-[0.01em] text-fg-muted">
                         <th className="px-3 py-2 text-left">Date</th>
                         <th className="px-3 py-2 text-left">Order No</th>
                         <th className="px-3 py-2 text-left">Customer</th>
-                        <th className="px-3 py-2 text-left">Type</th>
-                        <th className="px-3 py-2 text-right">Amount</th>
-                        <th className="px-3 py-2 text-right">Balance After Entry</th>
-                        <th className="px-3 py-2 text-left">Notes</th>
+                        <th className="px-3 py-2 text-right">Credit Used</th>
+                        <th className="px-3 py-2 text-right">Available Credit After Entry</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -226,24 +375,22 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
                           <td className="px-3 py-2.5 leading-tight">{formatDateLabel(row.date)}</td>
                           <td className="px-3 py-2.5 font-semibold leading-tight">{row.orderNumber}</td>
                           <td className="px-3 py-2.5 leading-tight">{row.customer}</td>
-                          <td className="px-3 py-2.5 leading-tight">{row.type}</td>
-                          <td className={cn("px-3 py-2.5 text-right font-semibold leading-tight tabular-nums", row.type === "Pending Order Amount" ? "text-rose-600" : row.type === "Credit Returned" ? "text-emerald-700" : "text-slate-900")}>{formatAmount(row.amount)}</td>
+                          <td className="px-3 py-2.5 text-right font-semibold leading-tight tabular-nums text-slate-900">{formatAmount(row.amount)}</td>
                           <td className="px-3 py-2.5 text-right font-semibold leading-tight tabular-nums text-emerald-700">{formatAmount(row.runningCreditLeft)}</td>
-                          <td className="px-3 py-2.5 leading-tight text-fg-subtle">{row.notes}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
               )}
-              <TablePagination total={transactionRows.length} currentPage={transactionsPage} pageSize={PAGE_SIZE} onPageChange={setTransactionsPage} label="transactions" />
+              <TablePagination total={transactionRows.length} currentPage={transactionsPage} pageSize={PAGE_SIZE} onPageChange={setTransactionsPage} label="credit uses" />
             </section>
 
             <section className="min-w-0 min-h-[170px] self-start overflow-hidden rounded-2xl border border-border bg-white">
               <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
                 <div>
                   <div className="text-[16px] font-semibold leading-tight text-fg">Advance Payments</div>
-                  <div className="mt-0.5 text-[11px] leading-tight text-fg-subtle">Money paid or advanced to this payment agent.</div>
+                  <div className="mt-0.5 text-[11px] leading-tight text-fg-subtle">Opening balance and manual payments added for this payment agent.</div>
                 </div>
                 <Button size="sm" variant="secondary" onClick={() => setAddPaymentOpen(true)}>
                   <Plus size={14} />
@@ -285,7 +432,7 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
                             {deletingPaymentId === row.id ? "..." : "Delete"}
                           </button>
                         ) : (
-                          <span className="text-[12px] font-medium text-fg-subtle">—</span>
+                          <span className="text-[12px] font-medium text-fg-subtle">-</span>
                         )}
                       </div>
                     </div>
@@ -303,58 +450,32 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
             {orderRows.length === 0 ? (
               <div className="px-4 py-8 text-center text-[12px] text-fg-subtle">No orders linked to this payment agent.</div>
             ) : (
-              <div className="max-h-[34vh] overflow-x-auto overflow-y-auto">
-                <table className="w-full min-w-[1260px] text-[12px]">
+              <div className="max-h-[34vh] overflow-y-auto overflow-x-hidden">
+                <table className="w-full text-[12px]">
                   <thead className="bg-white">
                     <tr className="border-b border-border text-[10px] uppercase tracking-[0.01em] text-fg-muted">
-                      <th className="px-3 py-2 text-center">Photo</th>
+                      <th className="px-3 py-2 text-left">Date</th>
                       <th className="px-3 py-2 text-left">Order No</th>
                       <th className="px-3 py-2 text-left">Customer</th>
-                      <th className="px-3 py-2 text-left">Marka</th>
-                      <th className="px-3 py-2 text-left">Details</th>
-                      <th className="px-3 py-2 text-right">CTN</th>
-                      <th className="px-3 py-2 text-right">PCS/CTN</th>
-                      <th className="px-3 py-2 text-right">Total PCS</th>
-                      <th className="px-3 py-2 text-right">Rate</th>
+                      <th className="px-3 py-2 text-left">Line</th>
                       <th className="px-3 py-2 text-right">Amount</th>
-                      <th className="px-3 py-2 text-left">Loading Date</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {groupedPagedOrderRows.map((row) => (
+                    {pagedOrderRows.map((row) => (
                       <tr key={row.id} className="border-b border-border transition-colors last:border-b-0 hover:bg-bg-subtle/40">
-                        <td className="px-3 py-2.5">
-                          <div className="mx-auto grid h-12 w-12 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle">
-                            {row.productImage ? (
-                              <img
-                                src={getCloudinaryOptimizedUrl(row.productImage, { width: 96, height: 96, crop: "fit" })}
-                                alt="product"
-                                className="h-full w-full object-contain"
-                                loading="lazy"
-                                decoding="async"
-                              />
-                            ) : (
-                              <span className="text-[10px] text-fg-subtle">—</span>
-                            )}
-                          </div>
-                        </td>
+                        <td className="px-3 py-2.5">{formatDateLabel(row.date)}</td>
                         <td className="px-3 py-2.5 font-semibold">{row.showOrderNumber ? row.orderNumber : ""}</td>
                         <td className="px-3 py-2.5">{row.customer}</td>
-                        <td className="px-3 py-2.5">{row.marka}</td>
-                        <td className="px-3 py-2.5">{row.details}</td>
-                        <td className="px-3 py-2.5 text-right tabular-nums">{row.totalCtns.toLocaleString()}</td>
-                        <td className="px-3 py-2.5 text-right tabular-nums">{row.pcsPerCtn.toLocaleString()}</td>
-                        <td className="px-3 py-2.5 text-right tabular-nums">{row.totalPcs.toLocaleString()}</td>
-                        <td className="px-3 py-2.5 text-right tabular-nums">{formatAmount(row.rate)}</td>
+                        <td className="px-3 py-2.5 text-fg-subtle">{row.lineLabel}</td>
                         <td className="px-3 py-2.5 text-right font-semibold tabular-nums">{formatAmount(row.amount)}</td>
-                        <td className="px-3 py-2.5">{row.loadingDate ? formatDateLabel(row.loadingDate) : "—"}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             )}
-            <TablePagination total={orderRows.length} currentPage={ordersPage} pageSize={PAGE_SIZE} onPageChange={setOrdersPage} label="order rows" />
+            <TablePagination total={orderRows.length} currentPage={ordersPage} pageSize={PAGE_SIZE} onPageChange={setOrdersPage} label="orders" />
           </section>
           {error ? <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">{error}</div> : null}
           {actionError ? <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-700">{actionError}</div> : null}
