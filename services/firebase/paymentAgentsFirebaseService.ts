@@ -185,7 +185,7 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
     const db = requireDb();
     const now = new Date().toISOString();
     const id = agent.id || makeId();
-    const existing = await this.getPaymentAgentById(id);
+    const existing = await paymentAgentsFirebaseService.getPaymentAgentById(id);
     const openingCreditBalance = clamp(agent.openingCreditBalance ?? existing?.openingCreditBalance ?? 0);
     const next: PaymentAgent = {
       ...(existing ?? {}),
@@ -302,8 +302,8 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
     return paymentAgentLedgerFirebaseService.listPaymentAgentLedgerEntries(agentId);
   },
   async recalculatePaymentAgentsFromOrders(orders) {
-    const agents = await this.listPaymentAgents();
-    const ledger = await this.listPaymentAgentLedger();
+    const agents = await paymentAgentsFirebaseService.listPaymentAgents();
+    const ledger = await paymentAgentsFirebaseService.listPaymentAgentLedger();
     const savedOrders = await listSavedOrdersFromDb();
     const updatedAgents = await Promise.all(agents.map((agent) => writeRecomputedAgentFinance(agent.id, savedOrders, ledger)));
     return updatedAgents.sort((a, b) => a.name.localeCompare(b.name));
@@ -312,9 +312,9 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
     const db = requireDb();
     const now = new Date().toISOString();
     const [agents, savedOrders, ledger] = await Promise.all([
-      this.listPaymentAgents(),
+      paymentAgentsFirebaseService.listPaymentAgents(),
       listSavedOrdersFromDb(),
-      this.listPaymentAgentLedger(),
+      paymentAgentsFirebaseService.listPaymentAgentLedger(),
     ]);
 
     let openingBalancesBackfilled = 0;
@@ -430,7 +430,7 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
       }
     }
 
-    const refreshedLedger = await this.listPaymentAgentLedger();
+    const refreshedLedger = await paymentAgentsFirebaseService.listPaymentAgentLedger();
     const recalculatedAgents = await Promise.all(agents.map((agent) => writeRecomputedAgentFinance(agent.id, savedOrders, refreshedLedger)));
     return {
       paymentAgentsScanned: agents.length,
@@ -442,7 +442,7 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
     };
   },
   async deletePaymentAgent(id: string) {
-    const existing = await this.getPaymentAgentById(id);
+    const existing = await paymentAgentsFirebaseService.getPaymentAgentById(id);
     if (!existing) throw new Error("Payment agent not found.");
     await measurePerfAsync("firestore-write", "paymentAgents.deletePaymentAgent", { path: paymentAgentPath(BUSINESS_ID, id), agentId: id }, () => deleteDoc(doc(requireDb(), paymentAgentPath(BUSINESS_ID, id))));
   },
@@ -556,7 +556,7 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
         tx.set(doc(db, paymentAgentPath(BUSINESS_ID, agentId)), paymentAgentToFirestore(updatedAgent), { merge: true });
       }
     });
-    const [orders, ledger] = await Promise.all([listSavedOrdersFromDb(), this.listPaymentAgentLedger()]);
+    const [orders, ledger] = await Promise.all([listSavedOrdersFromDb(), paymentAgentsFirebaseService.listPaymentAgentLedger()]);
     await Promise.all(Array.from(affectedAgentIds).map((agentId) => writeRecomputedAgentFinance(agentId, orders, ledger)));
   },
   async reverseOrderSettlement(order) {
@@ -617,7 +617,7 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
         tx.set(doc(db, paymentAgentPath(BUSINESS_ID, agentId)), paymentAgentToFirestore(updated), { merge: true });
       }
     });
-    const [orders, ledger] = await Promise.all([listSavedOrdersFromDb(), this.listPaymentAgentLedger()]);
+    const [orders, ledger] = await Promise.all([listSavedOrdersFromDb(), paymentAgentsFirebaseService.listPaymentAgentLedger()]);
     await Promise.all(Array.from(affectedAgentIds).map((agentId) => writeRecomputedAgentFinance(agentId, orders, ledger)));
   },
 };

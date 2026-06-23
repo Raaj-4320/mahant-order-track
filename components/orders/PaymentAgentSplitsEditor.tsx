@@ -13,6 +13,7 @@ type Props = {
   paymentAgents: PaymentAgent[];
   totalAmount: number;
   onChange: (splits: PaymentAgentOrderSplit[]) => void;
+  onManualAmountEdit?: (splitId: string) => void;
   expanded?: boolean;
   onToggleExpand?: () => void;
 };
@@ -34,6 +35,7 @@ export function PaymentAgentSplitsEditor({
   paymentAgents,
   totalAmount,
   onChange,
+  onManualAmountEdit,
   expanded = false,
   onToggleExpand,
 }: Props) {
@@ -140,6 +142,7 @@ export function PaymentAgentSplitsEditor({
                     onChange={(event) => {
                       const nextValue = event.target.value;
                       if (nextValue === "" || /^\d*\.?\d*$/.test(nextValue)) {
+                        onManualAmountEdit?.(split.id);
                         updateSplit(split.id, (current) => ({
                           ...current,
                           assignedAmount: nextValue === "" ? 0 : Number(nextValue),

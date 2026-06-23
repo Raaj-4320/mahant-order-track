@@ -6,7 +6,7 @@ import { useStore } from "@/lib/store";
 import { OrderForm, newLine } from "@/components/orders/OrderForm";
 import { OrderFooter } from "@/components/orders/OrderFooter";
 import { formatAmount, formatDate } from "@/lib/data";
-import { formatDisplayNumber, formatWholeMoney } from "@/lib/numbers";
+import { formatDisplayNumber, formatRate, formatWholeMoney } from "@/lib/numbers";
 import { formatIndianDate } from "@/lib/dateFormat";
 import { Customer, Order, OrderNumberSeries, PaymentAgent, PaymentAgentOrderSplit, lineTotalPcs, lineTotalRmb, orderLinesTotal, orderShippingPrice, orderTotal } from "@/lib/types";
 import { syncOrderLinesToProducts, archiveProductsForOrder, archiveProductsForRemovedOrderLines } from "@/services/productCatalogSync";
@@ -57,11 +57,16 @@ const createEmptyPaymentAgentSplit = (): PaymentAgentOrderSplit => ({
   assignedAmount: 0,
   paidNow: 0,
 });
+const getDefaultMarkaFromOrderNumber = (orderNumber?: string | null) => {
+  const parsed = parseOrderNumber(orderNumber || "");
+  const prefix = parsed?.prefix?.trim() || "";
+  return prefix ? `${prefix} - ` : "";
+};
 const LAST_SELECTED_ORDER_SERIES_KEY = "orders:lastSelectedSeriesId";
 const LAST_SELECTED_ORDER_CATEGORY_KEY = "orders:lastSelectedCategory";
 const PAGE_SIZE = 100;
 const SAVE_AUDIT_ENABLED = process.env.NODE_ENV !== "production";
-const createEmptyDraft = (_orders: Order[], reservedOrderNumber = ""): Order => ({
+const createEmptyDraft = (_orders: Order[], reservedOrderNumber = "", defaultMarka = ""): Order => ({
   id: `ord-${Date.now()}`,
   orderNumber: reservedOrderNumber,
   number: reservedOrderNumber,
@@ -75,7 +80,7 @@ const createEmptyDraft = (_orders: Order[], reservedOrderNumber = ""): Order => 
   paidToPaymentAgentNow: 0,
   shippingPrice: 0,
   paymentAgentSplits: [createEmptyPaymentAgentSplit()],
-  lines: [{ ...newLine(), details: "", marka: "", totalCtns: 0, pcsPerCtn: 0, rmbPerPcs: 0, productPhotoUrl: "", photoUrl: "" }],
+  lines: [{ ...newLine(defaultMarka), details: "", marka: defaultMarka, totalCtns: 0, pcsPerCtn: 0, rmbPerPcs: 0, productPhotoUrl: "", photoUrl: "" }],
 });
 
 const meaningfulLine = (l: Order["lines"][number]) => !!(joinLineDetails(l) || l.marka?.trim() || l.productPhotoUrl || l.photoUrl || l.totalCtns || l.pcsPerCtn || l.rmbPerPcs);
@@ -209,6 +214,19 @@ const summarizeOrderForLog = (o: Order) => ({
 });
 
 const normalizePaymentAgentValue = (value?: string) => (value || "").trim().toLowerCase();
+const normalizeSearchText = (...parts: Array<string | number | undefined | null>) =>
+  parts
+    .flatMap((part) => String(part ?? "").split(/\s+/))
+    .map((part) => part.trim().toLowerCase())
+    .filter(Boolean)
+    .join(" ");
+const matchesSearchQuery = (searchableText: string, rawQuery: string) => {
+  const normalizedQuery = normalizeSearchText(rawQuery);
+  if (!normalizedQuery) return true;
+  if (searchableText.includes(normalizedQuery)) return true;
+  const words = normalizedQuery.split(" ").filter(Boolean);
+  return words.every((word) => searchableText.includes(word));
+};
 const normalizePaymentSplitAmount = (value: number | undefined) => {
   const next = Number(value);
   return Number.isFinite(next) ? next : 0;
@@ -241,6 +259,57 @@ const normalizeDraftPaymentSplit = (split: PaymentAgentOrderSplit): PaymentAgent
 });
 const isPaymentAgentSplitEmpty = (split: PaymentAgentOrderSplit) =>
   !(split.paymentAgentId || split.paymentBy || split.paymentAgentName || split.paymentAgentSnapshot?.name || normalizePaymentSplitAmount(split.assignedAmount) || normalizePaymentSplitAmount(split.paidNow) || (split.note || "").trim());
+const buildOrderLineSearchText = (
+  line: Order["lines"][number],
+  order: Order,
+  customers: Customer[],
+) =>
+  normalizeSearchText(
+    line.productSnapshot?.name,
+    line.marka,
+    line.detail1,
+    line.detail2,
+    line.detail3,
+    line.details,
+    joinLineDetails(line),
+    getResolvedLineCustomerName(line),
+    getLineCustomerDisplay(line, customers),
+    lineTotalPcs(line),
+    line.rmbPerPcs,
+    lineTotalRmb(line),
+    order.number || order.orderNumber || "",
+    order.wechatId || "",
+  );
+const buildOrderSearchText = (
+  order: Order,
+  paymentLabel: string,
+  customers: Customer[],
+) =>
+  normalizeSearchText(
+    order.number || order.orderNumber || "",
+    order.wechatId || "",
+    paymentLabel,
+    order.status,
+    order.paymentStatus,
+    order.date,
+    order.loadingDate || "",
+    orderTotal(order),
+    (order.lines || []).reduce((sum, line) => sum + (Number(line.totalCtns) || 0), 0),
+    ...(order.lines || []).flatMap((line) => [
+      line.productSnapshot?.name || "",
+      line.marka || "",
+      line.detail1 || "",
+      line.detail2 || "",
+      line.detail3 || "",
+      line.details || "",
+      joinLineDetails(line),
+      getResolvedLineCustomerName(line),
+      getLineCustomerDisplay(line, customers),
+      lineTotalPcs(line),
+      line.rmbPerPcs || 0,
+      lineTotalRmb(line),
+    ]),
+  );
 const getEditablePaymentAgentSplits = (order: Order): PaymentAgentOrderSplit[] => {
   const existing = getOrderPaymentAgentSplits(order).map(normalizeDraftPaymentSplit);
   return existing.length > 0 ? existing : [createEmptyPaymentAgentSplit()];
@@ -439,16 +508,16 @@ function OutsideCustomerEditor({
       {layout && typeof document !== "undefined"
         ? createPortal(
             <div
-              className="fixed z-[9999] max-h-52 overflow-auto rounded-xl border border-black/10 bg-white shadow-[0_12px_30px_rgba(15,23,42,0.12)]"
+              className="fixed z-[9999] max-h-52 overflow-auto rounded-xl border border-border bg-bg-card shadow-card"
               style={{ top: layout.top, left: layout.left, width: layout.width }}
             >
               {customerOptions.length === 0 ? (
-                <div className="px-3 py-2 text-[11.5px] text-slate-500">No matching customer</div>
+                <div className="px-3 py-2 text-[11.5px] text-fg-subtle">No matching customer</div>
               ) : customerOptions.map((option) => (
                 <button
                   key={option}
                   type="button"
-                  className="block w-full px-3 py-2 text-left text-[12.5px] text-slate-700 transition-colors hover:bg-slate-50"
+                  className="block w-full px-3 py-2 text-left text-[12.5px] text-fg transition-colors hover:bg-bg-subtle"
                   onMouseDown={(event) => {
                     event.preventDefault();
                     onSelect(option);
@@ -546,16 +615,16 @@ function OutsideSuggestionEditor({
       {layout && typeof document !== "undefined"
         ? createPortal(
             <div
-              className="fixed z-[9999] max-h-52 overflow-auto rounded-xl border border-black/10 bg-white shadow-[0_12px_30px_rgba(15,23,42,0.12)]"
+              className="fixed z-[9999] max-h-52 overflow-auto rounded-xl border border-border bg-bg-card shadow-card"
               style={{ top: layout.top, left: layout.left, width: layout.width }}
             >
               {options.length === 0 ? (
-                <div className="px-3 py-2 text-[11.5px] text-slate-500">{emptyLabel}</div>
+                <div className="px-3 py-2 text-[11.5px] text-fg-subtle">{emptyLabel}</div>
               ) : options.map((option) => (
                 <button
                   key={option}
                   type="button"
-                  className="block w-full px-3 py-2 text-left text-[12.5px] text-slate-700 transition-colors hover:bg-slate-50"
+                  className="block w-full px-3 py-2 text-left text-[12.5px] text-fg transition-colors hover:bg-bg-subtle"
                   onMouseDown={(event) => {
                     event.preventDefault();
                     onSelect(option);
@@ -636,6 +705,9 @@ export default function OrdersPage() {
   const [expandedOrderIds, setExpandedOrderIds] = useState<Record<string, boolean>>({});
   const [orderLineIndexes, setOrderLineIndexes] = useState<Record<string, number>>({});
   const wechatNormalizationStartedRef = useRef(false);
+  const manuallyEditedPaymentSplitIdsRef = useRef<Set<string>>(new Set());
+  const autoManagedPaymentSplitIdsRef = useRef<Set<string>>(new Set());
+  const previousDraftMarkaDefaultRef = useRef("");
 
   const pickerRef = useRef<HTMLDivElement | null>(null);
   const seriesPickerRef = useRef<HTMLDivElement | null>(null);
@@ -645,6 +717,27 @@ export default function OrdersPage() {
   const { data: orderSeries, isLoading: isOrderSeriesLoading, createSeries: createOrderSeries, deleteSeries: deleteOrderSeries, reload: reloadOrderSeries } = useOrderNumberSeries(activeOrders);
   const lineTotal = useMemo(() => orderLinesTotal(draft), [draft]);
   const total = useMemo(() => orderTotal(draft), [draft]);
+  const currentDraftDefaultMarka = useMemo(
+    () => getDefaultMarkaFromOrderNumber(draft.number || draft.orderNumber),
+    [draft.number, draft.orderNumber],
+  );
+
+  const markDraftPaymentSplitAsManual = (splitId: string) => {
+    manuallyEditedPaymentSplitIdsRef.current.add(splitId);
+    autoManagedPaymentSplitIdsRef.current.delete(splitId);
+  };
+
+  const getDraftSplitAvailableCredit = (split: PaymentAgentOrderSplit) => {
+    const matchedAgent =
+      paymentAgents.find((agent) => agent.id === split.paymentAgentId)
+      ?? paymentAgents.find((agent) => agent.id === split.paymentBy)
+      ?? paymentAgents.find((agent) => normalizePaymentAgentValue(agent.name) === normalizePaymentAgentValue(split.paymentAgentName || split.paymentAgentSnapshot?.name || split.paymentBy));
+
+    return matchedAgent ? getPaymentAgentDirectFinance(matchedAgent).creditLeft : 0;
+  };
+
+  const getSafeAutoAllocatedAmount = (split: PaymentAgentOrderSplit, orderAmount: number) =>
+    Math.max(0, Math.min(orderAmount, getDraftSplitAvailableCredit(split)));
   const orderCategoryTabs = useMemo(() => {
     const discovered = new Set<string>();
     orderSeries.forEach((series) => {
@@ -674,7 +767,7 @@ export default function OrdersPage() {
   const filteredOrders = useMemo(
     () =>
       measurePerfSync("calc", "orders.filteredOrders", { ordersCount: activeOrders.length, query, statusFilter: filters.status }, () => activeOrders.filter((order) => {
-        const q = query.toLowerCase().trim();
+        const q = normalizeSearchText(query);
         const parsedOrderNumber = parseOrderNumber(order.number || order.orderNumber);
         const payment = getOrderPaymentAgentDisplay(order, paymentAgents).value;
         const customerText = order.lines.map((line) => getResolvedLineCustomerName(line)).join(" ");
@@ -690,30 +783,15 @@ export default function OrdersPage() {
         if (filters.paymentAgent === "unset" && hasPaymentAgent) return false;
         if (filters.dateFrom && orderDate < filters.dateFrom) return false;
         if (filters.dateTo && orderDate > filters.dateTo) return false;
-        if (filters.orderNumber.trim() && !(order.number || order.orderNumber || "").toLowerCase().includes(filters.orderNumber.trim().toLowerCase())) return false;
-        if (filters.customer.trim() && !customerText.toLowerCase().includes(filters.customer.trim().toLowerCase())) return false;
-        if (filters.marka.trim() && !`${markaText} ${detailText}`.toLowerCase().includes(filters.marka.trim().toLowerCase())) return false;
+        if (filters.orderNumber.trim() && !matchesSearchQuery(normalizeSearchText(order.number || order.orderNumber || ""), filters.orderNumber)) return false;
+        if (filters.customer.trim() && !matchesSearchQuery(normalizeSearchText(customerText), filters.customer)) return false;
+        if (filters.marka.trim() && !matchesSearchQuery(normalizeSearchText(markaText, detailText), filters.marka)) return false;
         if (!q && effectiveOrderCategory && parsedOrderNumber?.category !== effectiveOrderCategory) return false;
         if (!q) return true;
-        const searchable = [
-          order.number || order.orderNumber || "",
-          order.wechatId || "",
-          payment,
-          order.status,
-          order.date,
-          order.loadingDate || "",
-          formatAmount(orderTotal(order)),
-          formatAmount((order.lines || []).reduce((sum, line) => sum + (Number(line.totalCtns) || 0), 0)),
-          customerText,
-          markaText,
-          detailText,
-          ...order.lines.flatMap((line) => [formatAmount(lineTotalRmb(line)), formatAmount(lineTotalPcs(line)), formatAmount(line.rmbPerPcs || 0)]),
-        ]
-          .join(" ")
-          .toLowerCase();
-        return searchable.includes(q);
+        const searchable = buildOrderSearchText(order, payment, customers);
+        return matchesSearchQuery(searchable, q);
       })),
-    [activeOrders, effectiveOrderCategory, filters, query, paymentAgents],
+    [activeOrders, customers, effectiveOrderCategory, filters, query, paymentAgents],
   );
   const sortedOrders = useMemo(() => {
     return measurePerfSync("calc", "orders.sortedOrders", { ordersCount: filteredOrders.length, category: effectiveOrderCategory || "all" }, () => {
@@ -841,6 +919,41 @@ export default function OrdersPage() {
       ...deriveOrderSeriesFields(suggestion),
     }));
   }, [mode, draft.number, draft.orderNumber, selectedOrderSeries]);
+
+  useEffect(() => {
+    if (mode !== "add") {
+      previousDraftMarkaDefaultRef.current = currentDraftDefaultMarka;
+      return;
+    }
+
+    const previousDefaultMarka = previousDraftMarkaDefaultRef.current;
+    const nextDefaultMarka = currentDraftDefaultMarka;
+
+    if (previousDefaultMarka === nextDefaultMarka) return;
+
+    setDraft((current) => {
+      let changed = false;
+      const nextLines = current.lines.map((line) => {
+        const currentMarka = line.marka || "";
+        const shouldReplace =
+          !currentMarka.trim() ||
+          currentMarka === previousDefaultMarka;
+
+        if (!shouldReplace) return line;
+        if (currentMarka === nextDefaultMarka) return line;
+
+        changed = true;
+        return {
+          ...line,
+          marka: nextDefaultMarka,
+        };
+      });
+
+      return changed ? { ...current, lines: nextLines } : current;
+    });
+
+    previousDraftMarkaDefaultRef.current = nextDefaultMarka;
+  }, [currentDraftDefaultMarka, mode]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -1122,19 +1235,68 @@ export default function OrdersPage() {
         selectedSplits.length === 1
           ? normalizedSplits.map((split) => {
               if (split.id !== selectedSplits[0]?.id) return split;
+              if (manuallyEditedPaymentSplitIdsRef.current.has(split.id)) return split;
               const currentPaidNow = Number(split.paidNow) || 0;
               const currentAssignedAmount = Number(split.assignedAmount) || 0;
               if (currentPaidNow > 0 || currentAssignedAmount > 0) return split;
+              autoManagedPaymentSplitIdsRef.current.add(split.id);
+              const safeAutoAmount = getSafeAutoAllocatedAmount(split, nextOrderTotal);
               return {
                 ...split,
-                assignedAmount: nextOrderTotal,
-                paidNow: nextOrderTotal,
+                assignedAmount: safeAutoAmount,
+                paidNow: safeAutoAmount,
               };
             })
           : normalizedSplits;
       return applyLegacyPaymentAgentFromSplits(current, hydratedSplits);
     });
   };
+
+  useEffect(() => {
+    const editableSplits = getEditablePaymentAgentSplits(draft);
+    const selectedSplits = editableSplits.filter((split) =>
+      Boolean(
+        split.paymentAgentId?.trim() ||
+          split.paymentBy?.trim() ||
+          split.paymentAgentName?.trim() ||
+          split.paymentAgentSnapshot?.name?.trim(),
+      ),
+    );
+
+    if (selectedSplits.length !== 1) return;
+
+    const targetSplit = selectedSplits[0];
+    if (!targetSplit) return;
+    if (manuallyEditedPaymentSplitIdsRef.current.has(targetSplit.id)) return;
+
+    const currentPaidNow = Number(targetSplit.paidNow) || 0;
+    const currentAssignedAmount = Number(targetSplit.assignedAmount) || 0;
+    const shouldAutoManage =
+      autoManagedPaymentSplitIdsRef.current.has(targetSplit.id) ||
+      (currentPaidNow === 0 && currentAssignedAmount === 0);
+
+    if (!shouldAutoManage) return;
+
+    autoManagedPaymentSplitIdsRef.current.add(targetSplit.id);
+    const safeAutoAmount = getSafeAutoAllocatedAmount(targetSplit, total);
+
+    if (currentPaidNow === safeAutoAmount && currentAssignedAmount === safeAutoAmount) return;
+
+    setDraft((current) =>
+      applyLegacyPaymentAgentFromSplits(
+        current,
+        getEditablePaymentAgentSplits(current).map((split) =>
+          split.id === targetSplit.id
+            ? {
+                ...split,
+                assignedAmount: safeAutoAmount,
+                paidNow: safeAutoAmount,
+              }
+            : split,
+        ),
+      ),
+    );
+  }, [draft, total, paymentAgents]);
 
   const handleCreateSeries = async () => {
     const normalizedLabel = normalizeSeriesLabel(seriesForm.label);
@@ -1823,7 +1985,7 @@ try {
       setEditingOrderId(null);
       setRemovedLineIds([]);
       setOriginalLineIds(new Set());
-      setDraft(createEmptyDraft(orders));
+      setDraft(createEmptyDraft(orders, "", ""));
       setMode("history");
       setHasAttemptedFinalSave(false);
       setShowDraftIncompleteConfirm(false);
@@ -2127,6 +2289,9 @@ try {
   };
 
   const resetOrderComposer = (notify = true) => {
+    manuallyEditedPaymentSplitIdsRef.current.clear();
+    autoManagedPaymentSplitIdsRef.current.clear();
+    previousDraftMarkaDefaultRef.current = "";
     setEditingOrderId(null);
     setComposerBaseline(null);
     setRemovedLineIds([]);
@@ -2159,6 +2324,9 @@ try {
 
   const startEdit = async (o: Order) => {
     if (o.status === "draft" && !ensureFirebaseOrderWriteReady()) return;
+    manuallyEditedPaymentSplitIdsRef.current.clear();
+    autoManagedPaymentSplitIdsRef.current.clear();
+    previousDraftMarkaDefaultRef.current = "";
     setEditingOrderId(o.id); setRemovedLineIds([]); setOriginalLineIds(new Set(o.lines.map(l=>l.id)));
     setExpandedOrderIds({});
     const copy = JSON.parse(JSON.stringify(o));
@@ -2185,6 +2353,9 @@ try {
   const startAdd = async () => {
     logDataFlow("Orders", JSON.stringify({ event: "add_order_started" }, null, 2));
     if (!ensureFirebaseOrderWriteReady()) return;
+    manuallyEditedPaymentSplitIdsRef.current.clear();
+    autoManagedPaymentSplitIdsRef.current.clear();
+    previousDraftMarkaDefaultRef.current = "";
     setEditingOrderId(null);
     setRemovedLineIds([]);
     setOriginalLineIds(new Set());
@@ -2194,7 +2365,8 @@ try {
       setSelectedSeriesId(preferredSeries.id);
     }
     const reserved = preferredSeries ? getSeriesSuggestion(preferredSeries) : "";
-    const nextDraft = createEmptyDraft(orders, normalizeEditableOrderNumber(reserved));
+    const reservedOrderNumber = normalizeEditableOrderNumber(reserved);
+    const nextDraft = createEmptyDraft(orders, reservedOrderNumber, getDefaultMarkaFromOrderNumber(reservedOrderNumber));
     const preparedDraft = { ...nextDraft, ...deriveOrderSeriesFields(nextDraft.number || nextDraft.orderNumber) };
     setDraft(preparedDraft);
     setComposerBaseline(normalizeComposerOrderForComparison(preparedDraft));
@@ -2207,10 +2379,14 @@ try {
     logDataFlow("Orders", JSON.stringify({ event: "add_order_fresh_form_opened", orderId: nextDraft.id, orderNumber: nextDraft.number || nextDraft.orderNumber }, null, 2));
   };
   const drafts = useMemo(() => (isFirebaseOrdersMode ? firebaseDraftOrders : orders.filter((o) => o.status === "draft")), [isFirebaseOrdersMode, orders, firebaseDraftOrders]);
+  const orderHeaderTabs = useMemo(
+    () => [...orderCategoryTabs, `Draft (${drafts.length})`],
+    [drafts.length, orderCategoryTabs],
+  );
   const draftTotalPages = Math.max(1, Math.ceil(drafts.length / PAGE_SIZE));
   const pagedDrafts = useMemo(() => drafts.slice((draftPage - 1) * PAGE_SIZE, draftPage * PAGE_SIZE), [drafts, draftPage]);
-  const formatPlainAmount = (value: number) => formatAmount(value);
-  const formatRateAmount = (value: number) => formatDisplayNumber(value, { maxFractionDigits: 1 });
+  const formatPlainAmount = (value: number) => formatRate(value);
+  const formatRateAmount = (value: number) => formatRate(value);
   const formatPlainNumber = (value: number) => formatDisplayNumber(value, { maxFractionDigits: 6 });
   const formatFinalAmount = (value: number) => formatWholeMoney(value);
   const getPaymentAgentMeta = (order: Order) => getOrderPaymentAgentDisplay(order, paymentAgents);
@@ -2253,24 +2429,15 @@ try {
   const getCardCustomerValue = (line: Order["lines"][number] | null) => {
     return line ? getLineCustomerDisplay(line, customers) : "-";
   };
-  const isLineMatchedByQuery = (line: Order["lines"][number]) => {
-    const normalizedQuery = query.trim().toLowerCase();
+  const isLineMatchedByQuery = (order: Order, line: Order["lines"][number]) => {
+    const normalizedQuery = normalizeSearchText(query);
     if (!normalizedQuery) return false;
-    const searchable = [
-      line.marka || "",
-      joinLineDetails(line),
-      getResolvedLineCustomerName(line),
-      formatAmount(getLineAmount(line)),
-      formatAmount(getLineTotalPcs(line)),
-      formatAmount(getLineRate(line)),
-    ]
-      .join(" ")
-      .toLowerCase();
-    return searchable.includes(normalizedQuery);
+    const searchable = buildOrderLineSearchText(line, order, customers);
+    return matchesSearchQuery(searchable, normalizedQuery);
   };
   const isOrderExpanded = (row: FlatHistoryRow) =>
     Boolean(expandedOrderIds[row.order.id]) ||
-    (query.trim().length > 0 && row.extraLines.some((line) => isLineMatchedByQuery(line)));
+    (query.trim().length > 0 && row.extraLines.some((line) => isLineMatchedByQuery(row.order, line)));
   const updateOutsideDecimalValue = (orderId: string, nextValue: string) => {
     if (nextValue === "" || /^\d*\.?\d*$/.test(nextValue)) {
       setOutsideEditValue(orderId, { value: nextValue });
@@ -2557,17 +2724,17 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
     <div className="flex h-screen min-h-0 flex-col">
       <div className="flex flex-wrap items-center gap-2 px-5 py-3 border-b border-border bg-bg">
         <div className="min-w-[280px] flex-1 max-w-xl"><Input value={query} onChange={(e)=>setQuery(e.target.value)} placeholder="Search order no., payment agent, WeChat, marka, details, customer, amounts, status, dates..." leadingIcon={<Search size={15} />} /></div>
-        <div className="relative" ref={pickerRef}>
+        <div className="relative z-30" ref={pickerRef}>
           <Button size="sm" onClick={() => setPickerOpen((v) => !v)}><List size={14} /><span className="text-fg-muted">Order</span><span className="font-semibold">{(editingOrder?.number || draft.number || history[0]?.order.number || history[0]?.order.orderNumber || "-")}</span><ChevronDown size={13} /></Button>
-          {pickerOpen && <div className="absolute left-0 top-full z-20 mt-2 w-72 rounded-xl border border-border bg-bg-card p-1.5 shadow-card max-h-[320px] overflow-y-auto">{pickerOrders.slice(0,30).map((o) => <button key={o.id} onClick={() => { setPickerOpen(false); startEdit(o); }} className="block w-full rounded-md px-2.5 py-2 text-left text-[12.5px] hover:bg-bg-subtle transition-colors"><div className="flex items-center justify-between"><span className="text-[14px] font-semibold">{o.number || o.orderNumber || "Draft"}</span><span className="text-[11px] text-fg-subtle">{formatDate(o.date)}</span></div><div className="mt-0.5 text-[11.5px] text-fg-muted">{o.lines.length} lines | {formatFinalAmount(orderTotal(o))}</div></button>)}</div>}
+          {pickerOpen && <div className="absolute left-0 top-full z-40 mt-2 w-72 rounded-xl border border-border bg-bg-card p-1.5 shadow-card max-h-[320px] overflow-y-auto">{pickerOrders.slice(0,30).map((o) => <button key={o.id} onClick={() => { setPickerOpen(false); startEdit(o); }} className="block w-full rounded-md px-2.5 py-2 text-left text-[12.5px] hover:bg-bg-subtle transition-colors"><div className="flex items-center justify-between"><span className="text-[14px] font-semibold">{o.number || o.orderNumber || "Draft"}</span><span className="text-[11px] text-fg-subtle">{formatDate(o.date)}</span></div><div className="mt-0.5 text-[11.5px] text-fg-muted">{o.lines.length} lines | {formatFinalAmount(orderTotal(o))}</div></button>)}</div>}
         </div>
-        <div className="relative">
+        <div className="relative z-30">
           <Button size="sm" variant="secondary" onClick={() => { setFilterOpen((prev) => !prev); }}><Filter size={14} />Filter</Button>
-          {filterOpen ? <div className="absolute left-0 top-full z-20 mt-2 w-[320px] rounded-xl border border-border bg-bg-card p-3 shadow-card space-y-3">
+          {filterOpen ? <div className="absolute left-0 top-full z-40 mt-2 w-[320px] rounded-xl border border-border bg-bg-card p-3 shadow-card space-y-3">
             <div className="grid grid-cols-2 gap-2">
-              <label className="text-[11px] text-fg-subtle">Status<select className="input mt-1 h-8 w-full text-[12px]" value={filters.status} onChange={(e) => setFilters((prev) => ({ ...prev, status: e.target.value as OrdersFilterState["status"] }))}><option value="all">All</option><option value="draft">Draft</option><option value="saved">Saved</option><option value="packed">Loaded</option><option value="received">Received</option><option value="delayed">Delayed</option><option value="cancelled">Cancelled</option></select></label>
-              <label className="text-[11px] text-fg-subtle">Loading Date<select className="input mt-1 h-8 w-full text-[12px]" value={filters.loadingDate} onChange={(e) => setFilters((prev) => ({ ...prev, loadingDate: e.target.value as OrdersFilterState["loadingDate"] }))}><option value="all">All</option><option value="set">Set</option><option value="unset">Not set</option></select></label>
-              <label className="text-[11px] text-fg-subtle">Payment Agent<select className="input mt-1 h-8 w-full text-[12px]" value={filters.paymentAgent} onChange={(e) => setFilters((prev) => ({ ...prev, paymentAgent: e.target.value as OrdersFilterState["paymentAgent"] }))}><option value="all">All</option><option value="set">Set</option><option value="unset">Not set</option></select></label>
+              <label className="text-[11px] text-fg-subtle">Status<select className="field-input-sm mt-1 h-8 w-full text-[12px]" value={filters.status} onChange={(e) => setFilters((prev) => ({ ...prev, status: e.target.value as OrdersFilterState["status"] }))}><option value="all">All</option><option value="draft">Draft</option><option value="saved">Saved</option><option value="packed">Loaded</option><option value="received">Received</option><option value="delayed">Delayed</option><option value="cancelled">Cancelled</option></select></label>
+              <label className="text-[11px] text-fg-subtle">Loading Date<select className="field-input-sm mt-1 h-8 w-full text-[12px]" value={filters.loadingDate} onChange={(e) => setFilters((prev) => ({ ...prev, loadingDate: e.target.value as OrdersFilterState["loadingDate"] }))}><option value="all">All</option><option value="set">Set</option><option value="unset">Not set</option></select></label>
+              <label className="text-[11px] text-fg-subtle">Payment Agent<select className="field-input-sm mt-1 h-8 w-full text-[12px]" value={filters.paymentAgent} onChange={(e) => setFilters((prev) => ({ ...prev, paymentAgent: e.target.value as OrdersFilterState["paymentAgent"] }))}><option value="all">All</option><option value="set">Set</option><option value="unset">Not set</option></select></label>
               <label className="text-[11px] text-fg-subtle">Order Number<Input className="mt-1 h-8 text-[12px]" value={filters.orderNumber} onChange={(e) => setFilters((prev) => ({ ...prev, orderNumber: e.target.value }))} placeholder="e.g. PP-302" /></label>
               <label className="text-[11px] text-fg-subtle">Date From<Input className="mt-1 h-8 text-[12px]" type="date" value={filters.dateFrom} onChange={(e) => setFilters((prev) => ({ ...prev, dateFrom: e.target.value }))} /></label>
               <label className="text-[11px] text-fg-subtle">Date To<Input className="mt-1 h-8 text-[12px]" type="date" value={filters.dateTo} onChange={(e) => setFilters((prev) => ({ ...prev, dateTo: e.target.value }))} /></label>
@@ -2581,12 +2748,11 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
         </div>
         <div className="flex items-center rounded-lg border border-border bg-bg-card p-0.5">{([{ v: "list", I: List }, { v: "grid", I: LayoutGrid }, { v: "calendar", I: CalendarDays }] as const).map(({ v, I }) => <button key={v} onClick={() => setView(v)} className={cn("grid h-6 w-7 place-items-center rounded-md text-fg-muted transition-colors", view===v && "bg-brand text-brand-fg")}><I size={13} /></button>)}</div>
         <Button size="sm" variant="primary" onClick={startAdd}>Add Order</Button>
-        <Button size="sm" variant={mode === "drafts" ? "primary" : "secondary"} onClick={() => setMode((prev) => prev === "drafts" ? "history" : "drafts")}>Draft ({drafts.length})</Button>
         <button aria-label="Toggle theme" onClick={toggle} className="grid h-8 w-8 place-items-center rounded-full border border-border bg-bg-card hover:border-fg-subtle transition-colors">{theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}</button>
       </div>
       {ordersDataSource === "mock" ? <div className="border-b border-amber-300 bg-amber-50 px-5 py-2 text-[12px] font-medium text-amber-900">{ordersSourceSelection.hasFirebaseConfig ? "Mock mode is enabled; order and customer data is local and will not persist to Firebase." : "Firebase is not configured; app is running in mock mode and data will not persist."}</div> : null}
       <main className="min-h-0 flex-1 overflow-y-auto p-4 space-y-4">
-        {mode === "history" && orderCategoryTabs.length ? <section className="card p-2.5"><div className="flex flex-wrap items-center gap-2">{orderCategoryTabs.map((category) => { const isActive = effectiveOrderCategory === category; const canDeleteCategory = emptySeriesCategories.has(category); return <div key={category} className={cn("flex items-center gap-1 rounded-full border pr-2 transition-colors", isActive ? "border-brand bg-brand text-brand-fg" : "border-border bg-bg-card text-fg hover:bg-bg-subtle")}><button type="button" onClick={() => setSelectedOrderCategory(category)} className="rounded-full px-3 py-1.5 text-[12px] font-medium">{category}</button>{canDeleteCategory ? <button type="button" onClick={() => requestDeleteSeriesCategory(category)} className={cn("grid h-6 w-6 place-items-center rounded-full transition-colors", isActive ? "hover:bg-white/15" : "hover:bg-bg-subtle")} aria-label={`Delete ${category} category`} title={`Delete ${category} category`}><Trash2 size={12} /></button> : null}</div>; })}</div></section> : null}
+        {orderHeaderTabs.length ? <section className="card p-2.5"><div className="flex flex-wrap items-center gap-2">{orderHeaderTabs.map((tabLabel) => { const isDraftTab = tabLabel.startsWith("Draft ("); const category = isDraftTab ? "" : tabLabel; const isActive = isDraftTab ? mode === "drafts" : mode === "history" && effectiveOrderCategory === category; const canDeleteCategory = !isDraftTab && emptySeriesCategories.has(category); return <div key={tabLabel} className={cn("flex items-center gap-1 rounded-full border pr-2 transition-colors", isActive ? "border-brand bg-brand text-brand-fg" : "border-border bg-bg-card text-fg hover:bg-bg-subtle")}><button type="button" onClick={() => { if (isDraftTab) { setMode("drafts"); return; } setMode("history"); setSelectedOrderCategory(category); }} className="rounded-full px-3 py-1.5 text-[12px] font-medium">{tabLabel}</button>{canDeleteCategory ? <button type="button" onClick={() => requestDeleteSeriesCategory(category)} className={cn("grid h-6 w-6 place-items-center rounded-full transition-colors", isActive ? "hover:bg-white/15" : "hover:bg-bg-subtle")} aria-label={`Delete ${category} category`} title={`Delete ${category} category`}><Trash2 size={12} /></button> : null}</div>; })}</div></section> : null}
         {mode === "drafts" && <section className="card overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-border"><h3 className="font-semibold">Draft Orders</h3><div className="text-[12px] text-fg-subtle">{drafts.length} draft{drafts.length === 1 ? "" : "s"}</div></div>
           <div className="overflow-x-auto">
@@ -2639,11 +2805,15 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
               const customerValue = getCardCustomerValue(line);
               const customerMissing = isMissingCustomerDisplay(customerValue);
               const expanded = isOrderExpanded(row);
+              const hasLoadingDateHighlight = Boolean(order.loadingDate?.trim());
               return <div
                 key={row.key}
-                className="w-full border-b border-border bg-[var(--bg-card)] last:border-b-0"
+                className={cn(
+                  "w-full border-b border-border bg-[var(--bg-card)] last:border-b-0",
+                  hasLoadingDateHighlight && "bg-emerald-500/8 dark:bg-emerald-500/10",
+                )}
               >
-                <div className="flex flex-col gap-5 border-b border-[#e8ebef] px-6 py-5 xl:flex-row xl:items-center xl:justify-between">
+                <div className="flex flex-col gap-5 border-b border-border px-6 py-5 xl:flex-row xl:items-center xl:justify-between">
                   <div className="flex min-w-0 flex-1 flex-col gap-5 lg:flex-row lg:flex-wrap lg:items-stretch">
                     <div className="min-w-[180px]">
                       {renderOutsideEditableField({
@@ -2651,19 +2821,19 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                         field: "orderNumber",
                         displayValue: order.number || order.orderNumber || "Draft",
                         placeholder: "Set order number",
-                        buttonClassName: "block w-full rounded-xl px-2 py-1 text-left text-[26px] font-extrabold leading-none text-slate-950 transition-colors hover:bg-white/70",
+                        buttonClassName: "block w-full rounded-xl px-2 py-1 text-left text-[26px] font-extrabold leading-none text-fg transition-colors hover:bg-bg-subtle/70",
                         inputClassName: "h-11 min-w-0 text-[18px] font-bold",
                       })}
-                      <div className="mt-3 flex items-center gap-2 text-[15px] font-medium text-slate-500">
+                      <div className="mt-3 flex items-center gap-2 text-[15px] font-medium text-fg-subtle">
                         <CalendarDays size={16} />
                         <span>{fmtOrderDate(order)}</span>
                       </div>
                     </div>
-                    <div className="hidden w-px self-stretch bg-[#e8ebef] lg:block" />
+                    <div className="hidden w-px self-stretch bg-border lg:block" />
                     <div className="min-w-[220px] text-center">
-                      <div className="text-[13px] font-semibold uppercase tracking-[0.16em] text-slate-400">Customer</div>
-                      <div className="mt-3 flex items-center gap-3 text-[21px] font-bold leading-tight text-slate-950">
-                        <span aria-hidden="true" className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white/92 text-slate-600 shadow-sm ring-1 ring-[#e6e8ec]" />
+                      <div className="text-[13px] font-semibold uppercase tracking-[0.16em] text-fg-subtle">Customer</div>
+                      <div className="mt-3 flex items-center gap-3 text-[21px] font-bold leading-tight text-fg">
+                        <span aria-hidden="true" className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-border bg-bg-subtle text-fg-subtle shadow-sm" />
                         <div className="min-w-0 flex-1">
                           {line ? renderOutsideEditableField({
                             order,
@@ -2672,17 +2842,17 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                             displayValue: customerValue || "-",
                             placeholder: "Set customer",
                             title: customerValue,
-                            buttonClassName: cn("block w-full rounded-xl px-2 py-1 text-left text-[21px] font-bold leading-tight transition-colors hover:bg-white/70", customerMissing && "text-[var(--danger)]"),
+                            buttonClassName: cn("block w-full rounded-xl px-2 py-1 text-left text-[21px] font-bold leading-tight transition-colors hover:bg-bg-subtle/70", customerMissing && "text-[var(--danger)]"),
                             inputClassName: "h-10 min-w-0 text-[15px] font-semibold",
                             listOptions: customerSuggestions,
                           }) : <span className="min-w-0 break-words">-</span>}
                         </div>
                       </div>
                     </div>
-                    <div className="hidden w-px self-stretch bg-[#e8ebef] lg:block" />
+                    <div className="hidden w-px self-stretch bg-border lg:block" />
                     <div className="min-w-[220px] text-center">
-                      <div className="text-[13px] font-semibold uppercase tracking-[0.16em] text-slate-400">WeChat ID</div>
-                      <div className="mt-3 flex items-center gap-3 text-[21px] font-bold leading-tight text-slate-950">
+                      <div className="text-[13px] font-semibold uppercase tracking-[0.16em] text-fg-subtle">WeChat ID</div>
+                      <div className="mt-3 flex items-center gap-3 text-[21px] font-bold leading-tight text-fg">
                         <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-emerald-100 text-emerald-700 shadow-sm ring-1 ring-emerald-200">
                           <MessageCircleMore size={19} />
                         </span>
@@ -2692,17 +2862,17 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                             field: "wechat",
                             displayValue: getDisplayWechatId(order),
                             placeholder: "Set WeChat ID",
-                            buttonClassName: cn("block w-full rounded-xl px-2 py-1 text-left text-[21px] font-bold leading-tight transition-colors hover:bg-white/70", !order.wechatId?.trim() && "text-[var(--danger)]"),
+                            buttonClassName: cn("block w-full rounded-xl px-2 py-1 text-left text-[21px] font-bold leading-tight transition-colors hover:bg-bg-subtle/70", !order.wechatId?.trim() && "text-[var(--danger)]"),
                             inputClassName: "h-10 min-w-0 text-[15px] font-semibold",
                             listOptions: wechatSuggestions,
                           })}
                         </div>
                       </div>
                     </div>
-                    <div className="hidden w-px self-stretch bg-[#e8ebef] lg:block" />
+                    <div className="hidden w-px self-stretch bg-border lg:block" />
                     <div className="min-w-[240px] text-center">
-                      <div className="text-[13px] font-semibold uppercase tracking-[0.16em] text-slate-400">Paid By</div>
-                      <div className="mt-3 flex items-center gap-3 text-[21px] font-bold leading-tight text-slate-950">
+                      <div className="text-[13px] font-semibold uppercase tracking-[0.16em] text-fg-subtle">Paid By</div>
+                      <div className="mt-3 flex items-center gap-3 text-[21px] font-bold leading-tight text-fg">
                         <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-sky-100 text-sky-700 shadow-sm ring-1 ring-sky-200">
                           <WalletCards size={19} />
                         </span>
@@ -2712,7 +2882,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                             field: "payment",
                             displayValue: paymentName,
                             placeholder: "Set Paid By",
-                            buttonClassName: cn("block w-full rounded-xl px-2 py-1 text-left text-[21px] font-bold leading-tight transition-colors hover:bg-white/70", paymentMeta.isMissing && "text-[var(--danger)]"),
+                            buttonClassName: cn("block w-full rounded-xl px-2 py-1 text-left text-[21px] font-bold leading-tight transition-colors hover:bg-bg-subtle/70", paymentMeta.isMissing && "text-[var(--danger)]"),
                             inputClassName: "h-10 min-w-0 text-[15px] font-semibold",
                             listOptions: paymentAgents.map((agent) => agent.name),
                           })}
@@ -2721,7 +2891,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                     </div>
                   </div>
                   <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:self-stretch">
-                    <div className="hidden w-px self-stretch bg-[#e8ebef] lg:block" />
+                    <div className="hidden w-px self-stretch bg-border lg:block" />
                     <div className="flex flex-wrap items-center gap-3 lg:justify-end">
                       <div className="text-[12px] [&_button]:max-w-full">
                         {canEditOperationalFields ? (
@@ -2733,33 +2903,33 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                             onChange={(next) => { setRowEdit(order, { status: next }, "status_selected"); }}
                             showDot
                             portalWidth={220}
-                            buttonClassName="h-11 rounded-full border border-[#dfe3e8] bg-white px-5 text-[18px] font-extrabold text-slate-800 shadow-sm"
+                            buttonClassName="h-11 rounded-full border border-border bg-bg-card px-5 text-[18px] font-extrabold text-fg shadow-sm"
                           />
                         ) : (
-                          <span className="inline-flex h-11 items-center gap-3 rounded-full border border-[#dfe3e8] bg-white px-5 text-[18px] font-extrabold text-slate-800 shadow-sm">
+                          <span className="inline-flex h-11 items-center gap-3 rounded-full border border-border bg-bg-card px-5 text-[18px] font-extrabold text-fg shadow-sm">
                             <span className="h-2.5 w-2.5 rounded-full bg-current/80" />
                             <span>{order.status === "packed" ? "Loaded" : order.status}</span>
                           </span>
                         )}
                       </div>
-                      <button type="button" title="View" aria-label="View" className="grid h-[52px] w-[52px] place-items-center rounded-2xl border border-[#e5e7eb] bg-white/95 text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:bg-white" onClick={() => setViewOrder(order)}><Eye size={22} /></button>
-                      <button type="button" title="Edit" aria-label="Edit" className="grid h-[52px] w-[52px] place-items-center rounded-2xl border border-[#e5e7eb] bg-white/95 text-slate-700 shadow-[0_6px_18px_rgba(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:bg-white" onClick={() => startEdit(order)}><SquarePen size={22} /></button>
-                      <button type="button" title="Delete" aria-label="Delete" className="grid h-[52px] w-[52px] place-items-center rounded-2xl border border-rose-100 bg-white/95 text-rose-600 shadow-[0_6px_18px_rgba(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:bg-rose-50" onClick={() => removeOrder(order)}><Trash2 size={22} /></button>
+                      <button type="button" title="View" aria-label="View" className="grid h-[52px] w-[52px] place-items-center rounded-2xl border border-border bg-bg-card text-fg shadow-[0_6px_18px_rgba(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:bg-bg-subtle" onClick={() => setViewOrder(order)}><Eye size={22} /></button>
+                      <button type="button" title="Edit" aria-label="Edit" className="grid h-[52px] w-[52px] place-items-center rounded-2xl border border-border bg-bg-card text-fg shadow-[0_6px_18px_rgba(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:bg-bg-subtle" onClick={() => startEdit(order)}><SquarePen size={22} /></button>
+                      <button type="button" title="Delete" aria-label="Delete" className="grid h-[52px] w-[52px] place-items-center rounded-2xl border border-rose-200/60 bg-bg-card text-rose-600 shadow-[0_6px_18px_rgba(15,23,42,0.06)] transition hover:-translate-y-0.5 hover:bg-rose-500/10" onClick={() => removeOrder(order)}><Trash2 size={22} /></button>
                     </div>
                   </div>
                 </div>
-                <div className="flex flex-col gap-6 border-b border-[#e8ebef] px-7 py-7 lg:flex-row lg:items-center">
+                <div className="flex flex-col gap-6 border-b border-border px-7 py-7 lg:flex-row lg:items-center">
                   <div className="shrink-0">
                     {productPhoto ? (
                       <button
                         type="button"
                         onClick={() => setPreviewImage({ src: productPhoto, alt: "Product photo" })}
-                        className="grid h-[132px] w-[132px] place-items-center overflow-hidden rounded-2xl border border-[#e5e7eb] bg-white/90 shadow-sm"
+                        className="grid h-[132px] w-[132px] place-items-center overflow-hidden rounded-2xl border border-border bg-bg-subtle shadow-sm"
                       >
                         <img src={getCloudinaryOptimizedUrl(productPhoto, { width: 280, height: 280, crop: "fit" })} alt="product" className="h-full w-full object-contain" loading="lazy" decoding="async" />
                       </button>
                     ) : (
-                      <div className="grid h-[132px] w-[132px] place-items-center rounded-2xl border border-dashed border-[#d8dce2] bg-white/70 text-center text-[14px] font-medium text-slate-400">
+                      <div className="grid h-[132px] w-[132px] place-items-center rounded-2xl border border-dashed border-border bg-bg-subtle/70 text-center text-[14px] font-medium text-fg-subtle">
                         No Image
                       </div>
                     )}
@@ -2771,19 +2941,19 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                       line,
                       displayValue: line.marka?.trim() || "-",
                       placeholder: "Set marka",
-                      buttonClassName: "block w-full rounded-xl px-2 py-1 text-left text-[28px] font-extrabold leading-tight text-slate-950 transition-colors hover:bg-white/70",
+                      buttonClassName: "block w-full rounded-xl px-2 py-1 text-left text-[28px] font-extrabold leading-tight text-fg transition-colors hover:bg-bg-subtle/70",
                       inputClassName: "h-11 min-w-0 text-[18px] font-bold",
-                    }) : <div className="text-[28px] font-extrabold leading-tight text-slate-950">-</div>}
+                    }) : <div className="text-[28px] font-extrabold leading-tight text-fg">-</div>}
                     {row.extraLines.length > 0 ? <button type="button" className="mt-3 text-[13px] font-semibold text-brand transition-colors hover:underline" onClick={() => setExpandedOrderIds((prev) => ({ ...prev, [order.id]: !expanded }))}>{expanded ? "Show Less" : `See More (+${row.extraLines.length})`}</button> : null}
                     <div className="mt-5 text-[19px] leading-relaxed">
-                      <span className="font-medium text-slate-500">WeChat: </span>
+                      <span className="font-medium text-fg-subtle">WeChat: </span>
                       <span className="font-semibold text-emerald-700">{getDisplayWechatId(order)}</span>
                     </div>
                   </div>
                 </div>
-                <div className={cn("overflow-hidden border-b border-[#e8ebef] transition-all duration-200", expanded && row.extraLines.length > 0 ? "max-h-[640px] px-7 py-4 opacity-100" : "max-h-0 px-7 py-0 opacity-0")}>
+                <div className={cn("overflow-hidden border-b border-border transition-all duration-200", expanded && row.extraLines.length > 0 ? "max-h-[640px] px-7 py-4 opacity-100" : "max-h-0 px-7 py-0 opacity-0")}>
                   <div className="space-y-2">
-                      {row.extraLines.map((extraLine, index) => <div key={`${order.id}-grid-extra-${extraLine.id || index}`} className={cn("grid grid-cols-[88px_minmax(0,1fr)_110px_110px] items-center gap-3 rounded-xl border border-border/70 bg-white/85 px-3 py-3", isLineMatchedByQuery(extraLine) && "border-brand/40 bg-brand/5")}>
+                      {row.extraLines.map((extraLine, index) => <div key={`${order.id}-grid-extra-${extraLine.id || index}`} className={cn("grid grid-cols-[88px_minmax(0,1fr)_110px_110px] items-center gap-3 rounded-xl border border-border/70 bg-bg-subtle/40 px-3 py-3", isLineMatchedByQuery(order, extraLine) && "border-brand/40 bg-brand/5")}>
                         <div className="text-[12px] font-semibold text-fg-subtle">Sub Line {index + 2}</div>
                         <div className="min-w-0"><div className="truncate text-[15px] font-semibold">{renderOutsideEditableField({
                           order,
@@ -2791,7 +2961,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                           line: extraLine,
                           displayValue: extraLine.marka?.trim() || "-",
                           placeholder: "Set marka",
-                          buttonClassName: "block w-full rounded-md px-1 py-0.5 text-left text-[15px] font-semibold transition-colors hover:bg-white/70",
+                          buttonClassName: "block w-full rounded-md px-1 py-0.5 text-left text-[15px] font-semibold transition-colors hover:bg-bg-subtle/70",
                           inputClassName: "h-8 min-w-0 text-[12px] font-semibold",
                         })}</div></div>
                         <div className={cn("text-center text-[14px] font-semibold tabular-nums", getLineAmount(extraLine) > 0 ? "text-fg" : "text-[var(--danger)]")}>{formatFinalAmount(getLineAmount(extraLine))}</div>
@@ -2801,7 +2971,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                           line: extraLine,
                           displayValue: getCardCustomerValue(extraLine),
                           placeholder: "Set customer",
-                          buttonClassName: cn("block w-full rounded-md px-1 py-0.5 text-center text-[13px] font-semibold transition-colors hover:bg-white/70", isMissingCustomerDisplay(getCardCustomerValue(extraLine)) && "text-[var(--danger)]"),
+                          buttonClassName: cn("block w-full rounded-md px-1 py-0.5 text-center text-[13px] font-semibold transition-colors hover:bg-bg-subtle/70", isMissingCustomerDisplay(getCardCustomerValue(extraLine)) && "text-[var(--danger)]"),
                           inputClassName: "h-8 min-w-0 text-[12px]",
                           listOptions: customerSuggestions,
                         })}</div>
@@ -2811,18 +2981,18 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                 <div className="px-7 py-5">
                   <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.2fr)_auto] lg:items-center">
                       {[
-                        { label: "CTNS", value: formatPlainAmount(ctns), editableField: "totalCtns" as const, icon: <Package2 size={21} />, tint: "bg-violet-100 text-violet-700", valueClass: "text-slate-950" },
-                        { label: "PCS/CTN", value: formatPlainAmount(pcsPerCtn), editableField: "pcsPerCtn" as const, icon: <Boxes size={21} />, tint: "bg-orange-100 text-orange-700", valueClass: "text-slate-950" },
-                        { label: "TOTAL PCS", value: formatPlainAmount(totalPcs), editableField: null, icon: <ShoppingBag size={21} />, tint: "bg-sky-100 text-sky-700", valueClass: "text-slate-950" },
-                        { label: "RATE", value: formatRateAmount(rate), editableField: "rate" as const, icon: <BadgePercent size={21} />, tint: "bg-rose-100 text-rose-700", valueClass: "text-slate-950" },
+                        { label: "CTNS", value: formatPlainAmount(ctns), editableField: "totalCtns" as const, icon: <Package2 size={21} />, tint: "bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300", valueClass: "text-fg" },
+                        { label: "PCS/CTN", value: formatPlainAmount(pcsPerCtn), editableField: "pcsPerCtn" as const, icon: <Boxes size={21} />, tint: "bg-orange-100 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300", valueClass: "text-fg" },
+                        { label: "TOTAL PCS", value: formatPlainAmount(totalPcs), editableField: null, icon: <ShoppingBag size={21} />, tint: "bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300", valueClass: "text-fg" },
+                        { label: "RATE", value: formatRateAmount(rate), editableField: "rate" as const, icon: <BadgePercent size={21} />, tint: "bg-rose-100 text-rose-700 dark:bg-rose-500/15 dark:text-rose-300", valueClass: "text-fg" },
                         { label: "TOTAL AMOUNT", value: formatFinalAmount(amount), editableField: null, icon: <IndianRupee size={23} />, tint: "bg-emerald-100 text-emerald-700", valueClass: amount > 0 ? "text-emerald-700 text-[30px]" : "text-[var(--danger)] text-[30px]" },
                       ].map((stat, index) => (
-                      <div key={`${row.key}-${stat.label}`} className={cn("flex min-w-0 items-center gap-4 rounded-2xl lg:rounded-none", index < 6 && "lg:pr-4", index < 5 && "lg:border-r lg:border-[#e8ebef]")}>
+                      <div key={`${row.key}-${stat.label}`} className={cn("flex min-w-0 items-center gap-4 rounded-2xl lg:rounded-none", index < 6 && "lg:pr-4", index < 5 && "lg:border-r lg:border-border")}>
                         <div className={cn("grid h-12 w-12 shrink-0 place-items-center rounded-2xl", stat.tint)}>
                           {stat.icon}
                         </div>
                         <div className="min-w-0 text-center">
-                          <div className="text-[13px] font-semibold uppercase tracking-[0.14em] text-slate-400">{stat.label}</div>
+                          <div className="text-[13px] font-semibold uppercase tracking-[0.14em] text-fg-subtle">{stat.label}</div>
                           <div className={cn("mt-1 text-[25px] font-extrabold leading-none", stat.valueClass)}>
                             {stat.editableField && line
                               ? renderOutsideEditableField({
@@ -2831,7 +3001,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                                   line,
                                   displayValue: stat.value,
                                   placeholder: `Set ${stat.label.toLowerCase()}`,
-                                  buttonClassName: "block w-full rounded-xl px-1 py-1 text-center transition-colors hover:bg-white/70",
+                                  buttonClassName: "block w-full rounded-xl px-1 py-1 text-center transition-colors hover:bg-bg-subtle/70",
                                   inputClassName: "h-10 min-w-0 text-center text-[14px] font-semibold",
                                   inputMode: "decimal",
                                   numeric: true,
@@ -2845,7 +3015,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                                         field: "shipping",
                                         displayValue: formatFinalAmount(shippingAmount),
                                         placeholder: "Set shipping",
-                                        buttonClassName: "block w-full rounded-xl px-1 py-0.5 text-center transition-colors hover:bg-white/70",
+                                        buttonClassName: "block w-full rounded-xl px-1 py-0.5 text-center transition-colors hover:bg-bg-subtle/70",
                                         inputClassName: "h-8 min-w-0 text-center text-[16px] font-semibold",
                                         inputMode: "decimal",
                                         numeric: true,
@@ -2859,8 +3029,8 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                         </div>
                       </div>
                     ))}
-                    <div className="flex flex-col items-center gap-3 rounded-2xl border border-[#e5e7eb] bg-white/85 px-4 py-4 text-center shadow-sm lg:ml-auto lg:min-w-[220px]">
-                      <div className="text-[13px] font-semibold uppercase tracking-[0.14em] text-slate-400">Loading Date</div>
+                    <div className="flex flex-col items-center gap-3 rounded-2xl border border-border bg-bg-subtle/40 px-4 py-4 text-center shadow-sm lg:ml-auto lg:min-w-[220px]">
+                      <div className="text-[13px] font-semibold uppercase tracking-[0.14em] text-fg-subtle">Loading Date</div>
                       <div className="w-full [&_button]:w-full">
                         {canEditOperationalFields ? (
                           <LoadingDateControl
@@ -2868,15 +3038,15 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                             value={rowValue.loadingDate}
                             onChange={(next) => { setRowEdit(order, { loadingDate: next }, "date_selected"); }}
                             portalWidth={280}
-                            buttonClassName="flex h-11 w-full items-center justify-between rounded-2xl border border-[#dfe3e8] bg-white px-4 text-[18px] font-semibold text-slate-800 shadow-sm"
+                            buttonClassName="flex h-11 w-full items-center justify-between rounded-2xl border border-border bg-bg-card px-4 text-[18px] font-semibold text-fg shadow-sm"
                           />
                         ) : (
-                          <span className="inline-flex h-11 w-full items-center justify-between rounded-2xl border border-[#dfe3e8] bg-white px-4 text-[14px] font-semibold text-slate-800 shadow-sm">
+                          <span className="inline-flex h-11 w-full items-center justify-between rounded-2xl border border-border bg-bg-card px-4 text-[14px] font-semibold text-fg shadow-sm">
                             <span className="inline-flex items-center gap-3">
-                              <CalendarDays size={18} className="text-slate-400" />
+                              <CalendarDays size={18} className="text-fg-subtle" />
                               <span>{order.loadingDate ? formatDate(order.loadingDate) : "Set date"}</span>
                             </span>
-                            <ChevronDown size={18} className="text-slate-400" />
+                            <ChevronDown size={18} className="text-fg-subtle" />
                           </span>
                         )}
                       </div>
@@ -2920,7 +3090,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
           {/* <div className="flex items-center justify-between px-4 py-3 border-b border-border"><h3 className="font-semibold">Order History</h3><div className="text-[12px] text-fg-subtle">Showing 1 to {pagedHistory.length} of {history.length} rows</div></div> */}
           <div className="overflow-x-auto">
             <div className="w-full min-w-0 px-0.5 py-1">
-              <div className="sticky top-0 z-20 grid items-center border-b border-border bg-white text-[12.5px] font-semibold uppercase tracking-[0.01em] text-fg-muted shadow-[0_1px_0_rgba(15,23,42,0.06)]" style={{ gridTemplateColumns: historyGridTemplate }}>
+              <div className="sticky top-0 z-10 grid items-center border-b border-border bg-bg-card/95 text-[12.5px] font-semibold uppercase tracking-[0.01em] text-fg-muted shadow-[0_1px_0_rgba(15,23,42,0.06)] backdrop-blur" style={{ gridTemplateColumns: historyGridTemplate }}>
                 <div className="px-1 py-1.5 text-center">Order Number</div>
                 <div className="px-1 py-1.5 text-left">WeChat ID</div>
                 <div className="px-1 py-1.5 text-center">Product Photo</div>
@@ -2957,8 +3127,9 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                   const customerName = getCardCustomerValue(selectedLine);
                   const hasMultipleLines = orderLines.length > 1;
                   const customerMissing = isMissingCustomerDisplay(customerName);
+                  const hasLoadingDateHighlight = Boolean(order.loadingDate?.trim());
 
-                  return <div key={row.key} className="rounded-lg border border-border/70 bg-bg-card">
+                  return <div key={row.key} className={cn("rounded-lg border border-border/70 bg-bg-card", hasLoadingDateHighlight && "border-emerald-400/40 bg-emerald-500/8 dark:bg-emerald-500/10")}>
                     <div className={rowClass} style={{ gridTemplateColumns: historyGridTemplate }}>
                       <div className="min-w-0 px-1 py-1.5 text-center">
                         <div className="min-w-0">
@@ -2990,7 +3161,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                           {hasMultipleLines ? (
                             <button
                               type="button"
-                              className="grid h-5 w-5 shrink-0 place-items-center rounded-md border border-border bg-white text-fg transition-colors hover:bg-bg-subtle disabled:cursor-not-allowed disabled:opacity-40"
+                              className="grid h-5 w-5 shrink-0 place-items-center rounded-md border border-border bg-bg-card text-fg transition-colors hover:bg-bg-subtle disabled:cursor-not-allowed disabled:opacity-40"
                               onClick={() => changeOrderLineIndex(order.id, orderLines.length, -1)}
                               disabled={selectedLineIndex === 0}
                               aria-label="Previous product line"
@@ -3014,7 +3185,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                           {hasMultipleLines ? (
                             <button
                               type="button"
-                              className="grid h-5 w-5 shrink-0 place-items-center rounded-md border border-border bg-white text-fg transition-colors hover:bg-bg-subtle disabled:cursor-not-allowed disabled:opacity-40"
+                              className="grid h-5 w-5 shrink-0 place-items-center rounded-md border border-border bg-bg-card text-fg transition-colors hover:bg-bg-subtle disabled:cursor-not-allowed disabled:opacity-40"
                               onClick={() => changeOrderLineIndex(order.id, orderLines.length, 1)}
                               disabled={selectedLineIndex === orderLines.length - 1}
                               aria-label="Next product line"
@@ -3244,9 +3415,9 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
             </div>
           </div> : null}
           <div className="min-h-0 flex-1 overflow-hidden bg-bg-subtle/20">
-            <OrderForm showOrderInfo={false} draft={draft} setDraft={(u) => setDraft((d) => u(d))} paymentAgents={paymentAgents} customers={customers} onUploadingChange={onUploadingChange} onRemoveLine={handleRemoveLine} wechatSuggestions={wechatSuggestions.filter((w) => draft.wechatId.trim() ? w.toLowerCase().includes(draft.wechatId.trim().toLowerCase()) : false)} customerSuggestions={customerSuggestions} onPreviewImage={(src) => setPreviewImage({ src, alt: "Order line photo preview" })} onCustomerValidityChange={(lineId, issue) => setPopupCustomerIssues((prev) => ({ ...prev, [lineId]: issue }))} />
+            <OrderForm showOrderInfo={false} draft={draft} setDraft={(u) => setDraft((d) => u(d))} paymentAgents={paymentAgents} customers={customers} onUploadingChange={onUploadingChange} onRemoveLine={handleRemoveLine} wechatSuggestions={wechatSuggestions.filter((w) => draft.wechatId.trim() ? w.toLowerCase().includes(draft.wechatId.trim().toLowerCase()) : false)} customerSuggestions={customerSuggestions} onPreviewImage={(src) => setPreviewImage({ src, alt: "Order line photo preview" })} onCustomerValidityChange={(lineId, issue) => setPopupCustomerIssues((prev) => ({ ...prev, [lineId]: issue }))} defaultMarka={mode === "add" ? currentDraftDefaultMarka : ""} />
           </div>
-          <OrderFooter lineTotal={lineTotal} shippingPrice={getOrderShippingAmount(draft)} total={total} onCancel={requestExitComposer} showCancel={false} onSaveDraft={() => onSave("draft")} onSaveOrder={() => onSave("saved")} onViewDetails={() => setViewOrder(draft)} saveOrderLabel={orderSaveState === "saving" ? "Saving Order..." : (editingOrderId ? "Save Changes" : "Save Order")} saveDraftLabel={orderSaveState === "saving" ? "Saving Draft..." : "Save as Draft"} disableSaveDraft={orderSaveState !== "idle"} disableSaveOrder={orderSaveState !== "idle"} paymentAgents={paymentAgents} paymentAgentSplits={getEditablePaymentAgentSplits(draft)} onPaymentAgentSplitsChange={setDraftPaymentAgentSplits} onShippingPriceChange={(value) => setDraft((d) => ({ ...d, shippingPrice: value }))} />
+          <OrderFooter lineTotal={lineTotal} shippingPrice={getOrderShippingAmount(draft)} total={total} onCancel={requestExitComposer} showCancel={false} onSaveDraft={() => onSave("draft")} onSaveOrder={() => onSave("saved")} onViewDetails={() => setViewOrder(draft)} saveOrderLabel={orderSaveState === "saving" ? "Saving Order..." : (editingOrderId ? "Save Changes" : "Save Order")} saveDraftLabel={orderSaveState === "saving" ? "Saving Draft..." : "Save as Draft"} disableSaveDraft={orderSaveState !== "idle"} disableSaveOrder={orderSaveState !== "idle"} paymentAgents={paymentAgents} paymentAgentSplits={getEditablePaymentAgentSplits(draft)} onPaymentAgentSplitsChange={setDraftPaymentAgentSplits} onPaymentAgentSplitManualAmountEdit={markDraftPaymentSplitAsManual} onShippingPriceChange={(value) => setDraft((d) => ({ ...d, shippingPrice: value }))} />
         </div>
       </div>}
       {showExitConfirm ? <div className="fixed inset-0 z-[65] bg-black/50 grid place-items-center p-4"><div className="card w-full max-w-lg p-4 space-y-3"><div className="text-lg font-semibold">{editingOrderId ? "Save changes before closing?" : "Save order before closing?"}</div><div className="text-sm text-fg-subtle">{editingOrderId ? "You made changes to this order. Save them now or discard them." : "Save this order as a draft before closing, or discard it."}</div><div className="flex flex-wrap justify-end gap-2"><Button variant="secondary" onClick={() => { setShowExitConfirm(false); resetOrderComposer(); }}>{editingOrderId ? "Discard Changes" : "Discard Order"}</Button><Button variant="primary" onClick={() => { setShowExitConfirm(false); void onSave(editingOrderId ? "saved" : "draft", true); }}>{editingOrderId ? "Save Changes" : "Save Draft"}</Button></div></div></div> : null}

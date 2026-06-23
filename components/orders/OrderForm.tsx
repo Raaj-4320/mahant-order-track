@@ -9,13 +9,13 @@ import { Customer, Order, OrderLine, PaymentAgent } from "@/lib/types";
 import { resolveOrderPaymentAgent } from "@/lib/orderDisplay";
 import { getPaymentAgentDirectFinance } from "@/services/paymentAgentFinance";
 
-export function newLine(): OrderLine {
+export function newLine(defaultMarka = ""): OrderLine {
   return {
     id: "ln-" + Math.random().toString(36).slice(2, 9),
     supplierId: "",
     picDim: "",
     productId: "",
-    marka: "",
+    marka: defaultMarka,
     details: "",
     detail1: "",
     detail2: "",
@@ -39,9 +39,10 @@ type Props = {
   showOrderInfo?: boolean;
   onPreviewImage?: (src: string) => void;
   onCustomerValidityChange?: (lineId: string, issue: string | null) => void;
+  defaultMarka?: string;
 };
 
-export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, wechatSuggestions = [], customerSuggestions = [], customers = [], paymentAgents = [], showOrderInfo = true, onPreviewImage, onCustomerValidityChange }: Props) {
+export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, wechatSuggestions = [], customerSuggestions = [], customers = [], paymentAgents = [], showOrderInfo = true, onPreviewImage, onCustomerValidityChange, defaultMarka = "" }: Props) {
   const sectionShellClass = showOrderInfo ? "card flex min-h-0 flex-1 flex-col overflow-visible" : "flex min-h-0 flex-1 flex-col overflow-visible";
   const sectionBodyClass = showOrderInfo ? "min-h-0 overflow-x-auto overflow-y-visible px-2.5 py-2.5" : "min-h-0 flex-1 overflow-x-auto overflow-y-auto bg-bg-card px-1 py-1.5";
   const [paymentQuery, setPaymentQuery] = useState("");
@@ -79,7 +80,7 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
       lines: d.lines.map((l) => (l.id === id ? { ...l, ...patch } : l)),
     }));
 
-  const addLine = () => setDraft((d) => ({ ...d, lines: [...d.lines, newLine()] }));
+  const addLine = () => setDraft((d) => ({ ...d, lines: [...d.lines, newLine(defaultMarka)] }));
 
   const selectedPaymentAgent = resolveOrderPaymentAgent(draft, paymentAgents);
   const selectedLabel = selectedPaymentAgent ? paymentLabel(selectedPaymentAgent) : "";

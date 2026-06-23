@@ -305,7 +305,7 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
 
   const kpis = [
     { label: "Advance Payments", value: formatAmount(directFinance.totalAdvanced), tone: "text-sky-700 bg-sky-50 border-sky-100", icon: <Wallet size={16} /> },
-    { label: "Net Credit Used", value: formatAmount(directFinance.totalUsed), tone: "text-slate-700 bg-slate-50 border-slate-200", icon: <Download size={16} /> },
+    { label: "Net Credit Used", value: formatAmount(directFinance.totalUsed), tone: "text-fg bg-bg-subtle border-border", icon: <Download size={16} /> },
     { label: "Available Credit", value: formatAmount(directFinance.creditLeft), tone: "text-emerald-700 bg-emerald-50 border-emerald-100", icon: <Wallet size={16} /> },
     { label: "Due / Pending", value: formatAmount(directFinance.duePending), tone: "text-rose-700 bg-rose-50 border-rose-100", icon: <CalendarDays size={16} /> },
     { label: "Total Orders", value: directFinance.totalOrders.toLocaleString(), tone: "text-sky-700 bg-sky-50 border-sky-100", icon: <CalendarDays size={16} /> },
@@ -349,7 +349,7 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
           </div>
 
           <div className="mt-3 grid min-h-0 grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] xl:items-start">
-            <section className="min-w-0 min-h-[170px] self-start overflow-hidden rounded-2xl border border-border bg-white">
+            <section className="min-w-0 min-h-[170px] self-start overflow-hidden rounded-2xl border border-border bg-bg-card">
               <div className="border-b border-border px-4 py-3">
                 <div className="text-[16px] font-semibold leading-tight text-fg">Credit Activity</div>
               </div>
@@ -360,7 +360,7 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
               ) : (
                 <div className="max-h-[44vh] overflow-y-auto overflow-x-hidden">
                   <table className="w-full text-[12px]">
-                    <thead className="bg-white">
+                    <thead className="bg-bg-subtle">
                       <tr className="border-b border-border text-[10px] uppercase tracking-[0.01em] text-fg-muted">
                         <th className="px-3 py-2 text-left">Date</th>
                         <th className="px-3 py-2 text-left">Order No</th>
@@ -375,7 +375,7 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
                           <td className="px-3 py-2.5 leading-tight">{formatDateLabel(row.date)}</td>
                           <td className="px-3 py-2.5 font-semibold leading-tight">{row.orderNumber}</td>
                           <td className="px-3 py-2.5 leading-tight">{row.customer}</td>
-                          <td className="px-3 py-2.5 text-right font-semibold leading-tight tabular-nums text-slate-900">{formatAmount(row.amount)}</td>
+                          <td className="px-3 py-2.5 text-right font-semibold leading-tight tabular-nums text-fg">{formatAmount(row.amount)}</td>
                           <td className="px-3 py-2.5 text-right font-semibold leading-tight tabular-nums text-emerald-700">{formatAmount(row.runningCreditLeft)}</td>
                         </tr>
                       ))}
@@ -386,7 +386,7 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
               <TablePagination total={transactionRows.length} currentPage={transactionsPage} pageSize={PAGE_SIZE} onPageChange={setTransactionsPage} label="credit uses" />
             </section>
 
-            <section className="min-w-0 min-h-[170px] self-start overflow-hidden rounded-2xl border border-border bg-white">
+            <section className="min-w-0 min-h-[170px] self-start overflow-hidden rounded-2xl border border-border bg-bg-card">
               <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
                 <div>
                   <div className="text-[16px] font-semibold leading-tight text-fg">Advance Payments</div>
@@ -401,7 +401,7 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
                 <div className="px-4 py-8 text-center text-[12px] text-fg-subtle">No payments recorded yet.</div>
               ) : (
                 <div className="max-h-[44vh] overflow-y-auto overflow-x-hidden">
-                  <div className="grid grid-cols-[84px_86px_138px_minmax(0,1fr)_74px] border-b border-border bg-white text-[10px] uppercase tracking-[0.01em] text-fg-muted">
+                  <div className="grid grid-cols-[84px_86px_138px_minmax(0,1fr)_74px] border-b border-border bg-bg-subtle text-[10px] uppercase tracking-[0.01em] text-fg-muted">
                     <div className="px-2 py-2 text-left">Date</div>
                     <div className="px-2 py-2 text-right">Amount</div>
                     <div className="px-2 py-2 text-left">Method</div>
@@ -443,7 +443,7 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
             </section>
           </div>
 
-          <section className="mt-3 min-w-0 min-h-[170px] self-start overflow-hidden rounded-2xl border border-border bg-white">
+          <section className="mt-3 min-w-0 min-h-[170px] self-start overflow-hidden rounded-2xl border border-border bg-bg-card">
             <div className="border-b border-border px-4 py-3">
               <div className="text-[16px] font-semibold leading-tight text-fg">Orders</div>
             </div>
@@ -452,7 +452,7 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
             ) : (
               <div className="max-h-[34vh] overflow-y-auto overflow-x-hidden">
                 <table className="w-full text-[12px]">
-                  <thead className="bg-white">
+                  <thead className="bg-bg-subtle">
                     <tr className="border-b border-border text-[10px] uppercase tracking-[0.01em] text-fg-muted">
                       <th className="px-3 py-2 text-left">Date</th>
                       <th className="px-3 py-2 text-left">Order No</th>

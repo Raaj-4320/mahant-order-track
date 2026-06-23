@@ -23,6 +23,7 @@ type Props = {
   paymentAgents: PaymentAgent[];
   paymentAgentSplits: PaymentAgentOrderSplit[];
   onPaymentAgentSplitsChange: (splits: PaymentAgentOrderSplit[]) => void;
+  onPaymentAgentSplitManualAmountEdit?: (splitId: string) => void;
   onViewDetails: () => void;
   onShippingPriceChange: (value: number) => void;
 };
@@ -84,6 +85,7 @@ export function OrderFooter({
   paymentAgents,
   paymentAgentSplits,
   onPaymentAgentSplitsChange,
+  onPaymentAgentSplitManualAmountEdit,
   onViewDetails,
   onShippingPriceChange,
 }: Props) {
@@ -171,6 +173,7 @@ export function OrderFooter({
                 paymentAgents={paymentAgents}
                 totalAmount={total}
                 onChange={onPaymentAgentSplitsChange}
+                onManualAmountEdit={onPaymentAgentSplitManualAmountEdit}
                 expanded={isBreakdownExpanded}
                 onToggleExpand={() => setIsBreakdownExpanded((current) => !current)}
               />

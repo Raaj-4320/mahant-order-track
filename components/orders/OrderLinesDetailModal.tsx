@@ -1,8 +1,7 @@
 ﻿"use client";
 
 import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
-import { formatAmount } from "@/lib/data";
-import { formatDisplayNumber, formatWholeMoney } from "@/lib/numbers";
+import { formatRate, formatWholeMoney } from "@/lib/numbers";
 import { Order, lineTotalPcs, lineTotalRmb, orderShippingPrice, orderTotal } from "@/lib/types";
 import { Button } from "@/components/ui/Button";
 import { ImageLightbox } from "@/components/ui/ImageLightbox";
@@ -16,9 +15,8 @@ type OrderLinesDetailModalProps = {
   onClose: () => void;
 };
 
-const formatPlainAmount = (value: number) => formatAmount(value);
 const formatFinalAmount = (value: number) => formatWholeMoney(value);
-const formatRateAmount = (value: number) => formatDisplayNumber(value, { maxFractionDigits: 1 });
+const formatRateAmount = (value: number) => formatRate(value);
 
 const EXPORT_HIDDEN_ATTR = "data-export-hidden";
 const TwoLineHeader = ({ zh, en }: { zh: string; en?: string }) => (

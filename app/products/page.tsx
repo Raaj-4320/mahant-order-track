@@ -15,7 +15,7 @@ import { Select } from "@/components/ui/Select";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { TablePagination } from "@/components/table/TablePagination";
 import { formatAmount } from "@/lib/data";
-import { formatWholeMoney } from "@/lib/numbers";
+import { formatRate, formatWholeMoney } from "@/lib/numbers";
 import { uploadImageUnsigned } from "@/lib/cloudinary/client";
 import type { Product } from "@/lib/types";
 import { Boxes, Download, Filter, Plus, Search, Trash2 } from "lucide-react";
@@ -193,8 +193,8 @@ export default function ProductsPage() {
           row.wechatId,
           row.customerName,
           formatAmount(row.amount),
-          formatAmount(row.totalQty),
-          formatAmount(row.ratePerPcs),
+          formatRate(row.totalQty),
+          formatRate(row.ratePerPcs),
         ].join(" ").toLowerCase().includes(qValue);
       })),
     [rows, orders, paymentAgents, customers, status, category, q],
@@ -358,7 +358,7 @@ export default function ProductsPage() {
           <div className="overflow-x-auto">
             <div className="w-full min-w-0 px-0.5 py-1">
             <table className="w-full min-w-[1680px] text-[13px]">
-              <thead className="bg-white">
+              <thead className="bg-bg-subtle">
                 <tr className="border-b border-border text-[12px] uppercase tracking-[0.01em] text-fg-muted">
                   <th className="px-4 py-2 text-center">Product Photo</th>
                   <th className="px-2 py-2 text-center">Marka</th>
@@ -399,7 +399,7 @@ export default function ProductsPage() {
                     <td className="px-2 py-3 text-center tabular-nums">{row.totalCtn.toLocaleString()}</td>
                     <td className="px-2 py-3 text-center tabular-nums">{row.qtyPerCtn.toLocaleString()}</td>
                     <td className="px-2 py-3 text-center tabular-nums">{row.totalQty.toLocaleString()}</td>
-                    <td className="px-2 py-3 text-center font-semibold tabular-nums text-[var(--success)]">{formatAmount(row.ratePerPcs)}</td>
+                    <td className="px-2 py-3 text-center font-semibold tabular-nums text-[var(--success)]">{formatRate(row.ratePerPcs)}</td>
                     <td className={`px-4 py-3 text-center font-semibold tabular-nums ${row.amount > 0 ? "text-fg" : "text-[var(--danger)]"}`}>{formatWholeMoney(row.amount)}</td>
                     <td className="px-4 py-3 text-right">
                       <Button size="sm" variant="secondary" onClick={() => setPendingDeleteProduct(row.product)}>

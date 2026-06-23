@@ -13,7 +13,7 @@ import { useOrders } from "@/hooks/useOrders";
 import { usePaymentAgents } from "@/hooks/usePaymentAgents";
 import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
 import { formatAmount, formatDate } from "@/lib/data";
-import { formatWholeMoney } from "@/lib/numbers";
+import { formatRate, formatWholeMoney } from "@/lib/numbers";
 import { joinLineDetails } from "@/lib/orderLineDetails";
 import { getOrderPaymentAgentDisplay } from "@/lib/orderDisplay";
 import { lineTotalPcs, type Customer, type Order } from "@/lib/types";
@@ -166,7 +166,7 @@ export default function CustomersPage() {
           row.loadingDate,
           row.status,
           formatTotalAmount(row.totalAmount),
-          formatAmount(row.pricePerPiece),
+          formatRate(row.pricePerPiece),
           String(row.totalCtns),
           String(row.pcsPerCtn),
           String(row.totalPieces),
@@ -273,7 +273,7 @@ export default function CustomersPage() {
       String(row.totalCtns),
       String(row.pcsPerCtn),
       String(row.totalPieces),
-      formatAmount(row.pricePerPiece),
+      formatRate(row.pricePerPiece),
       formatTotalAmount(row.totalAmount),
       row.paidBy,
       row.loadingDate ? formatDate(row.loadingDate) : "—",
@@ -300,7 +300,7 @@ export default function CustomersPage() {
           <td>${row.totalCtns}</td>
           <td>${row.pcsPerCtn}</td>
           <td>${row.totalPieces}</td>
-          <td>${formatAmount(row.pricePerPiece)}</td>
+          <td>${formatRate(row.pricePerPiece)}</td>
           <td>${formatTotalAmount(row.totalAmount)}</td>
           <td>${row.paidBy}</td>
           <td>${row.loadingDate ? formatDate(row.loadingDate) : "—"}</td>
@@ -455,7 +455,7 @@ export default function CustomersPage() {
             <div className="overflow-x-auto">
               <div className="w-full min-w-0 px-0.5 py-1">
                 <table className="w-full min-w-[1120px] text-[13px]">
-                  <thead className="bg-white">
+                  <thead className="bg-bg-subtle">
                     <tr className="border-b border-border text-[11px] uppercase tracking-[0.01em] text-fg-muted">
                       <th className="px-3 py-2 text-left">Customer</th>
                       <th className="px-2 py-2 text-center">Last Image</th>
@@ -601,7 +601,7 @@ export default function CustomersPage() {
                 </div>
                 <div className="min-h-0 flex-1 overflow-auto">
                   <table className="w-full min-w-[1140px] text-[12.5px]">
-                    <thead className="sticky top-0 bg-white">
+                    <thead className="sticky top-0 z-10 bg-bg-card/95 backdrop-blur">
                       <tr className="border-b border-border text-[11px] uppercase tracking-[0.01em] text-fg-muted">
                         <th className="px-2 py-2 text-center">Image</th>
                         <th className="px-2 py-2 text-left">Order Number</th>
@@ -645,7 +645,7 @@ export default function CustomersPage() {
                           <td className="px-2 py-2.5 text-center tabular-nums">{row.totalCtns.toLocaleString()}</td>
                           <td className="px-2 py-2.5 text-center tabular-nums">{row.pcsPerCtn.toLocaleString()}</td>
                           <td className="px-2 py-2.5 text-center tabular-nums">{row.totalPieces.toLocaleString()}</td>
-                          <td className="px-2 py-2.5 text-right tabular-nums">{formatAmount(row.pricePerPiece)}</td>
+                          <td className="px-2 py-2.5 text-right tabular-nums">{formatRate(row.pricePerPiece)}</td>
                           <td className={`px-2 py-2.5 text-right font-semibold tabular-nums ${row.totalAmount > 0 ? "text-fg" : "text-[var(--danger)]"}`}>{formatTotalAmount(row.totalAmount)}</td>
                           <td className="px-2 py-2.5">{row.paidBy}</td>
                           <td className="px-2 py-2.5">{row.loadingDate ? formatDate(row.loadingDate) : "—"}</td>

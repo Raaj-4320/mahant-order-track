@@ -7,8 +7,7 @@ import { applyTypedCustomerToLine, findCustomerByTypedName } from "@/services/cu
 import { PhotoUpload } from "./PhotoUpload";
 import { useEffect, useMemo, useState } from "react";
 import { getLineDetailsParts } from "@/lib/orderLineDetails";
-import { formatAmount } from "@/lib/data";
-import { formatWholeMoney } from "@/lib/numbers";
+import { formatWholeMoney, formatRate } from "@/lib/numbers";
 import { cn } from "@/lib/cn";
 
 type Props = {
@@ -154,7 +153,7 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
       />
 
       <div className="rounded-lg bg-emerald-500/10 px-2 py-1.5 text-center text-[12.5px] font-semibold text-[var(--success)] tabular-nums">
-        {formatAmount(pcs)}
+        {formatRate(pcs)}
       </div>
 
       <Input
