@@ -1,14 +1,14 @@
 import type { Customer, Order, PaymentAgent, PaymentAgentLedgerEntry } from "@/lib/types";
-import { buildPaymentAgentAccountingSummary } from "@/services/settlement/paymentAgentAccounting";
+import { isOrderMatchedToPaymentAgent } from "@/services/settlement/paymentAgentAccounting";
 import { getPaymentAgentDirectFinance } from "@/services/paymentAgentFinance";
 
 export function getPaymentAgentFinanceSummary(agents: PaymentAgent[], orders: Order[], entries: PaymentAgentLedgerEntry[] = [], customers: Customer[] = []) {
   return agents.map((agent) => {
-    const summary = buildPaymentAgentAccountingSummary(agent, orders, entries, customers);
+    const matchedOrders = orders.filter((order) => order.status !== "archived" && isOrderMatchedToPaymentAgent(order, agent));
     const finance = getPaymentAgentDirectFinance(agent);
     return {
       agent,
-      orders: summary.matchedOrders,
+      orders: matchedOrders,
       totalOrders: finance.totalOrders,
       totalOrderAmount: Math.max(0, Number(agent.totalOrderAmount) || 0),
       totalPaidAmount: finance.paymentsMade,

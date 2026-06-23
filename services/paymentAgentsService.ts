@@ -16,6 +16,13 @@ export function getPaymentAgentsService(): PaymentAgentsService {
     },
     async getPaymentAgentById(id) { const { paymentAgentsFirebaseService } = await import("@/services/firebase/paymentAgentsFirebaseService"); return paymentAgentsFirebaseService.getPaymentAgentById(id); },
     async upsertPaymentAgent(agent) { const { paymentAgentsFirebaseService } = await import("@/services/firebase/paymentAgentsFirebaseService"); return paymentAgentsFirebaseService.upsertPaymentAgent(agent); },
+    async repairPaymentAgentsFromSavedOrders() {
+      const { paymentAgentsFirebaseService } = await import("@/services/firebase/paymentAgentsFirebaseService");
+      if (!paymentAgentsFirebaseService.repairPaymentAgentsFromSavedOrders) {
+        throw new Error("Payment-agent repair is not enabled for this data source.");
+      }
+      return paymentAgentsFirebaseService.repairPaymentAgentsFromSavedOrders();
+    },
     async recordPaymentToAgent(agentId, payment) { const { paymentAgentsFirebaseService } = await import("@/services/firebase/paymentAgentsFirebaseService"); return paymentAgentsFirebaseService.recordPaymentToAgent(agentId, payment); },
     async deletePaymentAgentLedgerEntry(entryId) {
       const { paymentAgentsFirebaseService } = await import("@/services/firebase/paymentAgentsFirebaseService");

@@ -39,7 +39,16 @@ export const validateOrderForSave = (order: Order): OrderValidationResult => {
 };
 
 export const hasAnyDraftContent = (order: Order) => {
-  const header = Boolean((order.number || order.orderNumber)?.trim() || order.date?.trim() || order.wechatId?.trim() || order.paymentBy || order.paymentAgentId);
+  const header = Boolean(
+    order.wechatId?.trim()
+    || order.paymentBy?.trim()
+    || order.paymentAgentId?.trim()
+    || (order as Partial<Order> & { paymentByName?: string }).paymentByName?.trim()
+    || (order as Partial<Order> & { paymentAgentName?: string }).paymentAgentName?.trim()
+    || order.loadingDate?.trim()
+    || Number(order.shippingPrice) > 0
+    || Number(order.paidToPaymentAgentNow) > 0,
+  );
   const lines = order.lines.some((line) => isMeaningfulLine(line));
   return header || lines;
 };

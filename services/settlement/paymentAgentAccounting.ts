@@ -96,29 +96,6 @@ const pickLatestByKey = (entries: PaymentAgentLedgerEntry[], keyBuilder: (entry:
   return Array.from(byKey.values());
 };
 
-const createFallbackSettlementEntry = (order: Order, agent: PaymentAgent): PaymentAgentLedgerEntry | null => {
-  const settlement = order.paymentAgentSettlementSnapshot;
-  if (!settlement) return null;
-  return {
-    id: `snapshot-${order.id}`,
-    agentId: order.paymentAgentId || order.paymentBy || agent.id,
-    type: "order_settlement",
-    sourceOrderId: order.id,
-    sourceOrderNumber: order.number || order.orderNumber,
-    amount: clamp(settlement.orderTotal || orderTotal(order)),
-    creditUsed: clamp(settlement.creditUsed || 0),
-    payableAfterCredit: clamp(settlement.payableAfterCredit || 0),
-    paidNow: clamp(settlement.paidNow || 0),
-    remainingPayable: clamp(settlement.remainingPayable || 0),
-    newCreditCreated: clamp(settlement.newCreditCreated || 0),
-    resultingCreditBalance: clamp(settlement.resultingCreditBalance || 0),
-    active: true,
-    isReversed: false,
-    createdAt: settlement.createdAt || order.updatedAt || order.createdAt || order.date || new Date().toISOString(),
-    updatedAt: settlement.updatedAt || order.updatedAt,
-  };
-};
-
 const getOrderCustomerSummary = (order?: Order | null, customers: Customer[] = []) => {
   if (!order) return "—";
   const names = Array.from(new Set((order.lines || []).map((line) => getLineCustomerDisplay(line, customers)).filter(Boolean)));
@@ -153,7 +130,6 @@ export const buildPaymentAgentAccountingSummary = (
   orders: Order[],
   entries: PaymentAgentLedgerEntry[],
   customers: Customer[] = [],
-  options?: { allowSnapshotFallback?: boolean },
 ): PaymentAgentAccountingSummary => {
   return measurePerfSync("calc", "paymentAgentAccounting.buildSummary", { agentId: agent.id, ordersCount: orders.length, entriesCount: entries.length }, () => {
   const matchedOrders = orders.filter((order) => order.status !== "archived" && isOrderMatchedToPaymentAgent(order, agent));
@@ -189,15 +165,7 @@ export const buildPaymentAgentAccountingSummary = (
     (entry) => entry.sourceOrderId || entry.sourceOrderNumber || entry.id,
   );
 
-  const settlementKeys = new Set(activeSettlementEntries.map((entry) => entry.sourceOrderId || entry.sourceOrderNumber || entry.id));
-  const fallbackSettlementEntries = options?.allowSnapshotFallback === false
-    ? []
-    : matchedOrders
-      .map((order) => createFallbackSettlementEntry(order, agent))
-      .filter((entry): entry is PaymentAgentLedgerEntry => Boolean(entry))
-      .filter((entry) => !settlementKeys.has(entry.sourceOrderId || entry.sourceOrderNumber || entry.id));
-
-  const netSettlementEntries = [...activeSettlementEntries, ...fallbackSettlementEntries];
+  const netSettlementEntries = [...activeSettlementEntries];
   const reversalEntries = pickLatestByKey(
     matchedEntries.filter((entry) => entry.type === "order_settlement_reversal" && isEntryActive(entry)),
     (entry) => entry.reversalOfId || entry.sourceOrderId || entry.sourceOrderNumber || entry.id,
@@ -226,11 +194,7 @@ export const buildPaymentAgentAccountingSummary = (
   const settlementPaidNowTotal = netSettlementEntries.reduce((sum, entry) => sum + clamp(entry.paidNow ?? 0), 0);
   const derivedTotalPaidAmount = settlementPaidNowTotal + paymentsMade;
 
-  const legacyCreditFallback =
-    totalAdvanced === 0 && totalUsed === 0 && duePending === 0 && paymentApplied === 0
-      ? clamp(agent.creditBalance ?? 0)
-      : 0;
-  const creditLeft = legacyCreditFallback > 0 ? legacyCreditFallback : Math.max(0, totalAdvanced - totalUsed);
+  const creditLeft = Math.max(0, totalAdvanced - totalUsed);
 
   matchedOrders.forEach((order) => {
     const settlement = order.paymentAgentSettlementSnapshot;

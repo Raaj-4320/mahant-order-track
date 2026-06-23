@@ -121,6 +121,27 @@ const listSavedOrdersFromDb = async (): Promise<Order[]> => {
     .filter((order) => order.status === "saved");
 };
 
+const syncPaymentAgentFinanceFromDb = async (agentId: string): Promise<PaymentAgent> => {
+  const [orders, ledger] = await Promise.all([listSavedOrdersFromDb(), paymentAgentsFirebaseService.listPaymentAgentLedger()]);
+  return writeRecomputedAgentFinance(agentId, orders, ledger);
+};
+
+const buildOpeningCreditEntry = (agent: PaymentAgent, amount: number, now: string): PaymentAgentLedgerEntry => ({
+  id: `opening-credit-${agent.id}`,
+  agentId: agent.id,
+  type: "opening_credit",
+  amount: clamp(amount),
+  creditCreated: clamp(amount),
+  dueReduced: 0,
+  note: "Opening advance balance",
+  paymentMethod: "Opening Balance",
+  paymentDate: agent.createdAt || now,
+  createdAt: agent.createdAt || now,
+  updatedAt: now,
+  active: true,
+  isReversed: false,
+});
+
 const applySettlementDelta = (
   agent: PaymentAgent,
   entry: {
@@ -165,29 +186,31 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
     const now = new Date().toISOString();
     const id = agent.id || makeId();
     const existing = await this.getPaymentAgentById(id);
+    const openingCreditBalance = clamp(agent.openingCreditBalance ?? existing?.openingCreditBalance ?? 0);
     const next: PaymentAgent = {
+      ...(existing ?? {}),
       ...agent,
       id,
       createdAt: existing?.createdAt || agent.createdAt || now,
       updatedAt: now,
-      totalOrdersPaid: agent.totalOrdersPaid ?? existing?.totalOrdersPaid ?? 0,
-      creditBalance: agent.creditBalance ?? agent.openingCreditBalance ?? 0,
-      openingCreditBalance: agent.openingCreditBalance ?? 0,
-      totalOrderAmount: agent.totalOrderAmount ?? 0,
-      totalPaidAmount: agent.totalPaidAmount ?? 0,
-      totalPayableAmount: agent.totalPayableAmount ?? existing?.totalPayableAmount ?? 0,
-      currentDuePayable: agent.currentDuePayable ?? 0,
-      totalUsedAmount: agent.totalUsedAmount ?? existing?.totalUsedAmount ?? 0,
-      currentPayable: agent.currentPayable ?? agent.currentDuePayable ?? existing?.currentPayable ?? 0,
+      totalOrdersPaid: existing?.totalOrdersPaid ?? 0,
+      creditBalance: existing?.creditBalance ?? openingCreditBalance,
+      openingCreditBalance,
+      totalOrderAmount: existing?.totalOrderAmount ?? 0,
+      totalPaidAmount: existing?.totalPaidAmount ?? 0,
+      totalPayableAmount: existing?.totalPayableAmount ?? 0,
+      currentDuePayable: existing?.currentDuePayable ?? 0,
+      totalUsedAmount: existing?.totalUsedAmount ?? 0,
+      currentPayable: existing?.currentPayable ?? existing?.currentDuePayable ?? 0,
     };
     if (existing) {
       if (areBusinessValuesEqual(paymentAgentToFirestore(existing), paymentAgentToFirestore(next))) {
         recordPerfNoopWrite("paymentAgents.upsertPaymentAgent", { path: paymentAgentPath(BUSINESS_ID, id), agentId: id });
-        return existing;
+        return syncPaymentAgentFinanceFromDb(id);
       }
     }
     await measurePerfAsync("firestore-write", "paymentAgents.upsertPaymentAgent", { path: paymentAgentPath(BUSINESS_ID, id), agentId: id }, () => setDoc(doc(db, paymentAgentPath(BUSINESS_ID, id)), paymentAgentToFirestore(next), { merge: true }));
-    return next;
+    return syncPaymentAgentFinanceFromDb(id);
   },
   async recordPaymentToAgent(agentId, payment) {
     const db = requireDb();
@@ -217,8 +240,7 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
       recordPerfEvent("firestore-write", "paymentAgents.recordPaymentToAgent.ledger", { path: `${paymentAgentLedgerPath(BUSINESS_ID)}/${ledgerRef.id}`, agentId });
       tx.set(ledgerRef, paymentAgentLedgerEntryToFirestore({ id: ledgerRef.id, agentId, type: "agent_payment", amount, dueReduced, creditCreated, note: payment.note, paymentMethod: payment.paymentMethod, paymentDate: payment.paymentDate || now, createdAt: now }));
     });
-    const [orders, ledger] = await Promise.all([listSavedOrdersFromDb(), this.listPaymentAgentLedger()]);
-    return writeRecomputedAgentFinance(agentId, orders, ledger);
+    return syncPaymentAgentFinanceFromDb(agentId);
   },
   async deletePaymentAgentLedgerEntry(entryId) {
     const db = requireDb();
@@ -273,8 +295,7 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
     const refreshed = refreshedEntry.exists() ? paymentAgentLedgerEntryFromFirestore({ id: refreshedEntry.id, ...(refreshedEntry.data() as Record<string, unknown>) }) : null;
     const targetAgentId = refreshed?.agentId || "";
     if (!targetAgentId) throw new Error("Payment agent not found after deleting payment.");
-    const [orders, ledger] = await Promise.all([listSavedOrdersFromDb(), this.listPaymentAgentLedger()]);
-    return writeRecomputedAgentFinance(targetAgentId, orders, ledger);
+    return syncPaymentAgentFinanceFromDb(targetAgentId);
   },
   async listPaymentAgentLedger(agentId?: string) {
     const { paymentAgentLedgerFirebaseService } = await import("@/services/firebase/paymentAgentLedgerFirebaseService");
@@ -286,6 +307,139 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
     const savedOrders = await listSavedOrdersFromDb();
     const updatedAgents = await Promise.all(agents.map((agent) => writeRecomputedAgentFinance(agent.id, savedOrders, ledger)));
     return updatedAgents.sort((a, b) => a.name.localeCompare(b.name));
+  },
+  async repairPaymentAgentsFromSavedOrders() {
+    const db = requireDb();
+    const now = new Date().toISOString();
+    const [agents, savedOrders, ledger] = await Promise.all([
+      this.listPaymentAgents(),
+      listSavedOrdersFromDb(),
+      this.listPaymentAgentLedger(),
+    ]);
+
+    let openingBalancesBackfilled = 0;
+    let openingEntriesCreatedOrUpdated = 0;
+    let duplicateOpeningEntriesDeactivated = 0;
+    let settlementEntriesCreatedOrUpdated = 0;
+
+    const ledgerById = new Map(ledger.map((entry) => [entry.id, entry]));
+
+    for (const order of savedOrders) {
+      if (!isOrderEligibleForCreditSettlement(order)) continue;
+      const splits = getOrderPaymentAgentSplits(order);
+      if (splits.length === 0) continue;
+      const validation = validatePaymentAgentSplits(order);
+      if (!validation.isValid) continue;
+      for (const split of splits) {
+        if (!split.settlementSnapshot) continue;
+        const desiredEntry = buildOrderSplitSettlementEntry(order, split);
+        const existing = ledgerById.get(desiredEntry.id) ?? null;
+        const needsWrite = !existing
+          || existing.active === false
+          || existing.isReversed === true
+          || existing.settlementHash !== desiredEntry.settlementHash
+          || existing.agentId !== desiredEntry.agentId;
+        if (needsWrite) {
+          await setDoc(
+            doc(db, paymentAgentLedgerPath(BUSINESS_ID), desiredEntry.id),
+            paymentAgentLedgerEntryToFirestore({
+              ...desiredEntry,
+              createdAt: existing?.createdAt || desiredEntry.createdAt,
+              updatedAt: now,
+            }),
+            { merge: true },
+          );
+          ledgerById.set(desiredEntry.id, {
+            ...desiredEntry,
+            createdAt: existing?.createdAt || desiredEntry.createdAt,
+            updatedAt: now,
+          });
+          settlementEntriesCreatedOrUpdated += 1;
+        }
+      }
+    }
+
+    for (const agent of agents) {
+      const agentLedger = ledger.filter((entry) => entry.agentId === agent.id);
+      const activeOpeningEntries = agentLedger.filter((entry) => entry.type === "opening_credit" && isActiveSettlementEntry(entry));
+      const activeOpeningTotal = activeOpeningEntries.reduce((sum, entry) => sum + clamp(entry.amount), 0);
+      const activeManualPaymentCount = agentLedger.filter((entry) => entry.type === "agent_payment" && isActiveSettlementEntry(entry)).length;
+
+      let desiredOpeningBalance = clamp(agent.openingCreditBalance ?? 0);
+      if (desiredOpeningBalance <= 0 && activeOpeningTotal > 0) {
+        desiredOpeningBalance = activeOpeningTotal;
+      }
+
+      if (desiredOpeningBalance <= 0 && activeManualPaymentCount === 0) {
+        const candidateFromLegacyFields = Math.max(
+          clamp(agent.creditBalance ?? 0) + clamp(agent.totalUsedAmount ?? 0),
+          clamp(agent.totalPaidAmount ?? 0),
+        );
+        if (candidateFromLegacyFields > 0) {
+          desiredOpeningBalance = candidateFromLegacyFields;
+        }
+      }
+
+      const currentOpeningBalance = clamp(agent.openingCreditBalance ?? 0);
+      if (desiredOpeningBalance !== currentOpeningBalance) {
+        await setDoc(
+          doc(db, paymentAgentPath(BUSINESS_ID, agent.id)),
+          paymentAgentToFirestore({
+            ...agent,
+            openingCreditBalance: desiredOpeningBalance,
+            updatedAt: now,
+          }),
+          { merge: true },
+        );
+        openingBalancesBackfilled += 1;
+      }
+
+      for (const duplicateEntry of activeOpeningEntries.filter((entry) => entry.id !== `opening-credit-${agent.id}`)) {
+        await setDoc(
+          doc(db, paymentAgentLedgerPath(BUSINESS_ID), duplicateEntry.id),
+          { active: false, updatedAt: now },
+          { merge: true },
+        );
+        duplicateOpeningEntriesDeactivated += 1;
+      }
+
+      const canonicalOpeningRef = doc(db, paymentAgentLedgerPath(BUSINESS_ID), `opening-credit-${agent.id}`);
+      const canonicalOpeningEntry = activeOpeningEntries.find((entry) => entry.id === `opening-credit-${agent.id}`) ?? null;
+      if (desiredOpeningBalance > 0) {
+        const desiredEntry = buildOpeningCreditEntry(
+          {
+            ...agent,
+            openingCreditBalance: desiredOpeningBalance,
+          },
+          desiredOpeningBalance,
+          now,
+        );
+        const needsWrite = !canonicalOpeningEntry
+          || clamp(canonicalOpeningEntry.amount) !== desiredOpeningBalance
+          || canonicalOpeningEntry.active === false
+          || canonicalOpeningEntry.isReversed === true
+          || (canonicalOpeningEntry.note || "") !== desiredEntry.note
+          || (canonicalOpeningEntry.paymentMethod || "") !== desiredEntry.paymentMethod;
+        if (needsWrite) {
+          await setDoc(canonicalOpeningRef, paymentAgentLedgerEntryToFirestore(desiredEntry), { merge: true });
+          openingEntriesCreatedOrUpdated += 1;
+        }
+      } else if (canonicalOpeningEntry && isActiveSettlementEntry(canonicalOpeningEntry)) {
+        await setDoc(canonicalOpeningRef, { active: false, updatedAt: now }, { merge: true });
+        duplicateOpeningEntriesDeactivated += 1;
+      }
+    }
+
+    const refreshedLedger = await this.listPaymentAgentLedger();
+    const recalculatedAgents = await Promise.all(agents.map((agent) => writeRecomputedAgentFinance(agent.id, savedOrders, refreshedLedger)));
+    return {
+      paymentAgentsScanned: agents.length,
+      openingBalancesBackfilled,
+      openingEntriesCreatedOrUpdated,
+      duplicateOpeningEntriesDeactivated,
+      settlementEntriesCreatedOrUpdated,
+      paymentAgentsRecalculated: recalculatedAgents.length,
+    };
   },
   async deletePaymentAgent(id: string) {
     const existing = await this.getPaymentAgentById(id);

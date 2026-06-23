@@ -30,6 +30,14 @@ export interface PaymentAgentsService {
   getPaymentAgentById(id: string): Promise<PaymentAgent | null>;
   upsertPaymentAgent(agent: PaymentAgent): Promise<PaymentAgent>;
   recalculatePaymentAgentsFromOrders(orders: Order[]): Promise<PaymentAgent[]>;
+  repairPaymentAgentsFromSavedOrders?(): Promise<{
+    paymentAgentsScanned: number;
+    openingBalancesBackfilled: number;
+    openingEntriesCreatedOrUpdated: number;
+    duplicateOpeningEntriesDeactivated: number;
+    settlementEntriesCreatedOrUpdated: number;
+    paymentAgentsRecalculated: number;
+  }>;
   recordPaymentToAgent(agentId: string, payment: { amount: number; paymentDate: string; note?: string; paymentMethod?: string }): Promise<PaymentAgent>;
   deletePaymentAgentLedgerEntry?(entryId: string): Promise<PaymentAgent>;
   listPaymentAgentLedger(agentId?: string): Promise<PaymentAgentLedgerEntry[]>;

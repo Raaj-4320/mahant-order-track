@@ -37,7 +37,7 @@ type LedgerViewRow = {
 
 export default function PaymentAgentsPage() {
   const PAGE_SIZE = 100;
-  const { data: agents, isLoading: isPaymentAgentsLoading, upsertPaymentAgent, deletePaymentAgent, recordPaymentToAgent, deletePaymentAgentLedgerEntry, listPaymentAgentLedger, recalculateFromOrders, reload: reloadPaymentAgents } = usePaymentAgents();
+  const { data: agents, isLoading: isPaymentAgentsLoading, upsertPaymentAgent, deletePaymentAgent, recordPaymentToAgent, deletePaymentAgentLedgerEntry, listPaymentAgentLedger, recalculateFromOrders, repairPaymentAgentsFromSavedOrders, reload: reloadPaymentAgents } = usePaymentAgents();
   const { data: customers } = useCustomers();
   const { orders, pushToast } = useStore();
   const { data: firebaseOrders, isLoading: isOrdersLoading } = useOrders();
@@ -88,10 +88,13 @@ export default function PaymentAgentsPage() {
     if (ordersSource === "firebase" && isOrdersLoading) return;
     if (!sourceOrders.length && !agents.length) return;
     paymentAgentRepairTriggeredRef.current = true;
-    void recalculateFromOrders(sourceOrders).catch(() => {
+    const repairTask = ordersSource === "firebase" && repairPaymentAgentsFromSavedOrders
+      ? repairPaymentAgentsFromSavedOrders()
+      : recalculateFromOrders(sourceOrders);
+    void repairTask.catch(() => {
       paymentAgentRepairTriggeredRef.current = false;
     });
-  }, [agents.length, isOrdersLoading, isPaymentAgentsLoading, ordersSource, recalculateFromOrders, sourceOrders]);
+  }, [agents.length, isOrdersLoading, isPaymentAgentsLoading, ordersSource, recalculateFromOrders, repairPaymentAgentsFromSavedOrders, sourceOrders]);
 
   const rows = useMemo(() => {
     return measurePerfSync("calc", "paymentAgentsPage.rows", { agentsCount: agents.length, ordersCount: sourceOrders.length, ledgerCount: (ledgerRows[ALL_LEDGER_ROWS_KEY] || []).length }, () => {

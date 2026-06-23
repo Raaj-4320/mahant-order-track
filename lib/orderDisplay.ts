@@ -1,7 +1,7 @@
 import type { Order, PaymentAgent } from "@/lib/types";
 import { formatPaymentAgentSplitsDisplay, hasRealPaymentAgentSplits } from "@/services/settlement/paymentAgentSplits";
 
-export const PAYMENT_AGENT_NOT_LINKED = "Not Linked";
+export const PAYMENT_AGENT_NOT_LINKED = "Not Paid";
 export const PAYMENT_AGENT_DELETED = "Deleted Payment Agent";
 export const PAYMENT_AGENT_INVALID = "Invalid Payment Agent Reference";
 export const PAYMENT_AGENT_UNKNOWN = "Unknown Payment Agent";

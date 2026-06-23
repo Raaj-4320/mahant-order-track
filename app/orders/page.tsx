@@ -610,6 +610,7 @@ export default function OrdersPage() {
   const [hasAttemptedFinalSave, setHasAttemptedFinalSave] = useState(false);
   const [showDraftIncompleteConfirm, setShowDraftIncompleteConfirm] = useState(false);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const [composerBaseline, setComposerBaseline] = useState<ReturnType<typeof normalizeComposerOrderForComparison> | null>(null);
   const [validationWarning, setValidationWarning] = useState<{ visible: boolean; items: string[] }>({ visible: false, items: [] });
   const isOrderModalOpen = mode === "add" || mode === "edit";
   const [view, setView] = useState<"list" | "grid" | "calendar">("list");
@@ -1327,20 +1328,9 @@ export default function OrdersPage() {
     return false;
   };
   const hasComposerChanges = () => {
-    if (editingOrderId) {
-      if (!editingOrder) return false;
-      const baseline = normalizeComposerOrderForComparison(editingOrder);
-      const current = normalizeComposerOrderForComparison(draft);
-      return JSON.stringify(current) !== JSON.stringify(baseline);
-    }
-    const preferredSeries = orderSeries.find((series) => series.id === selectedSeriesId) ?? orderSeries[0] ?? null;
-    const emptyDraft = createEmptyDraft(orders, preferredSeries ? getSeriesSuggestion(preferredSeries) : "");
-    const baseline = normalizeComposerOrderForComparison({
-      ...emptyDraft,
-      ...deriveOrderSeriesFields(emptyDraft.number || emptyDraft.orderNumber),
-    });
+    if (!composerBaseline) return false;
     const current = normalizeComposerOrderForComparison(draft);
-    return JSON.stringify(current) !== JSON.stringify(baseline);
+    return JSON.stringify(current) !== JSON.stringify(composerBaseline);
   };
   const resolveStatusOptions = (order: Order, rowValue: RowEditState) => {
     const options = rowValue.loadingDate ? STATUS_OPTIONS_WITH_DATE : STATUS_OPTIONS_NO_DATE;
@@ -2114,6 +2104,7 @@ try {
 
   const resetOrderComposer = (notify = true) => {
     setEditingOrderId(null);
+    setComposerBaseline(null);
     setRemovedLineIds([]);
     setOriginalLineIds(new Set());
     setExpandedOrderIds({});
@@ -2131,6 +2122,10 @@ try {
 
   const requestExitComposer = () => {
     if (!isOrderModalOpen) return;
+    if (!editingOrderId && !hasAnyDraftContent(draft)) {
+      resetOrderComposer(false);
+      return;
+    }
     if (!hasComposerChanges()) {
       resetOrderComposer(false);
       return;
@@ -2146,14 +2141,16 @@ try {
     const normalizedOrderNumber = normalizeEditableOrderNumber(copy.number || copy.orderNumber);
     const matchedSeries = orderSeries.find((series) => series.prefix === (parseOrderNumber(normalizedOrderNumber)?.prefix || "")) ?? null;
     setSelectedSeriesId(matchedSeries?.id || "");
-    setDraft(applyLegacyPaymentAgentFromSplits({
+    const preparedDraft = applyLegacyPaymentAgentFromSplits({
       ...copy,
       number: normalizedOrderNumber,
       orderNumber: normalizedOrderNumber,
       ...deriveOrderSeriesFields(normalizedOrderNumber),
       wechatId: (copy.wechatId || "").trim(),
       lines: (copy.lines || []).map((line: Order["lines"][number]) => seedDetailBoxesFromLegacy(line)),
-    }, getEditablePaymentAgentSplits(copy)));
+    }, getEditablePaymentAgentSplits(copy));
+    setDraft(preparedDraft);
+    setComposerBaseline(normalizeComposerOrderForComparison(preparedDraft));
     setHasAttemptedFinalSave(false);
     setShowDraftIncompleteConfirm(false);
     setShowExitConfirm(false);
@@ -2174,7 +2171,9 @@ try {
     }
     const reserved = preferredSeries ? getSeriesSuggestion(preferredSeries) : "";
     const nextDraft = createEmptyDraft(orders, normalizeEditableOrderNumber(reserved));
-    setDraft({ ...nextDraft, ...deriveOrderSeriesFields(nextDraft.number || nextDraft.orderNumber) });
+    const preparedDraft = { ...nextDraft, ...deriveOrderSeriesFields(nextDraft.number || nextDraft.orderNumber) };
+    setDraft(preparedDraft);
+    setComposerBaseline(normalizeComposerOrderForComparison(preparedDraft));
     setHasAttemptedFinalSave(false);
     setShowDraftIncompleteConfirm(false);
     setShowExitConfirm(false);
