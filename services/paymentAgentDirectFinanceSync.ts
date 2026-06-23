@@ -34,6 +34,8 @@ const splitOrderPortionAmount = (order: Order, split: PaymentAgentOrderSplit) =>
 };
 
 const splitUsedAmount = (split: PaymentAgentOrderSplit) => {
+  const fromCreditUsed = clamp(split.settlementSnapshot?.creditUsed);
+  if (fromCreditUsed > 0) return fromCreditUsed;
   const paidNow = clamp(split.paidNow);
   if (paidNow > 0) return paidNow;
   return clamp(split.settlementSnapshot?.paidNow);

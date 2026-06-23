@@ -167,7 +167,7 @@ export default function PaymentAgentsPage() {
   }, [totalPages]);
 
   const exportVisible = () => {
-    const header = ["Agent", "WeChat ID", "Phone", "Total Orders", "Credit Used", "Due / Pending", "Credit Left", "Advance Payments"];
+    const header = ["Agent", "WeChat ID", "Phone", "Total Orders", "Net Credit Used", "Due / Pending", "Credit Left", "Advance Payments"];
     const csvRows = filteredAndSorted.map((row) => [
       row.agent.name,
       row.agent.wechatId || "Not Set",
@@ -419,7 +419,7 @@ export default function PaymentAgentsPage() {
                 options={[
                   { value: "name", label: "Sort: Agent Name" },
                   { value: "orders", label: "Sort: Total Orders High to Low" },
-                  { value: "used", label: "Sort: Credit Used High to Low" },
+                  { value: "used", label: "Sort: Net Credit Used High to Low" },
                   { value: "due", label: "Sort: Due / Pending High to Low" },
                   { value: "balance", label: "Sort: Credit Left High to Low" },
                   { value: "payments", label: "Sort: Advance Payments High to Low" },
@@ -450,7 +450,7 @@ export default function PaymentAgentsPage() {
                     <tr className="border-b border-border text-[11px] uppercase tracking-[0.01em] text-fg-muted">
                       <th className="px-3 py-2 text-left">Agent</th>
                       <th className="px-2 py-2 text-center">Orders</th>
-                      <th className="px-2 py-2 text-right">Credit Used</th>
+                      <th className="px-2 py-2 text-right">Net Credit Used</th>
                       <th className="px-2 py-2 text-right">Due / Pending</th>
                       <th className="px-2 py-2 text-right">Credit Left</th>
                       <th className="px-2 py-2 text-right">Advance Payments</th>

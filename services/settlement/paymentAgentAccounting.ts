@@ -1,7 +1,8 @@
-import { orderTotal, type Customer, type Order, type PaymentAgent, type PaymentAgentLedgerEntry } from "@/lib/types";
+import { orderTotal, type Customer, type Order, type PaymentAgent, type PaymentAgentLedgerEntry, type PaymentAgentOrderSplit } from "@/lib/types";
 import { getLineCustomerDisplay } from "@/services/customers/customerResolution";
 import { measurePerfSync } from "@/lib/perfDebug";
 import { isPaymentAgentActive, resolveOrderPaymentAgentMatch } from "@/lib/orderDisplay";
+import { getOrderPaymentAgentSplits, getPaymentAgentSplitAgentId } from "@/services/settlement/paymentAgentSplits";
 
 const clamp = (value: number) => Math.max(0, Number.isFinite(value) ? value : 0);
 const entryTime = (entry: PaymentAgentLedgerEntry) => entry.paymentDate || entry.updatedAt || entry.createdAt || "";
@@ -109,6 +110,53 @@ const warnAccounting = (key: string, message: string, meta: Record<string, unkno
   console.warn(`[PaymentAgent Accounting Audit] ${message}`, meta);
 };
 
+const normalizeText = (value?: string | null) => (value || "").trim().toLowerCase();
+
+const splitBelongsToAgent = (agent: PaymentAgent, split: PaymentAgentOrderSplit) => {
+  const agentId = normalizeText(agent.id);
+  const agentName = normalizeText(agent.name);
+  const splitAgentId = normalizeText(getPaymentAgentSplitAgentId(split));
+  const splitName = normalizeText(split.paymentAgentName || split.paymentAgentSnapshot?.name || split.paymentBy);
+  return splitAgentId === agentId || (!splitAgentId && splitName === agentName);
+};
+
+const buildFallbackSettlementEntries = (order: Order, agent: PaymentAgent): PaymentAgentLedgerEntry[] => {
+  const matchedSplits = getOrderPaymentAgentSplits(order).filter((split) => splitBelongsToAgent(agent, split));
+  return matchedSplits.flatMap((split) => {
+    const orderPortionTotal = clamp(
+      split.settlementSnapshot?.orderPortionTotal
+      ?? split.assignedAmount
+      ?? split.paidNow
+      ?? (matchedSplits.length === 1 ? orderTotal(order) : 0),
+    );
+    const creditUsed = clamp(split.settlementSnapshot?.creditUsed ?? split.paidNow ?? 0);
+    const remainingPayable = clamp(split.settlementSnapshot?.remainingPayable ?? Math.max(0, orderPortionTotal - creditUsed));
+    if (orderPortionTotal <= 0 && creditUsed <= 0 && remainingPayable <= 0) {
+      return [];
+    }
+    return [{
+      id: `snapshot-${order.id}-${split.id}`,
+      settlementEntryKey: `${order.id}:${split.id}`,
+      sourcePaymentAgentSplitId: split.id,
+      agentId: getPaymentAgentSplitAgentId(split) || agent.id,
+      type: "order_settlement",
+      sourceOrderId: order.id,
+      sourceOrderNumber: order.number || order.orderNumber,
+      amount: orderPortionTotal,
+      creditUsed,
+      payableAfterCredit: clamp(split.settlementSnapshot?.payableAfterCredit ?? remainingPayable),
+      paidNow: clamp(split.settlementSnapshot?.paidNow ?? 0),
+      remainingPayable,
+      newCreditCreated: clamp(split.settlementSnapshot?.newCreditCreated ?? 0),
+      resultingCreditBalance: clamp(split.settlementSnapshot?.resultingCreditBalance ?? 0),
+      active: true,
+      isReversed: false,
+      createdAt: split.settlementSnapshot?.createdAt || split.createdAt || order.updatedAt || order.createdAt || order.date || new Date().toISOString(),
+      updatedAt: split.settlementSnapshot?.updatedAt || split.updatedAt || order.updatedAt,
+    }];
+  });
+};
+
 export const isOrderMatchedToPaymentAgent = (order: Order, agent: PaymentAgent) => {
   const resolution = resolveOrderPaymentAgentMatch(order, [agent]);
   if (resolution.agent?.id === agent.id) {
@@ -165,7 +213,14 @@ export const buildPaymentAgentAccountingSummary = (
     (entry) => entry.sourceOrderId || entry.sourceOrderNumber || entry.id,
   );
 
-  const netSettlementEntries = [...activeSettlementEntries];
+  const settlementKeys = new Set(
+    activeSettlementEntries.map((entry) => entry.settlementEntryKey || entry.sourceOrderId || entry.sourceOrderNumber || entry.id),
+  );
+  const fallbackSettlementEntries = matchedOrders
+    .flatMap((order) => buildFallbackSettlementEntries(order, agent))
+    .filter((entry) => !settlementKeys.has(entry.settlementEntryKey || entry.sourceOrderId || entry.sourceOrderNumber || entry.id));
+
+  const netSettlementEntries = [...activeSettlementEntries, ...fallbackSettlementEntries];
   const reversalEntries = pickLatestByKey(
     matchedEntries.filter((entry) => entry.type === "order_settlement_reversal" && isEntryActive(entry)),
     (entry) => entry.reversalOfId || entry.sourceOrderId || entry.sourceOrderNumber || entry.id,
