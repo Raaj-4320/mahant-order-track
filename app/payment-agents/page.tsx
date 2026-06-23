@@ -24,8 +24,6 @@ import { measurePerfSync } from "@/lib/perfDebug";
 import { getPaymentAgentDirectFinance } from "@/services/paymentAgentFinance";
 
 const ALL_LEDGER_ROWS_KEY = "__all__";
-const clampPercent = (value: number) => Math.max(0, Math.min(100, value));
-const formatPercent = (value: number) => `${Number(clampPercent(value).toFixed(1)).toString()}%`;
 type LedgerViewRow = {
   id: string;
   date: string;
@@ -35,6 +33,12 @@ type LedgerViewRow = {
   debit: number;
   credit: number;
   balance: number;
+};
+
+const clampPercent = (value: number) => Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
+const formatPercent = (value: number) => {
+  const safe = clampPercent(value);
+  return Number.isInteger(safe) ? String(safe) : safe.toFixed(1);
 };
 
 export default function PaymentAgentsPage() {
@@ -449,14 +453,12 @@ export default function PaymentAgentsPage() {
           <section className="card overflow-hidden">
             <div className="overflow-x-auto">
               <div className="w-full min-w-0 px-0.5 py-1">
-                <table className="w-full min-w-[1160px] text-[13px]">
+                <table className="w-full min-w-[920px] text-[13px]">
                   <thead className="bg-white">
-                    <tr className="border-b border-border text-[11px] uppercase tracking-[0.01em] text-fg-muted">
+                    <tr className="border-b border-border text-[12px] uppercase tracking-[0.01em] text-fg-muted">
                       <th className="px-3 py-2 text-left">Agent</th>
                       <th className="px-2 py-2 text-center">Orders</th>
                       <th className="px-2 py-2 text-right">Available Credit</th>
-                      <th className="px-2 py-2 text-right">Advance Payments</th>
-                      <th className="px-2 py-2 text-right">Net Credit Used</th>
                       <th className="px-2 py-2 text-right">Due / Pending</th>
                       <th className="px-3 py-2 text-right">Actions</th>
                     </tr>
@@ -472,23 +474,21 @@ export default function PaymentAgentsPage() {
                             : { label: "Low Credit", className: "border-rose-200 bg-rose-50 text-rose-700" };
                       return (
                       <tr key={row.agent.id} className="border-b border-border transition-colors last:border-b-0 hover:bg-bg-subtle/40">
-                        <td className="px-3 py-2.5">
-                          <div className="font-semibold text-fg">{row.agent.name}</div>
+                        <td className="px-3 py-3">
+                          <div className="text-[15px] font-semibold leading-tight text-fg">{row.agent.name}</div>
                           <div className="mt-0.5 text-[12px] text-fg-subtle">{row.agent.wechatId?.trim() || row.agent.phone?.trim() || "No WeChat ID"}</div>
                           <div className="mt-1.5 flex items-center gap-2 text-[11px] text-fg-subtle">
-                            <span>{`Used ${formatPercent(row.usagePercent)} · Available ${formatPercent(row.availablePercent)}`}</span>
+                            <span>{`Used ${formatPercent(row.usagePercent)}% · Available ${formatPercent(row.availablePercent)}%`}</span>
                             <span className={`inline-flex rounded-full border px-2 py-0.5 font-medium ${healthBadge.className}`}>{healthBadge.label}</span>
                           </div>
                           <div className="mt-1 h-1.5 w-full max-w-[220px] overflow-hidden rounded-full bg-slate-100">
                             <div className="h-full rounded-full bg-slate-300" style={{ width: `${row.usagePercent}%` }} />
                           </div>
                         </td>
-                        <td className="px-2 py-2.5 text-center font-semibold">{row.totalOrders}</td>
-                        <td className="px-2 py-2.5 text-right font-semibold tabular-nums text-emerald-700">{formatAmount(row.creditLeft)}</td>
-                        <td className="px-2 py-2.5 text-right font-semibold tabular-nums text-sky-700">{formatAmount(row.paymentsMade)}</td>
-                        <td className="px-2 py-2.5 text-right font-semibold tabular-nums text-slate-900">{formatAmount(row.totalUsed)}</td>
-                        <td className={`px-2 py-2.5 text-right font-semibold tabular-nums ${row.duePending > 0 ? "text-rose-600" : "text-fg-subtle"}`}>{formatAmount(row.duePending)}</td>
-                        <td className="px-3 py-2.5">
+                        <td className="px-2 py-3 text-center text-[15px] font-semibold tabular-nums">{row.totalOrders}</td>
+                        <td className="px-2 py-3 text-right text-[15px] font-semibold tabular-nums text-emerald-700">{formatAmount(row.creditLeft)}</td>
+                        <td className={`px-2 py-3 text-right text-[15px] font-semibold tabular-nums ${row.duePending > 0 ? "text-rose-600" : "text-fg-subtle"}`}>{formatAmount(row.duePending)}</td>
+                        <td className="px-3 py-3">
                           <div className="flex justify-end gap-1.5">
                             <button
                               type="button"
@@ -535,14 +535,14 @@ export default function PaymentAgentsPage() {
                     })}
                     {isPaymentAgentsLoading ? (
                       <tr>
-                        <td colSpan={7} className="px-4 py-8 text-center text-fg-subtle">
+                        <td colSpan={5} className="px-4 py-8 text-center text-fg-subtle">
                           Loading payment agents...
                         </td>
                       </tr>
                     ) : null}
                     {!isPaymentAgentsLoading && pagedRows.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="px-4 py-8 text-center text-fg-subtle">
+                        <td colSpan={5} className="px-4 py-8 text-center text-fg-subtle">
                           No payment agents found.
                         </td>
                       </tr>

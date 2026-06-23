@@ -1108,7 +1108,31 @@ export default function OrdersPage() {
     setDraft((current) => {
       const existingSplits = getEditablePaymentAgentSplits(current);
       const nextSplits = typeof updater === "function" ? updater(existingSplits) : updater;
-      return applyLegacyPaymentAgentFromSplits(current, nextSplits.length > 0 ? nextSplits : [createEmptyPaymentAgentSplit()]);
+      const normalizedSplits = nextSplits.length > 0 ? nextSplits : [createEmptyPaymentAgentSplit()];
+      const selectedSplits = normalizedSplits.filter((split) =>
+        Boolean(
+          split.paymentAgentId?.trim() ||
+            split.paymentBy?.trim() ||
+            split.paymentAgentName?.trim() ||
+            split.paymentAgentSnapshot?.name?.trim(),
+        ),
+      );
+      const nextOrderTotal = orderTotal(current);
+      const hydratedSplits =
+        selectedSplits.length === 1
+          ? normalizedSplits.map((split) => {
+              if (split.id !== selectedSplits[0]?.id) return split;
+              const currentPaidNow = Number(split.paidNow) || 0;
+              const currentAssignedAmount = Number(split.assignedAmount) || 0;
+              if (currentPaidNow > 0 || currentAssignedAmount > 0) return split;
+              return {
+                ...split,
+                assignedAmount: nextOrderTotal,
+                paidNow: nextOrderTotal,
+              };
+            })
+          : normalizedSplits;
+      return applyLegacyPaymentAgentFromSplits(current, hydratedSplits);
     });
   };
 
