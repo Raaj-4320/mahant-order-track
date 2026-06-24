@@ -451,10 +451,10 @@ export default function PaymentAgentsPage() {
           </section>
 
           <section className="card overflow-hidden">
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto overflow-y-visible">
               <div className="w-full min-w-0 px-0.5 py-1">
                 <table className="w-full min-w-[920px] text-[13px]">
-                  <thead className="bg-bg-subtle">
+                  <thead className="sticky top-0 z-30 bg-bg-card/95 shadow-[0_1px_0_rgba(15,23,42,0.06)] backdrop-blur">
                     <tr className="border-b border-border text-[12px] uppercase tracking-[0.01em] text-fg-muted">
                       <th className="px-3 py-2 text-left">Agent</th>
                       <th className="px-2 py-2 text-center">Orders</th>

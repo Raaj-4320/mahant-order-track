@@ -206,9 +206,9 @@ pushToast({ tone: "danger", text: "Failed to save row changes." });
         </div>
 
         <div className="card overflow-hidden">
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overflow-y-visible">
             <table className="w-full min-w-[980px] text-[13px]">
-              <thead className="bg-bg-subtle">
+              <thead className="sticky top-0 z-30 bg-bg-card/95 shadow-[0_1px_0_rgba(15,23,42,0.06)] backdrop-blur">
                 <tr className="text-left text-[10px] uppercase tracking-wide text-fg-subtle">
                   <th className="px-4 py-2">Order Number</th><th>Total Unique Items</th><th>Order Total</th><th>Paid By</th><th>Loading Date</th><th>Status</th><th className="text-right px-4">Actions</th>
                 </tr>

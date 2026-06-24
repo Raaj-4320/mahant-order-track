@@ -360,7 +360,7 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
               ) : (
                 <div className="max-h-[44vh] overflow-y-auto overflow-x-hidden">
                   <table className="w-full text-[12px]">
-                    <thead className="bg-bg-subtle">
+                    <thead className="sticky top-0 z-30 bg-bg-card/95 shadow-[0_1px_0_rgba(15,23,42,0.06)] backdrop-blur">
                       <tr className="border-b border-border text-[10px] uppercase tracking-[0.01em] text-fg-muted">
                         <th className="px-3 py-2 text-left">Date</th>
                         <th className="px-3 py-2 text-left">Order No</th>
@@ -452,7 +452,7 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
             ) : (
               <div className="max-h-[34vh] overflow-y-auto overflow-x-hidden">
                 <table className="w-full text-[12px]">
-                  <thead className="bg-bg-subtle">
+                  <thead className="sticky top-0 z-30 bg-bg-card/95 shadow-[0_1px_0_rgba(15,23,42,0.06)] backdrop-blur">
                     <tr className="border-b border-border text-[10px] uppercase tracking-[0.01em] text-fg-muted">
                       <th className="px-3 py-2 text-left">Date</th>
                       <th className="px-3 py-2 text-left">Order No</th>

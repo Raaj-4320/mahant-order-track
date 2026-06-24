@@ -2845,9 +2845,9 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
         {orderHeaderTabs.length ? <section className="card p-2.5"><div className="flex flex-wrap items-center gap-2">{orderHeaderTabs.map((tabLabel) => { const category = tabLabel; const isActive = mode === "history" && effectiveOrderCategory === category; const canDeleteCategory = emptySeriesCategories.has(category); return <div key={tabLabel} className={cn("flex items-center gap-1 rounded-full border pr-2 transition-colors", isActive ? "border-brand bg-brand text-brand-fg" : "border-border bg-bg-card text-fg hover:bg-bg-subtle")}><button type="button" onClick={() => { setMode("history"); setSelectedOrderCategory(category); }} className="rounded-full px-3 py-1.5 text-[12px] font-medium">{tabLabel}</button>{canDeleteCategory ? <button type="button" onClick={() => requestDeleteSeriesCategory(category)} className={cn("grid h-6 w-6 place-items-center rounded-full transition-colors", isActive ? "hover:bg-white/15" : "hover:bg-bg-subtle")} aria-label={`Delete ${category} category`} title={`Delete ${category} category`}><Trash2 size={12} /></button> : null}</div>; })}</div></section> : null}
         {mode === "drafts" && <section className="card overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-border"><h3 className="font-semibold">Draft Orders</h3><div className="text-[12px] text-fg-subtle">{drafts.length} draft{drafts.length === 1 ? "" : "s"}</div></div>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overflow-y-visible">
             <table className="w-full min-w-[980px] text-[13px]">
-              <thead className="sticky top-0 z-20 bg-bg-card/95 shadow-[0_1px_0_rgba(15,23,42,0.06)] backdrop-blur">
+              <thead className="sticky top-0 z-30 bg-bg-card/95 shadow-[0_1px_0_rgba(15,23,42,0.06)] backdrop-blur">
                 <tr className="text-left text-[11px] uppercase tracking-wide text-fg-subtle">
                   <th className="px-4 py-2">Photo</th><th>WeChat ID</th><th>Payment Agent</th><th>Marka</th><th>Total Quantity & CTN</th><th>Order Total</th><th className="text-right px-4">Actions</th>
                 </tr>
@@ -2878,9 +2878,9 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
 
         <section className="card overflow-visible">
           {/* <div className="flex items-center justify-between px-4 py-3 border-b border-border"><h3 className="font-semibold">Order History</h3><div className="text-[12px] text-fg-subtle">Showing 1 to {pagedHistory.length} of {history.length} rows</div></div> */}
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overflow-y-visible">
             <div className="w-full min-w-0 px-0.5 py-1">
-              <div className="sticky top-0 z-20 grid items-center border-b border-border bg-bg-card/95 text-[12.5px] font-semibold uppercase tracking-[0.01em] text-fg-muted shadow-[0_1px_0_rgba(15,23,42,0.06)] backdrop-blur" style={{ gridTemplateColumns: historyGridTemplate }}>
+              <div className="sticky top-0 z-30 grid items-center border-b border-border bg-bg-card/95 text-[12.5px] font-semibold uppercase tracking-[0.01em] text-fg-muted shadow-[0_1px_0_rgba(15,23,42,0.06)] backdrop-blur" style={{ gridTemplateColumns: historyGridTemplate }}>
                 <div className="px-1 py-1.5 text-center">Order Number</div>
                 <div className="px-1 py-1.5 text-left">WeChat ID</div>
                 <div className="px-1 py-1.5 text-center">Product Photo</div>
@@ -2914,8 +2914,17 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                   const rate = selectedLine ? getLineRate(selectedLine) : 0;
                   const amount = getOrderTotalAmount(order);
                   const shippingAmount = getOrderShippingAmount(order);
-                  const paidAmount = Math.max(0, Number.isFinite(Number(order.paidAmount)) ? Number(order.paidAmount) : paymentSplits.reduce((sum, split) => sum + (Number(split.paidNow) || 0), 0));
-                  const remainingPayable = Math.max(0, Number.isFinite(Number(order.dueAmount)) ? Number(order.dueAmount) : Math.max(0, amount - paidAmount));
+                  const splitPaidAmount = paymentSplits.reduce((sum, split) => {
+                    const creditUsed = Number(split.settlementSnapshot?.creditUsed);
+                    if (Number.isFinite(creditUsed)) return sum + Math.max(0, creditUsed);
+                    const paidNow = Number(split.paidNow);
+                    return sum + (Number.isFinite(paidNow) ? Math.max(0, paidNow) : 0);
+                  }, 0);
+                  const hasSplitSettlementInfo = paymentSplits.some((split) =>
+                    Number.isFinite(Number(split.settlementSnapshot?.creditUsed)) || Number.isFinite(Number(split.paidNow)),
+                  );
+                  const paidAmount = Math.max(0, hasSplitSettlementInfo ? splitPaidAmount : (Number.isFinite(Number(order.paidAmount)) ? Number(order.paidAmount) : 0));
+                  const remainingPayable = Math.max(0, hasSplitSettlementInfo ? Math.max(0, amount - paidAmount) : (Number.isFinite(Number(order.dueAmount)) ? Number(order.dueAmount) : Math.max(0, amount - paidAmount)));
                   const isFullySettled = remainingPayable <= 0;
                   const paymentAgentSummary = paymentSplits
                     .map((split) => split.paymentAgentSnapshot?.name?.trim() || split.paymentAgentName?.trim() || split.paymentBy?.trim())
@@ -2927,7 +2936,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                   const customerMissing = isMissingCustomerDisplay(customerName);
                   const hasLoadingDateHighlight = Boolean(order.loadingDate?.trim());
 
-                  return <div key={row.key} className={cn("rounded-lg border border-border/70 bg-bg-card", hasLoadingDateHighlight && "border-emerald-400/40 bg-emerald-500/8 dark:bg-emerald-500/10")}>
+                  return <div key={row.key} className={cn("rounded-lg border border-border/70 bg-bg-card", hasLoadingDateHighlight && "border-emerald-400/65 bg-emerald-500/12 dark:bg-emerald-500/10")}>
                     <div className={rowClass} style={{ gridTemplateColumns: historyGridTemplate }}>
                       <div className="min-w-0 px-1 py-1.5 text-center">
                         <div className="min-w-0">

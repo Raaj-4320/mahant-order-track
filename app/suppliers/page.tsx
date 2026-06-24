@@ -142,18 +142,19 @@ export default function SuppliersPage() {
             </div>
 
             <div className="card overflow-hidden">
-              <table className="w-full text-[13px]">
-                <thead className="bg-bg-subtle">
-                  <tr>
-                    <th className="px-3 py-2 text-left">WeChat ID</th>
-                    <th className="text-left">Orders</th>
-                    <th className="text-left">Suppliers</th>
-                    <th className="text-left">Amount</th>
-                    <th className="text-left">Last Date</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
+              <div className="overflow-x-auto overflow-y-visible">
+                <table className="w-full text-[13px]">
+                  <thead className="sticky top-0 z-30 bg-bg-card/95 shadow-[0_1px_0_rgba(15,23,42,0.06)] backdrop-blur">
+                    <tr>
+                      <th className="px-3 py-2 text-left">WeChat ID</th>
+                      <th className="text-left">Orders</th>
+                      <th className="text-left">Suppliers</th>
+                      <th className="text-left">Amount</th>
+                      <th className="text-left">Last Date</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
                   {pagedWechat.map((g) => (
                     <Fragment key={g.wechatId}>
                       <tr className="border-t border-border">
@@ -183,8 +184,9 @@ export default function SuppliersPage() {
                       ) : null}
                     </Fragment>
                   ))}
-                </tbody>
-              </table>
+                  </tbody>
+                </table>
+              </div>
               <TablePagination total={filteredWechat.length} currentPage={currentPage} pageSize={PAGE_SIZE} onPageChange={setCurrentPage} label="supplier groups" />
             </div>
           </>
@@ -198,18 +200,19 @@ export default function SuppliersPage() {
             </div>
 
             <div className="card overflow-hidden">
-              <table className="w-full text-[13px]">
-                <thead className="bg-bg-subtle">
-                  <tr>
-                    <th className="px-3 py-2 text-left">Supplier</th>
-                    <th className="text-left">Orders</th>
-                    <th className="text-left">WeChat IDs</th>
-                    <th className="text-left">Amount</th>
-                    <th className="text-left">Last Date</th>
-                    <th />
-                  </tr>
-                </thead>
-                <tbody>
+              <div className="overflow-x-auto overflow-y-visible">
+                <table className="w-full text-[13px]">
+                  <thead className="sticky top-0 z-30 bg-bg-card/95 shadow-[0_1px_0_rgba(15,23,42,0.06)] backdrop-blur">
+                    <tr>
+                      <th className="px-3 py-2 text-left">Supplier</th>
+                      <th className="text-left">Orders</th>
+                      <th className="text-left">WeChat IDs</th>
+                      <th className="text-left">Amount</th>
+                      <th className="text-left">Last Date</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
                   {pagedUnique.map((g) => (
                     <Fragment key={g.supplierKey}>
                       <tr className="border-t border-border">
@@ -234,8 +237,9 @@ export default function SuppliersPage() {
                       ) : null}
                     </Fragment>
                   ))}
-                </tbody>
-              </table>
+                  </tbody>
+                </table>
+              </div>
               <TablePagination total={filteredUnique.length} currentPage={currentPage} pageSize={PAGE_SIZE} onPageChange={setCurrentPage} label="suppliers" />
             </div>
           </>

@@ -355,26 +355,26 @@ export default function ProductsPage() {
         {error && <div className="text-[12px] text-fg-subtle">{error}</div>}
 
         <div className="card overflow-hidden">
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overflow-y-visible">
             <div className="w-full min-w-0 px-0.5 py-1">
-            <table className="w-full min-w-[1680px] text-[13px]">
-              <thead className="bg-bg-subtle">
-                <tr className="border-b border-border text-[12px] uppercase tracking-[0.01em] text-fg-muted">
-                  <th className="px-4 py-2 text-center">Product Photo</th>
-                  <th className="px-2 py-2 text-center">Marka</th>
-                  <th className="px-2 py-2 text-center">Details</th>
-                  <th className="px-2 py-2 text-center">Payment Agent</th>
-                  <th className="px-2 py-2 text-center">WeChat ID</th>
-                  <th className="px-2 py-2 text-center">Customer</th>
-                  <th className="px-2 py-2 text-center">Total Ctn</th>
-                  <th className="px-2 py-2 text-center">Qty/Ctn</th>
-                  <th className="px-2 py-2 text-center">Total Qty</th>
-                  <th className="px-2 py-2 text-center">Rate/Pcs</th>
-                  <th className="px-4 py-2 text-center">Amount</th>
-                  <th className="px-4 py-2 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody>
+              <table className="w-full min-w-[1680px] text-[13px]">
+                <thead className="sticky top-0 z-30 bg-bg-card/95 shadow-[0_1px_0_rgba(15,23,42,0.06)] backdrop-blur">
+                  <tr className="border-b border-border text-[12px] uppercase tracking-[0.01em] text-fg-muted">
+                    <th className="px-4 py-2 text-center">Product Photo</th>
+                    <th className="px-2 py-2 text-center">Marka</th>
+                    <th className="px-2 py-2 text-center">Details</th>
+                    <th className="px-2 py-2 text-center">Payment Agent</th>
+                    <th className="px-2 py-2 text-center">WeChat ID</th>
+                    <th className="px-2 py-2 text-center">Customer</th>
+                    <th className="px-2 py-2 text-center">Total Ctn</th>
+                    <th className="px-2 py-2 text-center">Qty/Ctn</th>
+                    <th className="px-2 py-2 text-center">Total Qty</th>
+                    <th className="px-2 py-2 text-center">Rate/Pcs</th>
+                    <th className="px-4 py-2 text-center">Amount</th>
+                    <th className="px-4 py-2 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
                 {pagedProductTableRows.map((row) => (
                   <tr key={row.product.id} className="border-b border-border transition-colors last:border-b-0 hover:bg-bg-subtle/40">
                     <td className="px-4 py-3">

@@ -25,6 +25,7 @@ import { measurePerfSync } from "@/lib/perfDebug";
 
 const PAGE_SIZE = 100;
 const CUSTOMER_DELETE_AUDIT_ENABLED = process.env.NODE_ENV !== "production";
+const LEDGER_REPORT_ROWS_PER_PAGE = 16;
 
 type CustomerLedgerRow = {
   customerId: string;
@@ -82,6 +83,408 @@ const sortLedgerRowsNewestFirst = (rows: CustomerLedgerRow[]) =>
 
 const formatTotalAmount = (value: number) => formatWholeMoney(value);
 const isActiveCustomer = (customer: Customer) => customer.status !== "inactive" && customer.lifecycle?.status !== "deleted";
+const formatCompactNumber = (value: number) => new Intl.NumberFormat("en-IN").format(Number.isFinite(value) ? value : 0);
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+const chunkRows = <T,>(rows: T[], size: number) => {
+  const chunks: T[][] = [];
+  for (let index = 0; index < rows.length; index += size) chunks.push(rows.slice(index, index + size));
+  return chunks;
+};
+
+function buildLedgerReportHtml(summary: CustomerSummaryRow) {
+  const customerName = summary.customer.displayName || summary.customer.name || "Customer Ledger";
+  const generatedAt = new Date();
+  const totalPieces = summary.ledgerRows.reduce((sum, row) => sum + row.totalPieces, 0);
+  const totalCtns = summary.ledgerRows.reduce((sum, row) => sum + row.totalCtns, 0);
+  const uniquePaymentAgents = new Set(summary.ledgerRows.map((row) => row.paidBy).filter(Boolean)).size;
+  const pages = chunkRows(summary.ledgerRows, LEDGER_REPORT_ROWS_PER_PAGE);
+  const safePages = pages.length ? pages : [[] as CustomerLedgerRow[]];
+
+  const pageMarkup = safePages.map((pageRows, pageIndex) => {
+    const pageTotal = pageRows.reduce((sum, row) => sum + row.totalAmount, 0);
+    const rowsMarkup = pageRows
+      .map((row) => {
+        const imageSrc = row.productImage ? getCloudinaryOptimizedUrl(row.productImage, { width: 112, height: 112, crop: "fit" }) : "";
+        return `
+          <tr>
+            <td class="image-cell">
+              ${imageSrc
+                ? `<img src="${escapeHtml(imageSrc)}" alt="" class="thumb" />`
+                : `<div class="thumb thumb-empty">No Image</div>`}
+            </td>
+            <td>
+              <div class="primary">${escapeHtml(row.orderNumber || "--")}</div>
+              <div class="muted">${escapeHtml(row.orderDate ? formatDate(row.orderDate) : "--")}</div>
+            </td>
+            <td>
+              <div class="primary">${escapeHtml(row.marka || "--")}</div>
+              <div class="muted clamp-2">${escapeHtml(row.details || "--")}</div>
+            </td>
+            <td>
+              <div class="primary">${formatCompactNumber(row.totalCtns)} CTN</div>
+              <div class="muted">${formatCompactNumber(row.pcsPerCtn)} pcs/ctn</div>
+              <div class="muted">${formatCompactNumber(row.totalPieces)} pcs total</div>
+            </td>
+            <td class="right">
+              <div class="primary">${escapeHtml(formatRate(row.pricePerPiece))}</div>
+              <div class="muted">per piece</div>
+            </td>
+            <td class="right amount-cell">
+              <div class="amount">${escapeHtml(formatTotalAmount(row.totalAmount))}</div>
+            </td>
+            <td>
+              <div class="primary">${escapeHtml(row.paidBy || "Not Paid")}</div>
+              <div class="muted">${escapeHtml(row.wechatId || "No WeChat ID")}</div>
+            </td>
+            <td>
+              <div class="status-chip">${escapeHtml(row.status || "saved")}</div>
+              <div class="muted">${escapeHtml(row.loadingDate ? formatDate(row.loadingDate) : "No loading date")}</div>
+            </td>
+          </tr>
+        `;
+      })
+      .join("");
+
+    return `
+      <section class="report-page">
+        <header class="report-header">
+          <div class="brand-block">
+            <div class="eyebrow">TradeFlow</div>
+            <h1>Customer Ledger Statement</h1>
+            <div class="subline">
+              <span>Customer: ${escapeHtml(customerName)}</span>
+              <span>Generated: ${escapeHtml(formatDate(generatedAt.toISOString()))}</span>
+            </div>
+          </div>
+          <div class="summary-grid">
+            <div class="summary-card">
+              <div class="summary-label">Total Orders</div>
+              <div class="summary-value">${formatCompactNumber(summary.totalOrders)}</div>
+            </div>
+            <div class="summary-card">
+              <div class="summary-label">Total Purchase</div>
+              <div class="summary-value">Rs. ${escapeHtml(formatTotalAmount(summary.totalPurchaseAmount))}</div>
+            </div>
+            <div class="summary-card">
+              <div class="summary-label">Total Pieces</div>
+              <div class="summary-value">${formatCompactNumber(totalPieces)}</div>
+            </div>
+            <div class="summary-card">
+              <div class="summary-label">Payment Agents</div>
+              <div class="summary-value">${formatCompactNumber(uniquePaymentAgents)}</div>
+            </div>
+          </div>
+        </header>
+
+        <div class="statement-strip">
+          <div><span class="label">Page Total</span><strong>Rs. ${escapeHtml(formatTotalAmount(pageTotal))}</strong></div>
+          <div><span class="label">CTNS</span><strong>${formatCompactNumber(pageRows.reduce((sum, row) => sum + row.totalCtns, 0))}</strong></div>
+          <div><span class="label">Pieces</span><strong>${formatCompactNumber(pageRows.reduce((sum, row) => sum + row.totalPieces, 0))}</strong></div>
+          <div><span class="label">Page</span><strong>${pageIndex + 1} / ${safePages.length}</strong></div>
+        </div>
+
+        <table class="ledger-table">
+          <thead>
+            <tr>
+              <th class="image-col">Image</th>
+              <th class="order-col">Order / Date</th>
+              <th class="marka-col">Marka / Details</th>
+              <th class="pack-col">Packing</th>
+              <th class="price-col right">Rate</th>
+              <th class="amount-col right">Amount</th>
+              <th class="payment-col">Paid By / WeChat</th>
+              <th class="status-col">Status / Loading</th>
+            </tr>
+          </thead>
+          <tbody>${rowsMarkup || `<tr><td colspan="8" class="empty-state">No ledger rows available for this customer.</td></tr>`}</tbody>
+        </table>
+
+        <footer class="report-footer">
+          <div>Customer: ${escapeHtml(customerName)}</div>
+          <div>Total CTNS: ${formatCompactNumber(totalCtns)}</div>
+          <div>Total Purchase: Rs. ${escapeHtml(formatTotalAmount(summary.totalPurchaseAmount))}</div>
+        </footer>
+      </section>
+    `;
+  }).join("");
+
+  return `
+    <html>
+      <head>
+        <title>${escapeHtml(customerName)} Ledger Statement</title>
+        <meta charset="utf-8" />
+        <style>
+          @page {
+            size: A4 landscape;
+            margin: 10mm;
+          }
+
+          :root {
+            color-scheme: light;
+          }
+
+          * {
+            box-sizing: border-box;
+          }
+
+          body {
+            margin: 0;
+            font-family: Arial, Helvetica, sans-serif;
+            background: #e8edf5;
+            color: #142033;
+          }
+
+          .report-page {
+            width: 100%;
+            min-height: calc(210mm - 20mm);
+            background: #ffffff;
+            padding: 10mm 10mm 8mm;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            page-break-after: always;
+          }
+
+          .report-page:last-child {
+            page-break-after: auto;
+          }
+
+          .report-header {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: flex-start;
+            border-bottom: 1px solid #d8e1ef;
+            padding-bottom: 8px;
+          }
+
+          .brand-block {
+            min-width: 0;
+            flex: 1;
+          }
+
+          .eyebrow {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: #5d6b82;
+            margin-bottom: 4px;
+          }
+
+          h1 {
+            margin: 0;
+            font-size: 24px;
+            line-height: 1.1;
+            color: #0f172a;
+          }
+
+          .subline {
+            margin-top: 8px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px;
+            font-size: 11px;
+            color: #526077;
+          }
+
+          .summary-grid {
+            width: 355px;
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 8px;
+          }
+
+          .summary-card {
+            border: 1px solid #d6deea;
+            border-radius: 10px;
+            padding: 8px 10px;
+            background: linear-gradient(180deg, #fbfdff 0%, #f2f7fd 100%);
+          }
+
+          .summary-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #6a778e;
+            margin-bottom: 4px;
+          }
+
+          .summary-value {
+            font-size: 16px;
+            font-weight: 700;
+            color: #10203a;
+          }
+
+          .statement-strip {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 8px;
+            margin-top: 2px;
+          }
+
+          .statement-strip > div {
+            border: 1px solid #dbe5f1;
+            border-radius: 8px;
+            background: #f8fbff;
+            padding: 6px 8px;
+            font-size: 11px;
+            color: #41516b;
+          }
+
+          .statement-strip .label {
+            display: block;
+            font-size: 9px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #6a778e;
+            margin-bottom: 3px;
+          }
+
+          .ledger-table {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+            border: 1px solid #d8e1ef;
+            border-radius: 10px;
+            overflow: hidden;
+          }
+
+          .ledger-table thead th {
+            background: #eef4fb;
+            color: #4e5d74;
+            font-size: 9px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            padding: 7px 6px;
+            border-bottom: 1px solid #d8e1ef;
+            text-align: left;
+          }
+
+          .ledger-table tbody td {
+            padding: 6px;
+            border-bottom: 1px solid #e5ebf4;
+            vertical-align: middle;
+            font-size: 10px;
+          }
+
+          .ledger-table tbody tr:nth-child(even) {
+            background: #fbfdff;
+          }
+
+          .ledger-table tbody tr:last-child td {
+            border-bottom: none;
+          }
+
+          .empty-state {
+            text-align: center;
+            padding: 18px 8px !important;
+            color: #6a778e;
+          }
+
+          .image-col { width: 62px; }
+          .order-col { width: 105px; }
+          .marka-col { width: 230px; }
+          .pack-col { width: 110px; }
+          .price-col { width: 72px; }
+          .amount-col { width: 94px; }
+          .payment-col { width: 130px; }
+          .status-col { width: 110px; }
+
+          .image-cell {
+            text-align: center;
+          }
+
+          .thumb {
+            width: 42px;
+            height: 42px;
+            border-radius: 8px;
+            border: 1px solid #d9e2ef;
+            object-fit: cover;
+            display: inline-block;
+            background: #ffffff;
+          }
+
+          .thumb-empty {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 8px;
+            color: #8090a8;
+            background: #f4f7fb;
+          }
+
+          .primary {
+            font-weight: 700;
+            color: #142033;
+            line-height: 1.25;
+          }
+
+          .muted {
+            margin-top: 2px;
+            color: #68778f;
+            line-height: 1.25;
+          }
+
+          .clamp-2 {
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+          }
+
+          .right {
+            text-align: right;
+          }
+
+          .amount {
+            font-size: 12px;
+            font-weight: 700;
+            color: #0b5a3c;
+          }
+
+          .status-chip {
+            display: inline-block;
+            padding: 2px 7px;
+            border-radius: 999px;
+            border: 1px solid #d6deea;
+            background: #f5f8fc;
+            font-size: 9px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: #4f5d73;
+          }
+
+          .report-footer {
+            margin-top: auto;
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            border-top: 1px solid #d8e1ef;
+            padding-top: 7px;
+            font-size: 10px;
+            color: #5c6a81;
+          }
+
+          @media print {
+            body {
+              background: #ffffff;
+            }
+          }
+        </style>
+      </head>
+      <body>${pageMarkup}</body>
+    </html>
+  `;
+}
 
 const logCustomerDeleteAudit = (payload: Record<string, unknown>) => {
   if (!CUSTOMER_DELETE_AUDIT_ENABLED) return;
@@ -352,6 +755,34 @@ export default function CustomersPage() {
     printWindow.print();
   };
 
+  const openLedgerReportWindow = (summary: CustomerSummaryRow, reason: "export" | "print") => {
+    const reportWindow = window.open("", "_blank", "width=1440,height=980");
+    if (!reportWindow) {
+      pushToast({
+        tone: "danger",
+        text: reason === "export" ? "Please allow pop-ups to export the ledger PDF." : "Please allow pop-ups to print the ledger.",
+      });
+      return;
+    }
+    reportWindow.onload = () => {
+      reportWindow.setTimeout(() => {
+        reportWindow.focus();
+        reportWindow.print();
+      }, 450);
+    };
+    reportWindow.document.open();
+    reportWindow.document.write(buildLedgerReportHtml(summary));
+    reportWindow.document.close();
+  };
+
+  const exportLedgerPdf = (summary: CustomerSummaryRow) => {
+    openLedgerReportWindow(summary, "export");
+  };
+
+  const printLedgerPdf = (summary: CustomerSummaryRow) => {
+    openLedgerReportWindow(summary, "print");
+  };
+
   const removeCustomer = async () => {
     if (!pendingDeleteCustomer || deleteBusy) return;
     logCustomerDeleteAudit({
@@ -463,7 +894,7 @@ export default function CustomersPage() {
                       <th className="px-2 py-2 text-left">Last Marka</th>
                       <th className="px-2 py-2 text-right">Last Amount</th>
                       <th className="px-2 py-2 text-center">Total Orders</th>
-                      <th className="px-2 py-2 text-right">Total Purchase</th>
+                      <th className="px-2 py-2 text-center">Total Purchase</th>
                       <th className="px-2 py-2 text-left">Paid By</th>
                       <th className="px-2 py-2 text-left">WeChat ID</th>
                       <th className="px-3 py-2 text-right">Actions</th>
@@ -500,7 +931,7 @@ export default function CustomersPage() {
                         </td>
                         <td className={`px-2 py-2.5 text-right font-semibold tabular-nums ${row.lastOrderAmount > 0 ? "text-fg" : "text-[var(--danger)]"}`}>{formatTotalAmount(row.lastOrderAmount)}</td>
                         <td className="px-2 py-2.5 text-center font-semibold">{row.totalOrders}</td>
-                        <td className={`px-2 py-2.5 text-right font-semibold tabular-nums ${row.totalPurchaseAmount > 0 ? "text-fg" : "text-[var(--danger)]"}`}>{formatTotalAmount(row.totalPurchaseAmount)}</td>
+                        <td className={`px-2 py-2.5 text-center font-semibold tabular-nums ${row.totalPurchaseAmount > 0 ? "text-fg" : "text-[var(--danger)]"}`}>{formatTotalAmount(row.totalPurchaseAmount)}</td>
                         <td className="px-2 py-2.5">{row.lastPaidBy}</td>
                         <td className="px-2 py-2.5">{row.lastWechatId}</td>
                         <td className="px-3 py-2.5">
@@ -575,7 +1006,7 @@ export default function CustomersPage() {
                       title="Export Ledger"
                       aria-label="Export Ledger"
                       className="grid h-9 w-9 place-items-center rounded-md border border-border bg-bg-card text-fg transition-colors hover:bg-bg-subtle"
-                      onClick={() => exportLedger(activeSummary)}
+                      onClick={() => exportLedgerPdf(activeSummary)}
                     >
                       <Download size={15} />
                     </button>
@@ -584,7 +1015,7 @@ export default function CustomersPage() {
                       title="Print Ledger"
                       aria-label="Print Ledger"
                       className="grid h-9 w-9 place-items-center rounded-md border border-border bg-bg-card text-fg transition-colors hover:bg-bg-subtle"
-                      onClick={() => printLedger(activeSummary)}
+                      onClick={() => printLedgerPdf(activeSummary)}
                     >
                       <Printer size={15} />
                     </button>
