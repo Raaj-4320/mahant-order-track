@@ -140,6 +140,87 @@ type FlatHistoryRow = {
   extraLines: Order["lines"][number][];
   paymentMeta: ReturnType<typeof getOrderPaymentAgentDisplay>;
 };
+
+function PaymentStatusAmount({
+  amount,
+  isFullySettled,
+  paidAmount,
+  remainingPayable,
+  paymentAgentSummary,
+}: {
+  amount: number;
+  isFullySettled: boolean;
+  paidAmount: number;
+  remainingPayable: number;
+  paymentAgentSummary: string;
+}) {
+  const anchorRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [layout, setLayout] = useState<{ top: number; left: number } | null>(null);
+
+  useEffect(() => {
+    if (!open || isFullySettled) return;
+
+    const updateLayout = () => {
+      const rect = anchorRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      setLayout({
+        top: rect.top - 10,
+        left: rect.left + rect.width / 2,
+      });
+    };
+
+    updateLayout();
+    window.addEventListener("resize", updateLayout);
+    window.addEventListener("scroll", updateLayout, true);
+    return () => {
+      window.removeEventListener("resize", updateLayout);
+      window.removeEventListener("scroll", updateLayout, true);
+    };
+  }, [open, isFullySettled]);
+
+  return (
+    <div
+      ref={anchorRef}
+      className="inline-block"
+      onMouseEnter={() => {
+        if (!isFullySettled) setOpen(true);
+      }}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <div className={cn("text-[16px] font-bold leading-none", isFullySettled ? "text-emerald-700" : "text-amber-600")}>
+        {formatFinalAmount(amount)}
+      </div>
+      {open && !isFullySettled && layout && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              className="pointer-events-none fixed z-[9999] w-52 -translate-x-1/2 -translate-y-full rounded-xl border border-amber-200 bg-white px-3 py-2 shadow-[0_12px_28px_rgba(15,23,42,0.18)]"
+              style={{ top: layout.top, left: layout.left }}
+            >
+              <div className="text-[9px] font-semibold uppercase tracking-[0.08em] text-amber-700">Payment Status</div>
+              <div className="mt-1.5 space-y-1.5 text-[11px]">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-fg-subtle">Paid</span>
+                  <span className="font-semibold tabular-nums text-fg">{formatFinalAmount(paidAmount)}</span>
+                </div>
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-fg-subtle">Agent</span>
+                  <span className="max-w-[112px] text-right font-medium leading-4 text-fg break-words">
+                    {paymentAgentSummary || "Not Paid"}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2 border-t border-amber-100 pt-1.5">
+                  <span className="text-fg-subtle">Left</span>
+                  <span className="font-semibold tabular-nums text-amber-700">{formatFinalAmount(remainingPayable)}</span>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+    </div>
+  );
+}
 type OrdersFilterState = {
   status: "all" | Order["status"];
   loadingDate: "all" | "set" | "unset";
@@ -2766,7 +2847,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
           <div className="flex items-center justify-between px-4 py-3 border-b border-border"><h3 className="font-semibold">Draft Orders</h3><div className="text-[12px] text-fg-subtle">{drafts.length} draft{drafts.length === 1 ? "" : "s"}</div></div>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[980px] text-[13px]">
-              <thead className="bg-bg-subtle/70">
+              <thead className="sticky top-0 z-20 bg-bg-card/95 shadow-[0_1px_0_rgba(15,23,42,0.06)] backdrop-blur">
                 <tr className="text-left text-[11px] uppercase tracking-wide text-fg-subtle">
                   <th className="px-4 py-2">Photo</th><th>WeChat ID</th><th>Payment Agent</th><th>Marka</th><th>Total Quantity & CTN</th><th>Order Total</th><th className="text-right px-4">Actions</th>
                 </tr>
@@ -2799,7 +2880,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
           {/* <div className="flex items-center justify-between px-4 py-3 border-b border-border"><h3 className="font-semibold">Order History</h3><div className="text-[12px] text-fg-subtle">Showing 1 to {pagedHistory.length} of {history.length} rows</div></div> */}
           <div className="overflow-x-auto">
             <div className="w-full min-w-0 px-0.5 py-1">
-              <div className="sticky top-0 z-10 grid items-center border-b border-border bg-bg-card/95 text-[12.5px] font-semibold uppercase tracking-[0.01em] text-fg-muted shadow-[0_1px_0_rgba(15,23,42,0.06)] backdrop-blur" style={{ gridTemplateColumns: historyGridTemplate }}>
+              <div className="sticky top-0 z-20 grid items-center border-b border-border bg-bg-card/95 text-[12.5px] font-semibold uppercase tracking-[0.01em] text-fg-muted shadow-[0_1px_0_rgba(15,23,42,0.06)] backdrop-blur" style={{ gridTemplateColumns: historyGridTemplate }}>
                 <div className="px-1 py-1.5 text-center">Order Number</div>
                 <div className="px-1 py-1.5 text-left">WeChat ID</div>
                 <div className="px-1 py-1.5 text-center">Product Photo</div>
@@ -2968,19 +3049,13 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                               })}
                             </div>
                           ) : null}
-                          <div className="group relative">
-                            {!isFullySettled ? (
-                              <div className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 hidden w-44 -translate-x-1/2 rounded-xl border border-amber-200 bg-white/98 p-2 text-left shadow-lg group-hover:block">
-                                <div className="text-[9px] font-semibold uppercase tracking-[0.08em] text-amber-700">Payment Status</div>
-                                <div className="mt-1 space-y-1.5 text-[11px]">
-                                  <div className="flex items-center justify-between gap-2"><span className="text-fg-subtle">Paid</span><span className="font-semibold tabular-nums text-fg">{formatFinalAmount(paidAmount)}</span></div>
-                                  <div className="flex items-start justify-between gap-2"><span className="text-fg-subtle">Agent</span><span className="max-w-[92px] text-right font-semibold leading-tight text-fg">{paymentAgentSummary || "Not Paid"}</span></div>
-                                  <div className="flex items-center justify-between gap-2 border-t border-amber-100 pt-1"><span className="text-fg-subtle">Left</span><span className="font-semibold tabular-nums text-amber-700">{formatFinalAmount(remainingPayable)}</span></div>
-                                </div>
-                              </div>
-                            ) : null}
-                            <div className={cn("text-[16px] font-bold leading-none", isFullySettled ? "text-emerald-700" : "text-amber-600")}>{formatFinalAmount(amount)}</div>
-                          </div>
+                          <PaymentStatusAmount
+                            amount={amount}
+                            isFullySettled={isFullySettled}
+                            paidAmount={paidAmount}
+                            remainingPayable={remainingPayable}
+                            paymentAgentSummary={paymentAgentSummary}
+                          />
                         </div>
                       </div>
                       <div className="min-w-0 px-1 py-1.5"><div className={cn("block w-full min-w-0 truncate text-center text-[14.5px] font-semibold leading-tight", customerMissing && "text-[var(--danger)]")} title={customerName}>{selectedLine ? renderOutsideEditableField({
