@@ -1753,8 +1753,12 @@ try {
           const nextPaymentAgentId = resolvedAgent?.id || "";
           const currentSplits = getEditablePaymentAgentSplits(nextOrder);
           const primarySplit = currentSplits[0] ?? createEmptyPaymentAgentSplit();
-          const paidAmount = normalizePaymentSplitAmount(primarySplit.paidNow);
           const existingCredit = resolvedAgent ? getPaymentAgentDirectFinance(resolvedAgent).creditLeft : 0;
+          const hadPreviousPaymentAgent = Boolean((order.paymentAgentId || order.paymentBy || "").trim());
+          const paidAmount = hadPreviousPaymentAgent
+            ? normalizePaymentSplitAmount(primarySplit.paidNow)
+            : Math.max(0, Math.min(orderTotal(nextOrder), existingCredit));
+          const remainingPayable = Math.max(0, orderTotal(nextOrder) - paidAmount);
           const splitStatus: "paid" | "unpaid" = paidAmount > 0 ? "paid" : "unpaid";
           const nextSplits = [{
             ...primarySplit,
@@ -1768,7 +1772,7 @@ try {
               existingCredit,
               creditUsed: paidAmount,
               payableAfterCredit: 0,
-              remainingPayable: 0,
+              remainingPayable,
               newCreditCreated: 0,
               resultingCreditBalance: Math.max(0, existingCredit - paidAmount),
               paidNow: 0,
@@ -1788,7 +1792,7 @@ try {
             existingCredit: nextSplits[0].settlementSnapshot.existingCredit,
             creditUsed: nextSplits[0].settlementSnapshot.creditUsed,
             payableAfterCredit: 0,
-            remainingPayable: 0,
+            remainingPayable,
             newCreditCreated: 0,
             resultingCreditBalance: nextSplits[0].settlementSnapshot.resultingCreditBalance,
             paidNow: 0,
@@ -2218,6 +2222,21 @@ try {
             saveAudit.mark("paymentAgentLedger:end", { applied: result.paymentSettlementApplied });
           }
         })());
+      } else if (isFirebaseOrdersMode && editingOrder && (editingOrder.paymentAgentId || editingOrder.paymentBy)) {
+        syncTasks.push((async () => {
+          saveAudit.mark("paymentAgentLedger:start");
+          try {
+            await measurePerfAsync("sync", "orders.reversePaymentAgentSettlement", { orderId: editingOrder.id, paymentAgentId: editingOrder.paymentAgentId || editingOrder.paymentBy || "" }, () => paymentAgentsService.reverseOrderSettlement?.(editingOrder) ?? Promise.resolve());
+            result.paymentSettlementReversed = true;
+            logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: savedOrder.id, mode: result.mode, step: "reverse_payment_settlement", success: true }, null, 2));
+          } catch (e) {
+            result.paymentSettlementReversed = false;
+            result.warnings.push(`Payment-agent settlement reversal failed: ${e instanceof Error ? e.message : String(e)}`);
+            logError("order_side_effect_step_failed", { orderId: savedOrder.id, mode: result.mode, step: "reverse_payment_settlement", error: e instanceof Error ? e.message : String(e) });
+          } finally {
+            saveAudit.mark("paymentAgentLedger:end", { reversed: result.paymentSettlementReversed });
+          }
+        })());
       }
 
       syncTasks.push((async () => {
@@ -2380,8 +2399,8 @@ try {
   };
   const drafts = useMemo(() => (isFirebaseOrdersMode ? firebaseDraftOrders : orders.filter((o) => o.status === "draft")), [isFirebaseOrdersMode, orders, firebaseDraftOrders]);
   const orderHeaderTabs = useMemo(
-    () => [...orderCategoryTabs, `Draft (${drafts.length})`],
-    [drafts.length, orderCategoryTabs],
+    () => orderCategoryTabs,
+    [orderCategoryTabs],
   );
   const draftTotalPages = Math.max(1, Math.ceil(drafts.length / PAGE_SIZE));
   const pagedDrafts = useMemo(() => drafts.slice((draftPage - 1) * PAGE_SIZE, draftPage * PAGE_SIZE), [drafts, draftPage]);
@@ -2747,12 +2766,13 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
           </div> : null}
         </div>
         <div className="flex items-center rounded-lg border border-border bg-bg-card p-0.5">{([{ v: "list", I: List }, { v: "grid", I: LayoutGrid }, { v: "calendar", I: CalendarDays }] as const).map(({ v, I }) => <button key={v} onClick={() => setView(v)} className={cn("grid h-6 w-7 place-items-center rounded-md text-fg-muted transition-colors", view===v && "bg-brand text-brand-fg")}><I size={13} /></button>)}</div>
-        <Button size="sm" variant="primary" onClick={startAdd}>Add Order</Button>
+        <Button size="sm" variant={mode === "drafts" ? "secondary" : "primary"} onClick={startAdd}>Add Order</Button>
+        <Button size="sm" variant={mode === "drafts" ? "primary" : "secondary"} onClick={() => setMode("drafts")}>Draft ({drafts.length})</Button>
         <button aria-label="Toggle theme" onClick={toggle} className="grid h-8 w-8 place-items-center rounded-full border border-border bg-bg-card hover:border-fg-subtle transition-colors">{theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}</button>
       </div>
       {ordersDataSource === "mock" ? <div className="border-b border-amber-300 bg-amber-50 px-5 py-2 text-[12px] font-medium text-amber-900">{ordersSourceSelection.hasFirebaseConfig ? "Mock mode is enabled; order and customer data is local and will not persist to Firebase." : "Firebase is not configured; app is running in mock mode and data will not persist."}</div> : null}
       <main className="min-h-0 flex-1 overflow-y-auto p-4 space-y-4">
-        {orderHeaderTabs.length ? <section className="card p-2.5"><div className="flex flex-wrap items-center gap-2">{orderHeaderTabs.map((tabLabel) => { const isDraftTab = tabLabel.startsWith("Draft ("); const category = isDraftTab ? "" : tabLabel; const isActive = isDraftTab ? mode === "drafts" : mode === "history" && effectiveOrderCategory === category; const canDeleteCategory = !isDraftTab && emptySeriesCategories.has(category); return <div key={tabLabel} className={cn("flex items-center gap-1 rounded-full border pr-2 transition-colors", isActive ? "border-brand bg-brand text-brand-fg" : "border-border bg-bg-card text-fg hover:bg-bg-subtle")}><button type="button" onClick={() => { if (isDraftTab) { setMode("drafts"); return; } setMode("history"); setSelectedOrderCategory(category); }} className="rounded-full px-3 py-1.5 text-[12px] font-medium">{tabLabel}</button>{canDeleteCategory ? <button type="button" onClick={() => requestDeleteSeriesCategory(category)} className={cn("grid h-6 w-6 place-items-center rounded-full transition-colors", isActive ? "hover:bg-white/15" : "hover:bg-bg-subtle")} aria-label={`Delete ${category} category`} title={`Delete ${category} category`}><Trash2 size={12} /></button> : null}</div>; })}</div></section> : null}
+        {orderHeaderTabs.length ? <section className="card p-2.5"><div className="flex flex-wrap items-center gap-2">{orderHeaderTabs.map((tabLabel) => { const category = tabLabel; const isActive = mode === "history" && effectiveOrderCategory === category; const canDeleteCategory = emptySeriesCategories.has(category); return <div key={tabLabel} className={cn("flex items-center gap-1 rounded-full border pr-2 transition-colors", isActive ? "border-brand bg-brand text-brand-fg" : "border-border bg-bg-card text-fg hover:bg-bg-subtle")}><button type="button" onClick={() => { setMode("history"); setSelectedOrderCategory(category); }} className="rounded-full px-3 py-1.5 text-[12px] font-medium">{tabLabel}</button>{canDeleteCategory ? <button type="button" onClick={() => requestDeleteSeriesCategory(category)} className={cn("grid h-6 w-6 place-items-center rounded-full transition-colors", isActive ? "hover:bg-white/15" : "hover:bg-bg-subtle")} aria-label={`Delete ${category} category`} title={`Delete ${category} category`}><Trash2 size={12} /></button> : null}</div>; })}</div></section> : null}
         {mode === "drafts" && <section className="card overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 border-b border-border"><h3 className="font-semibold">Draft Orders</h3><div className="text-[12px] text-fg-subtle">{drafts.length} draft{drafts.length === 1 ? "" : "s"}</div></div>
           <div className="overflow-x-auto">
