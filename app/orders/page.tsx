@@ -147,12 +147,14 @@ function PaymentStatusAmount({
   paidAmount,
   remainingPayable,
   paymentAgentSummary,
+  paymentBreakdown,
 }: {
   amount: number;
   isFullySettled: boolean;
   paidAmount: number;
   remainingPayable: number;
   paymentAgentSummary: string;
+  paymentBreakdown: Array<{ agentName: string; amount: number }>;
 }) {
   const anchorRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
@@ -194,24 +196,38 @@ function PaymentStatusAmount({
       {open && !isFullySettled && layout && typeof document !== "undefined"
         ? createPortal(
             <div
-              className="pointer-events-none fixed z-[9999] w-52 -translate-x-1/2 -translate-y-full rounded-xl border border-amber-200 bg-white px-3 py-2 shadow-[0_12px_28px_rgba(15,23,42,0.18)]"
+              className="pointer-events-none fixed isolate z-[9999] w-64 -translate-x-1/2 -translate-y-full rounded-xl border border-amber-300 bg-white px-3 py-2 text-slate-900 shadow-[0_12px_28px_rgba(15,23,42,0.18)] dark:border-amber-200/40 dark:bg-slate-950 dark:text-slate-100"
               style={{ top: layout.top, left: layout.left }}
             >
-              <div className="text-[9px] font-semibold uppercase tracking-[0.08em] text-amber-700">Payment Status</div>
+              <div className="text-[9px] font-semibold uppercase tracking-[0.08em] text-amber-700 dark:text-amber-300">Payment Status</div>
               <div className="mt-1.5 space-y-1.5 text-[11px]">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-fg-subtle">Paid</span>
                   <span className="font-semibold tabular-nums text-fg">{formatAmount(paidAmount)}</span>
                 </div>
-                <div className="flex items-start justify-between gap-2">
-                  <span className="text-fg-subtle">Agent</span>
-                  <span className="max-w-[112px] text-right font-medium leading-4 text-fg break-words">
-                    {paymentAgentSummary || "Not Paid"}
-                  </span>
+                <div className="rounded-lg border border-amber-100 bg-amber-50 px-2 py-1.5 dark:border-amber-200/10 dark:bg-slate-900">
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <span className="text-fg-subtle">Agent Breakdown</span>
+                    <span className="text-[10px] font-medium text-fg-subtle">{paymentBreakdown.length || 1}</span>
+                  </div>
+                  {paymentBreakdown.length > 0 ? (
+                    <div className="space-y-1">
+                      {paymentBreakdown.map((entry) => (
+                        <div key={`${entry.agentName}-${entry.amount}`} className="flex items-start justify-between gap-2">
+                          <span className="max-w-[132px] break-words leading-4 text-fg">{entry.agentName}</span>
+                          <span className="shrink-0 font-semibold tabular-nums text-fg">{formatAmount(entry.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-right font-medium leading-4 text-fg">
+                      {paymentAgentSummary || "Not Paid"}
+                    </div>
+                  )}
                 </div>
-                <div className="flex items-center justify-between gap-2 border-t border-amber-100 pt-1.5">
+                <div className="flex items-center justify-between gap-2 border-t border-amber-100 pt-1.5 dark:border-amber-200/15">
                   <span className="text-fg-subtle">Left</span>
-                  <span className="font-semibold tabular-nums text-amber-700">{formatAmount(remainingPayable)}</span>
+                  <span className="font-semibold tabular-nums text-amber-700 dark:text-amber-300">{formatAmount(remainingPayable)}</span>
                 </div>
               </div>
             </div>,
@@ -2930,13 +2946,22 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                     .map((split) => split.paymentAgentSnapshot?.name?.trim() || split.paymentAgentName?.trim() || split.paymentBy?.trim())
                     .filter(Boolean)
                     .join(", ") || paymentName;
+                  const paymentBreakdown = paymentSplits
+                    .map((split) => {
+                      const creditUsed = Number(split.settlementSnapshot?.creditUsed);
+                      const paidNow = Number(split.paidNow);
+                      const amountPaid = Number.isFinite(creditUsed) ? Math.max(0, creditUsed) : (Number.isFinite(paidNow) ? Math.max(0, paidNow) : 0);
+                      const agentName = split.paymentAgentSnapshot?.name?.trim() || split.paymentAgentName?.trim() || split.paymentBy?.trim() || split.paymentAgentId?.trim() || "Payment Agent";
+                      return amountPaid > 0 ? { agentName, amount: amountPaid } : null;
+                    })
+                    .filter((entry): entry is { agentName: string; amount: number } => Boolean(entry));
                   const marka = selectedLine?.marka?.trim() || "-";
                   const customerName = getCardCustomerValue(selectedLine);
                   const hasMultipleLines = orderLines.length > 1;
                   const customerMissing = isMissingCustomerDisplay(customerName);
                   const hasLoadingDateHighlight = Boolean(order.loadingDate?.trim());
 
-                  return <div key={row.key} className={cn("rounded-lg border border-border/70 bg-bg-card", hasLoadingDateHighlight && "border-emerald-400/65 bg-emerald-500/12 dark:bg-emerald-500/10")}>
+                  return <div key={row.key} className={cn("rounded-lg border border-border/70 bg-bg-card", hasLoadingDateHighlight && "border-emerald-300/25 bg-emerald-50/55 dark:border-emerald-400/40 dark:bg-emerald-500/10")}>
                     <div className={rowClass} style={{ gridTemplateColumns: historyGridTemplate }}>
                       <div className="min-w-0 px-1 py-1.5 text-center">
                         <div className="min-w-0">
@@ -3045,7 +3070,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                       <div className="px-0.5 py-1.5 tabular-nums">
                         <div className="flex flex-col items-center justify-center gap-0.5 text-center">
                           {shippingAmount > 0 || isOutsideFieldEditing(order, "shipping") ? (
-                            <div className="text-[16px] font-semibold leading-none text-rose-600">
+                            <div className="text-[16px] font-semibold leading-none text-emerald-700">
                               {renderOutsideEditableField({
                                 order,
                                 field: "shipping",
@@ -3064,6 +3089,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                             paidAmount={paidAmount}
                             remainingPayable={remainingPayable}
                             paymentAgentSummary={paymentAgentSummary}
+                            paymentBreakdown={paymentBreakdown}
                           />
                         </div>
                       </div>
