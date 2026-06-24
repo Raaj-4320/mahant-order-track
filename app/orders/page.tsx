@@ -194,7 +194,7 @@ function PaymentStatusAmount({
         {formatAmount(amount)}
       </div>
       {!isFullySettled && remainingPayable > 0 ? (
-        <div className="mt-0.5 text-[13px] font-semibold leading-none text-rose-600">
+        <div className="mt-0.5 text-[16px] font-bold leading-none text-rose-600">
           {formatAmount(remainingPayable)}
         </div>
       ) : null}

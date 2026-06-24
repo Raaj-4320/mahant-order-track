@@ -193,109 +193,110 @@ export default function ProductDiscoveryPage() {
 
   return (
     <PageShell title="Product Discovery">
-      <div className="space-y-3 p-3">
-        <section className="card overflow-hidden">
-          <div className="border-b border-border px-3 py-2.5">
-            <div className="text-[16px] font-semibold">New Discovery</div>
-            <div className="mt-0.5 text-[11px] text-fg-subtle">Capture a product lead with photos, supplier details, packing, rate, and notes.</div>
-          </div>
-
-          <div className="space-y-3 p-3">
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-              <label className="space-y-1.5">
-                <span className="text-[12px] font-medium text-fg-muted">Product Name</span>
-                <Input value={form.productName} onChange={(e) => setForm((current) => ({ ...current, productName: e.target.value }))} placeholder="Open field" />
-              </label>
-              <label className="space-y-1.5">
-                <span className="text-[12px] font-medium text-fg-muted">Supplier Name</span>
-                <Input value={form.supplierName} onChange={(e) => setForm((current) => ({ ...current, supplierName: e.target.value }))} placeholder="Open field" />
-              </label>
-              <label className="space-y-1.5">
-                <span className="text-[12px] font-medium text-fg-muted">Rate</span>
-                <Input value={form.rate} onChange={(e) => setForm((current) => ({ ...current, rate: e.target.value }))} placeholder="RMB / piece" inputMode="decimal" />
-              </label>
-              <label className="space-y-1.5">
-                <span className="text-[12px] font-medium text-fg-muted">CTN</span>
-                <Input value={form.totalCtns} onChange={(e) => setForm((current) => ({ ...current, totalCtns: e.target.value }))} placeholder="0" inputMode="decimal" />
-              </label>
-              <label className="space-y-1.5">
-                <span className="text-[12px] font-medium text-fg-muted">PCS / CTN</span>
-                <Input value={form.pcsPerCtn} onChange={(e) => setForm((current) => ({ ...current, pcsPerCtn: e.target.value }))} placeholder="0" inputMode="decimal" />
-              </label>
-              <div className="rounded-2xl border border-border bg-bg-subtle/60 px-4 py-3">
-                <div className="text-[11px] uppercase tracking-[0.08em] text-fg-subtle">Quick Total</div>
-                <div className="mt-1.5 text-[16px] font-semibold text-fg">{formatWholeMoney(toNumber(form.totalCtns) * toNumber(form.pcsPerCtn) * toNumber(form.rate))}</div>
-                <div className="mt-0.5 text-[11px] text-fg-subtle">{toNumber(form.totalCtns) * toNumber(form.pcsPerCtn)} pcs</div>
-              </div>
+      <div className="space-y-2 p-2.5">
+        <div className="grid gap-2 xl:grid-cols-[520px_minmax(0,1fr)] xl:items-start">
+          <section className="card max-w-[520px] overflow-hidden">
+            <div className="border-b border-border px-2 py-1.5">
+              <div className="text-[14px] font-semibold">New Discovery</div>
+              <div className="mt-0.5 text-[10px] text-fg-subtle">Capture a product lead with photos, supplier details, packing, rate, and notes.</div>
             </div>
 
-            <label className="block space-y-1.5">
-              <span className="text-[12px] font-medium text-fg-muted">Notes</span>
-              <textarea
-                value={form.notes}
-                onChange={(e) => setForm((current) => ({ ...current, notes: e.target.value }))}
-                placeholder="Any supplier notes, quality remarks, color options, MOQ, or follow-up details..."
-                className="min-h-[68px] w-full rounded-2xl border border-border bg-bg-card px-3 py-2 text-[13px] text-fg outline-none transition-colors placeholder:text-fg-subtle focus:border-fg-subtle"
-              />
-            </label>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <div className="text-[12px] font-medium text-fg-muted">Images</div>
-                  <div className="text-[11px] text-fg-subtle">Click, paste, drag-drop, or double-click to browse. Add as many image slots as needed.</div>
+            <div className="space-y-2 p-2">
+              <div className="grid gap-1.5 md:grid-cols-2">
+                <label className="space-y-1.5">
+                  <span className="text-[11px] font-medium text-fg-muted">Product Name</span>
+                  <Input value={form.productName} onChange={(e) => setForm((current) => ({ ...current, productName: e.target.value }))} placeholder="Open field" />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="text-[11px] font-medium text-fg-muted">Supplier Name</span>
+                  <Input value={form.supplierName} onChange={(e) => setForm((current) => ({ ...current, supplierName: e.target.value }))} placeholder="Open field" />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="text-[11px] font-medium text-fg-muted">Rate</span>
+                  <Input value={form.rate} onChange={(e) => setForm((current) => ({ ...current, rate: e.target.value }))} placeholder="RMB / piece" inputMode="decimal" />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="text-[11px] font-medium text-fg-muted">CTN</span>
+                  <Input value={form.totalCtns} onChange={(e) => setForm((current) => ({ ...current, totalCtns: e.target.value }))} placeholder="0" inputMode="decimal" />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="text-[11px] font-medium text-fg-muted">PCS / CTN</span>
+                  <Input value={form.pcsPerCtn} onChange={(e) => setForm((current) => ({ ...current, pcsPerCtn: e.target.value }))} placeholder="0" inputMode="decimal" />
+                </label>
+                <div className="rounded-lg border border-border bg-bg-subtle/50 px-2.5 py-1.5">
+                  <div className="text-[10px] uppercase tracking-[0.08em] text-fg-subtle">Quick Total</div>
+                  <div className="mt-1 text-[13px] font-semibold text-fg">{formatWholeMoney(toNumber(form.totalCtns) * toNumber(form.pcsPerCtn) * toNumber(form.rate))}</div>
+                  <div className="mt-0.5 text-[10px] text-fg-subtle">{toNumber(form.totalCtns) * toNumber(form.pcsPerCtn)} pcs</div>
                 </div>
-                <Button type="button" variant="secondary" size="sm" onClick={addImageSlot}>
-                  <Plus size={14} />
-                  Add Image
+              </div>
+
+              <label className="block space-y-1.5">
+                <span className="text-[11px] font-medium text-fg-muted">Notes</span>
+                <textarea
+                  value={form.notes}
+                  onChange={(e) => setForm((current) => ({ ...current, notes: e.target.value }))}
+                  placeholder="Any supplier notes, quality remarks, color options, MOQ, or follow-up details..."
+                  className="min-h-[34px] w-full rounded-lg border border-border bg-bg-card px-2 py-1.5 text-[12px] text-fg outline-none transition-colors placeholder:text-fg-subtle focus:border-fg-subtle"
+                />
+              </label>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-[11px] font-medium text-fg-muted">Images</div>
+                    <div className="text-[10px] text-fg-subtle">Click, paste, drag-drop, or double-click to browse. Add as many image slots as needed.</div>
+                  </div>
+                  <Button type="button" variant="secondary" size="sm" onClick={addImageSlot}>
+                    <Plus size={14} />
+                    Add Image
+                  </Button>
+                </div>
+
+                <div className="grid gap-1 sm:grid-cols-3">
+                  {form.images.map((image, index) => (
+                    <div key={`discovery-image-${index}`} className="rounded-lg border border-border bg-bg-subtle/30 p-1">
+                      <div className="mb-1 flex items-center justify-between gap-1">
+                        <span className="text-[10px] font-medium text-fg-subtle">Image {index + 1}</span>
+                        <button
+                          type="button"
+                          onClick={() => removeImageSlot(index)}
+                          className="rounded-full border border-border px-2 py-0.5 text-[10px] text-fg-subtle transition-colors hover:bg-bg-card"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                      <div className="flex justify-center">
+                        <PhotoUpload compact value={image || undefined} onChange={(nextUrl) => setImageAt(index, nextUrl)} onPreview={(src) => setPreviewImage(src)} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-1.5">
+                <Button type="button" variant="secondary" onClick={resetForm} disabled={saving}>
+                  Reset
+                </Button>
+                <Button type="button" variant="primary" onClick={() => void saveDiscovery()} disabled={saving}>
+                  {saving ? <Save size={14} /> : <Save size={14} />}
+                  {saving ? "Saving..." : form.id ? "Save Changes" : "Save"}
                 </Button>
               </div>
+            </div>
+          </section>
 
-              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-6">
-                {form.images.map((image, index) => (
-                  <div key={`discovery-image-${index}`} className="rounded-xl border border-border bg-bg-subtle/35 p-2">
-                    <div className="mb-1.5 flex items-center justify-between gap-2">
-                      <span className="text-[11px] font-medium text-fg-subtle">Image {index + 1}</span>
-                      <button
-                        type="button"
-                        onClick={() => removeImageSlot(index)}
-                        className="rounded-full border border-border px-2 py-0.5 text-[10px] text-fg-subtle transition-colors hover:bg-bg-card"
-                      >
-                        Remove
-                      </button>
-                    </div>
-                    <div className="flex justify-center">
-                      <PhotoUpload compact value={image || undefined} onChange={(nextUrl) => setImageAt(index, nextUrl)} onPreview={(src) => setPreviewImage(src)} />
-                    </div>
-                  </div>
-                ))}
+          <section className="card overflow-hidden">
+            <div className="flex items-center justify-between gap-3 border-b border-border px-2.5 py-2">
+              <div>
+                <div className="text-[14px] font-semibold">Existing Product History</div>
+                <div className="mt-0.5 text-[10px] text-fg-subtle">{history.length} saved discovery item{history.length === 1 ? "" : "s"}</div>
+              </div>
+              <div className="rounded-full border border-border bg-bg-subtle px-2.5 py-0.5 text-[11px] text-fg-subtle">
+                Product Discovery
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-2.5">
-              <Button type="button" variant="secondary" onClick={resetForm} disabled={saving}>
-                Reset
-              </Button>
-              <Button type="button" variant="primary" onClick={() => void saveDiscovery()} disabled={saving}>
-                {saving ? <Save size={14} /> : <Save size={14} />}
-                {saving ? "Saving..." : form.id ? "Save Changes" : "Save"}
-              </Button>
-            </div>
-          </div>
-        </section>
-
-        <section className="card overflow-hidden">
-          <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-2.5">
-            <div>
-              <div className="text-[16px] font-semibold">Existing Product History</div>
-              <div className="mt-0.5 text-[11px] text-fg-subtle">{history.length} saved discovery item{history.length === 1 ? "" : "s"}</div>
-            </div>
-            <div className="rounded-full border border-border bg-bg-subtle px-3 py-1 text-[12px] text-fg-subtle">
-              Product Discovery
-            </div>
-          </div>
-
-          <div className="space-y-2.5 p-3">
+            <div className="space-y-2 p-2.5">
             {isLoading ? <div className="rounded-2xl border border-border bg-bg-subtle/40 px-4 py-8 text-center text-[13px] text-fg-subtle">Loading discovery history...</div> : null}
             {!isLoading && pagedHistory.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-border bg-bg-subtle/30 px-4 py-10 text-center">
@@ -390,10 +391,11 @@ export default function ProductDiscoveryPage() {
                 </article>
               );
             })}
-          </div>
+            </div>
 
-          <TablePagination total={history.length} currentPage={currentPage} pageSize={PAGE_SIZE} onPageChange={setCurrentPage} label="product discoveries" />
-        </section>
+            <TablePagination total={history.length} currentPage={currentPage} pageSize={PAGE_SIZE} onPageChange={setCurrentPage} label="product discoveries" />
+          </section>
+        </div>
       </div>
 
       <ConfirmDialog
