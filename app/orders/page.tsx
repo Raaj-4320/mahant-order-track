@@ -60,7 +60,7 @@ const createEmptyPaymentAgentSplit = (): PaymentAgentOrderSplit => ({
 const getDefaultMarkaFromOrderNumber = (orderNumber?: string | null) => {
   const parsed = parseOrderNumber(orderNumber || "");
   const prefix = parsed?.prefix?.trim() || "";
-  return prefix ? `${prefix} - ` : "";
+  return prefix || "";
 };
 const LAST_SELECTED_ORDER_SERIES_KEY = "orders:lastSelectedSeriesId";
 const LAST_SELECTED_ORDER_CATEGORY_KEY = "orders:lastSelectedCategory";
@@ -189,7 +189,7 @@ function PaymentStatusAmount({
       onMouseLeave={() => setOpen(false)}
     >
       <div className={cn("text-[16px] font-bold leading-none", isFullySettled ? "text-emerald-700" : "text-amber-600")}>
-        {formatFinalAmount(amount)}
+        {formatAmount(amount)}
       </div>
       {open && !isFullySettled && layout && typeof document !== "undefined"
         ? createPortal(
@@ -201,7 +201,7 @@ function PaymentStatusAmount({
               <div className="mt-1.5 space-y-1.5 text-[11px]">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-fg-subtle">Paid</span>
-                  <span className="font-semibold tabular-nums text-fg">{formatFinalAmount(paidAmount)}</span>
+                  <span className="font-semibold tabular-nums text-fg">{formatAmount(paidAmount)}</span>
                 </div>
                 <div className="flex items-start justify-between gap-2">
                   <span className="text-fg-subtle">Agent</span>
@@ -211,7 +211,7 @@ function PaymentStatusAmount({
                 </div>
                 <div className="flex items-center justify-between gap-2 border-t border-amber-100 pt-1.5">
                   <span className="text-fg-subtle">Left</span>
-                  <span className="font-semibold tabular-nums text-amber-700">{formatFinalAmount(remainingPayable)}</span>
+                  <span className="font-semibold tabular-nums text-amber-700">{formatAmount(remainingPayable)}</span>
                 </div>
               </div>
             </div>,
