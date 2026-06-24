@@ -101,6 +101,8 @@ export function OrderFooter({
           ?? null;
         const paidNow = Number(split.paidNow) || 0;
         const existingCredit = agent ? getPaymentAgentDirectFinance(agent).creditLeft : 0;
+        const creditUsed = Math.min(paidNow, existingCredit);
+        const payable = Math.max(0, paidNow - creditUsed);
         const label =
           split.paymentAgentSnapshot?.name?.trim()
           || split.paymentAgentName?.trim()
@@ -112,9 +114,9 @@ export function OrderFooter({
           label,
           paidNow,
           existingCredit,
-          creditUsed: paidNow,
-          payable: Math.max(0, total - paidNow),
-          creditLeft: Math.max(0, existingCredit - paidNow),
+          creditUsed,
+          payable,
+          creditLeft: Math.max(0, existingCredit - creditUsed),
         };
       })
       .filter((entry) => entry.label || entry.paidNow > 0 || entry.creditUsed > 0 || entry.creditLeft > 0);
@@ -128,20 +130,23 @@ export function OrderFooter({
           ?? paymentAgents.find((candidate) => candidate.id === split.paymentBy)
           ?? null;
         const availableCredit = agent ? getPaymentAgentDirectFinance(agent).creditLeft : 0;
-        const usedAmount = Number(split.paidNow) || 0;
+        const enteredAmount = Number(split.paidNow) || 0;
+        const usedAmount = Math.min(enteredAmount, availableCredit);
+        const payableAmount = Math.max(0, enteredAmount - usedAmount);
         acc.agentCredit += availableCredit;
         acc.creditUsed += usedAmount;
+        acc.payable += payableAmount;
         acc.creditLeft += Math.max(0, availableCredit - usedAmount);
         return acc;
       },
-      { agentCredit: 0, creditUsed: 0, creditLeft: 0 },
+      { agentCredit: 0, creditUsed: 0, payable: 0, creditLeft: 0 },
     );
 
     return {
       agentCredit: totals.agentCredit,
       orderTotal: total,
       creditUsed: totals.creditUsed,
-      pendingDue: Math.max(0, total - paidNow),
+      pendingDue: totals.payable,
       creditLeft: totals.creditLeft,
     };
   }, [paymentAgentSplits, paymentAgents, total]);

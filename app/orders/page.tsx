@@ -193,6 +193,11 @@ function PaymentStatusAmount({
       <div className={cn("text-[16px] font-bold leading-none", isFullySettled ? "text-emerald-700" : "text-amber-600")}>
         {formatAmount(amount)}
       </div>
+      {!isFullySettled && remainingPayable > 0 ? (
+        <div className="mt-0.5 text-[13px] font-semibold leading-none text-rose-600">
+          {formatAmount(remainingPayable)}
+        </div>
+      ) : null}
       {open && !isFullySettled && layout && typeof document !== "undefined"
         ? createPortal(
             <div
@@ -1215,12 +1220,11 @@ export default function OrdersPage() {
 
       const paidAmount = normalizePaymentSplitAmount(split.paidNow);
       const existingCredit = getPaymentAgentDirectFinance(resolvedAgent).creditLeft;
-      if (paidAmount > existingCredit) {
-        throw new Error(`Payment split ${resolvedSplits.length + 1}: paid amount cannot exceed available credit ${existingCredit}.`);
-      }
+      const creditUsed = Math.min(paidAmount, existingCredit);
+      const remainingPayable = Math.max(0, paidAmount - creditUsed);
 
       const nextName = resolvedAgent.name;
-      const splitStatus: "paid" | "unpaid" = paidAmount > 0 ? "paid" : "unpaid";
+      const splitStatus: "paid" | "partial" | "unpaid" = paidAmount <= 0 ? "unpaid" : remainingPayable > 0 ? "partial" : "paid";
       resolvedSplits.push({
         ...split,
         paymentAgentId: resolvedAgent.id,
@@ -1228,15 +1232,15 @@ export default function OrdersPage() {
         paymentAgentName: nextName,
         paymentAgentSnapshot: { id: resolvedAgent.id, name: resolvedAgent.name, code: resolvedAgent.agentCode },
         assignedAmount: paidAmount,
-        paidNow: paidAmount,
+        paidNow: creditUsed,
         settlementSnapshot: {
           orderPortionTotal: paidAmount,
           existingCredit,
-          creditUsed: paidAmount,
-          payableAfterCredit: 0,
-          remainingPayable: 0,
+          creditUsed,
+          payableAfterCredit: remainingPayable,
+          remainingPayable,
           newCreditCreated: 0,
-          resultingCreditBalance: Math.max(0, existingCredit - paidAmount),
+          resultingCreditBalance: Math.max(0, existingCredit - creditUsed),
           paidNow: 0,
           status: splitStatus,
           createdAt: split.settlementSnapshot?.createdAt || new Date().toISOString(),

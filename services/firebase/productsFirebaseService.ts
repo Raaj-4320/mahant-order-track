@@ -73,7 +73,7 @@ export const productsFirebaseService: ProductsService = {
     const { value: sanitized, removedUndefinedPaths } = sanitizeFirestorePayload(mapped, {
       keepNullPaths: [
         "purchasePrice", "sellingPrice", "defaultRmbPerPcs", "stockQty", "lowStockLimit", "defaultDim",
-        "supplierId", "source", "sourceOrderId", "sourceOrderNumber", "sourceLineId", "sourceOrderIds",
+        "supplierId", "supplierName", "notes", "discoveryImages", "discoveryTotalCtns", "discoveryPcsPerCtn", "discoveryRate", "source", "sourceOrderId", "sourceOrderNumber", "sourceLineId", "sourceOrderIds",
         "sourceLineIds", "catalogKey", "generatedFromOrderLines", "lastSeenAt", "lastLineTotalPcs"
       ]
     });
@@ -82,7 +82,7 @@ export const productsFirebaseService: ProductsService = {
       const existingSanitized = sanitizeFirestorePayload(existingMapped, {
         keepNullPaths: [
           "purchasePrice", "sellingPrice", "defaultRmbPerPcs", "stockQty", "lowStockLimit", "defaultDim",
-          "supplierId", "source", "sourceOrderId", "sourceOrderNumber", "sourceLineId", "sourceOrderIds",
+          "supplierId", "supplierName", "notes", "discoveryImages", "discoveryTotalCtns", "discoveryPcsPerCtn", "discoveryRate", "source", "sourceOrderId", "sourceOrderNumber", "sourceLineId", "sourceOrderIds",
           "sourceLineIds", "catalogKey", "generatedFromOrderLines", "lastSeenAt", "lastLineTotalPcs"
         ]
       });
