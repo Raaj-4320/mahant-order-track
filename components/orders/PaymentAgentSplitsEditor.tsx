@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronUp, Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { useMemo } from "react";
 import { Input } from "@/components/ui/Input";
 import { cn } from "@/lib/cn";
@@ -89,11 +89,7 @@ export function PaymentAgentSplitsEditor({
 
   return (
     <div className={cn("rounded-xl border border-border/60 bg-bg-card px-2 py-1.5", expanded && "px-2.5 py-2")}>
-      <button
-        type="button"
-        onClick={onToggleExpand}
-        className={cn("flex w-full items-center justify-between gap-3 rounded-lg px-1 py-0.5 text-left transition-colors hover:bg-bg-subtle/30", !onToggleExpand && "pointer-events-none")}
-      >
+      <div className="flex w-full items-center justify-between gap-3 rounded-lg px-1 py-0.5 text-left">
         <div className="min-w-0 flex items-center gap-2">
           <div className="text-[11px] font-semibold uppercase tracking-[0.1em] text-fg-subtle">Payment Agent Breakdown</div>
           <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
@@ -104,12 +100,7 @@ export function PaymentAgentSplitsEditor({
             </span>
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-border/60 bg-bg-card text-fg shadow-sm">
-            <ChevronUp size={14} className={cn("transition-transform duration-300", !expanded && "rotate-180")} />
-          </span>
-        </div>
-      </button>
+      </div>
 
       {groupedAgents.length === 0 ? <div className="py-1.5 text-[11px] text-fg-subtle">No payment agent selected</div> : null}
 

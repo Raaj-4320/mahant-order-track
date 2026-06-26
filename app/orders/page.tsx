@@ -3572,7 +3572,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
       />
       </main>
       {isOrderModalOpen && <div className="fixed inset-0 z-50 bg-black/50 p-2 backdrop-blur-[2px] md:p-4">
-        <div className="relative mx-auto flex h-[92vh] w-full max-w-[1520px] flex-col overflow-hidden rounded-[24px] border border-border bg-bg-card shadow-card" onClick={(e) => e.stopPropagation()}>
+        <div className="relative mx-auto flex h-[92vh] w-full max-w-[1520px] flex-col overflow-y-auto rounded-[24px] border border-border bg-bg-card shadow-card" onClick={(e) => e.stopPropagation()}>
           <div className="border-b border-border/70 px-4 py-4 pr-5">
             <div className="grid items-end gap-3 xl:grid-cols-[minmax(720px,2.65fr)_132px_minmax(320px,1.08fr)_minmax(160px,0.58fr)_52px]">
               <section className="min-w-0">
@@ -3666,7 +3666,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
               <button className="text-amber-800 text-xs rounded px-1 py-0.5 hover:bg-amber-100" onClick={() => setValidationWarning({ visible: false, items: [] })}><X size={14} /></button>
             </div>
           </div> : null}
-          <div className="min-h-0 flex-1 overflow-hidden bg-bg-subtle/20">
+          <div className="bg-bg-subtle/20">
             <OrderForm showOrderInfo={false} draft={draft} setDraft={(u) => setDraft((d) => u(d))} paymentAgents={paymentAgents} customers={customers} onUploadingChange={onUploadingChange} onRemoveLine={handleRemoveLine} wechatSuggestions={wechatSuggestions.filter((w) => draft.wechatId.trim() ? w.toLowerCase().includes(draft.wechatId.trim().toLowerCase()) : false)} customerSuggestions={customerSuggestions} onPreviewImage={(src) => setPreviewImage({ src, alt: "Order line photo preview" })} onCustomerValidityChange={(lineId, issue) => setPopupCustomerIssues((prev) => ({ ...prev, [lineId]: issue }))} defaultMarka={mode === "add" ? currentDraftDefaultMarka : ""} />
           </div>
           <OrderFooter lineTotal={lineTotal} shippingPrice={getOrderShippingAmount(draft)} total={total} onCancel={requestExitComposer} showCancel={false} onSaveDraft={() => onSave("draft")} onSaveOrder={() => onSave("saved")} onViewDetails={() => setViewOrder(draft)} saveOrderLabel={orderSaveState === "saving" ? "Saving Order..." : (editingOrderId ? "Save Changes" : "Save Order")} saveDraftLabel={orderSaveState === "saving" ? "Saving Draft..." : "Save as Draft"} disableSaveDraft={orderSaveState !== "idle"} disableSaveOrder={orderSaveState !== "idle"} paymentAgents={paymentAgents} paymentAgentSplits={getEditablePaymentAgentSplits(draft)} paymentAgentEvents={getEditablePaymentAgentEvents(draft)} onPaymentAgentEventsChange={setDraftPaymentAgentEvents} onPaymentAgentEventManualAmountEdit={markDraftPaymentEventAsManual} onShippingPriceChange={(value) => setDraft((d) => ({ ...d, shippingPrice: value }))} />

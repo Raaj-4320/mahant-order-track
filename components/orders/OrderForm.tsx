@@ -44,7 +44,7 @@ type Props = {
 
 export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, wechatSuggestions = [], customerSuggestions = [], customers = [], paymentAgents = [], showOrderInfo = true, onPreviewImage, onCustomerValidityChange, defaultMarka = "" }: Props) {
   const sectionShellClass = showOrderInfo ? "card flex min-h-0 flex-1 flex-col overflow-visible" : "flex min-h-0 flex-1 flex-col overflow-visible";
-  const sectionBodyClass = showOrderInfo ? "min-h-0 overflow-x-auto overflow-y-visible px-2.5 py-2.5" : "min-h-0 flex-1 overflow-x-auto overflow-y-auto bg-bg-card px-1 py-1.5";
+  const sectionBodyClass = showOrderInfo ? "min-h-0 overflow-x-auto overflow-y-visible px-2.5 py-2.5" : "min-h-0 overflow-x-auto overflow-y-visible bg-bg-card px-1 py-1.5";
   const [paymentQuery, setPaymentQuery] = useState("");
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [wechatOpen, setWechatOpen] = useState(false);
