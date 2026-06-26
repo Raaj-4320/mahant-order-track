@@ -744,7 +744,7 @@ function OutsideSuggestionEditor({
 }
 
 export default function OrdersPage() {
-  type OrdersMode = "history" | "add" | "drafts" | "edit";
+  type OrdersMode = "history" | "add" | "drafts" | "edit" | "payment-check";
   const ordersSourceSelection = useMemo(() => ordersDataSourceSelection(), []);
   const ordersDataSource = ordersSourceSelection.source;
   const isFirebaseOrdersMode = ordersDataSource === "firebase";
@@ -2498,6 +2498,71 @@ try {
     logDataFlow("Orders", JSON.stringify({ event: "add_order_fresh_form_opened", orderId: nextDraft.id, orderNumber: nextDraft.number || nextDraft.orderNumber }, null, 2));
   };
   const drafts = useMemo(() => (isFirebaseOrdersMode ? firebaseDraftOrders : orders.filter((o) => o.status === "draft")), [isFirebaseOrdersMode, orders, firebaseDraftOrders]);
+  const paymentAuditOrders = useMemo(() => {
+    const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+    return [...activeOrders]
+      .filter((order) => order.status !== "draft" && order.status !== "archived")
+      .sort((left, right) => {
+        const rightDate = right.date || right.createdAt || right.updatedAt || "";
+        const leftDate = left.date || left.createdAt || left.updatedAt || "";
+        const dateDiff = rightDate.localeCompare(leftDate);
+        if (dateDiff !== 0) return dateDiff;
+        const rightParsed = parseOrderNumber(right.number || right.orderNumber);
+        const leftParsed = parseOrderNumber(left.number || left.orderNumber);
+        const numericDiff = (rightParsed?.numericNumber ?? Number.NEGATIVE_INFINITY) - (leftParsed?.numericNumber ?? Number.NEGATIVE_INFINITY);
+        if (numericDiff !== 0) return numericDiff;
+        return collator.compare(right.number || right.orderNumber || "", left.number || left.orderNumber || "");
+      });
+  }, [activeOrders]);
+  const getOrderPrimaryPhoto = (order: Order) => {
+    const candidate = order.lines.find((line) => line.productPhotoUrl || line.photoUrl || (line as Order["lines"][number] & { productImage?: string; image?: string }).productImage || (line as Order["lines"][number] & { productImage?: string; image?: string }).image);
+    const line = candidate as Order["lines"][number] & { productImage?: string; image?: string } | undefined;
+    return line?.productPhotoUrl || line?.productImage || line?.image || line?.photoUrl || "";
+  };
+  const getPhotoFileName = (photoUrl: string) => {
+    if (!photoUrl) return "No image";
+    const cleaned = photoUrl.split("?")[0].split("#")[0];
+    return cleaned.split("/").filter(Boolean).pop() || "No image";
+  };
+  const paymentAuditRows = useMemo(() => paymentAuditOrders.map((order) => {
+    const paymentMeta = getOrderPaymentAgentDisplay(order, paymentAgents);
+    const paymentSplits = getOrderPaymentAgentSplits(order);
+    const amount = getOrderTotalAmount(order);
+    const splitPaidAmount = paymentSplits.reduce((sum, split) => {
+      const creditUsed = Number(split.settlementSnapshot?.creditUsed);
+      if (Number.isFinite(creditUsed)) return sum + Math.max(0, creditUsed);
+      const paidNow = Number(split.paidNow);
+      return sum + (Number.isFinite(paidNow) ? Math.max(0, paidNow) : 0);
+    }, 0);
+    const hasSplitSettlementInfo = paymentSplits.some((split) => Number.isFinite(Number(split.settlementSnapshot?.creditUsed)) || Number.isFinite(Number(split.paidNow)));
+    const paidAmount = Math.max(0, hasSplitSettlementInfo ? splitPaidAmount : (Number.isFinite(Number(order.paidAmount)) ? Number(order.paidAmount) : 0));
+    const remainingPayable = Math.max(0, hasSplitSettlementInfo ? Math.max(0, amount - paidAmount) : (Number.isFinite(Number(order.dueAmount)) ? Number(order.dueAmount) : Math.max(0, amount - paidAmount)));
+    const isPaid = remainingPayable <= 0;
+    const agentName = paymentSplits
+      .map((split) => split.paymentAgentSnapshot?.name?.trim() || split.paymentAgentName?.trim() || split.paymentBy?.trim() || split.paymentAgentId?.trim())
+      .filter(Boolean)[0] || paymentMeta.value;
+    return {
+      order,
+      photoUrl: getOrderPrimaryPhoto(order),
+      photoName: getPhotoFileName(getOrderPrimaryPhoto(order)),
+      paymentAgentName: paymentMeta.isMissing ? paymentMeta.value : agentName,
+      paidAmount,
+      remainingPayable,
+      isPaid,
+      orderAmount: amount,
+    };
+  }), [paymentAuditOrders, paymentAgents]);
+  const paymentAuditSummary = useMemo(() => {
+    const totals = new Map<string, { name: string; totalPaid: number; orderCount: number }>();
+    paymentAuditRows.forEach((row) => {
+      const name = row.paymentAgentName || "Unlinked";
+      const current = totals.get(name) || { name, totalPaid: 0, orderCount: 0 };
+      current.totalPaid += row.paidAmount;
+      current.orderCount += 1;
+      totals.set(name, current);
+    });
+    return Array.from(totals.values()).sort((left, right) => right.totalPaid - left.totalPaid);
+  }, [paymentAuditRows]);
   const orderHeaderTabs = useMemo(
     () => orderCategoryTabs,
     [orderCategoryTabs],
@@ -2515,7 +2580,9 @@ try {
   const getLineRate = (line: Order["lines"][number]) => Number(line.rmbPerPcs) || 0;
   const getLineAmount = (line: Order["lines"][number]) => lineTotalRmb(line);
   const getOrderTotalCtns = (order: Order) => (order.lines || []).reduce((sum, line) => sum + getLineCtns(line), 0);
-  const getOrderTotalAmount = (order: Order) => orderTotal(order);
+  function getOrderTotalAmount(order: Order) {
+    return orderTotal(order);
+  }
   const getOrderShippingAmount = (order: Order) => orderShippingPrice(order);
   const getFirstDraftPhoto = (order: Order) => order.lines.find((line) => line.productPhotoUrl || line.photoUrl)?.productPhotoUrl || order.lines.find((line) => line.productPhotoUrl || line.photoUrl)?.photoUrl || "";
   const renderDraftMissing = () => <span className="text-[var(--danger)]">Not present</span>;
@@ -2858,6 +2925,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
         </div>
         <Button size="sm" variant={mode === "drafts" ? "secondary" : "primary"} onClick={startAdd}>Add Order</Button>
         <Button size="sm" variant={mode === "drafts" ? "primary" : "secondary"} onClick={() => setMode((current) => current === "drafts" ? "history" : "drafts")}>Draft ({drafts.length})</Button>
+        <Button size="sm" variant={mode === "payment-check" ? "primary" : "secondary"} onClick={() => setMode((current) => current === "payment-check" ? "history" : "payment-check")}>Cross Verify Payment Agent</Button>
         <button aria-label="Toggle theme" onClick={toggle} className="grid h-8 w-8 place-items-center rounded-full border border-border bg-bg-card hover:border-fg-subtle transition-colors">{theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}</button>
       </div>
       {ordersDataSource === "mock" ? <div className="border-b border-amber-300 bg-amber-50 px-5 py-2 text-[12px] font-medium text-amber-900">{ordersSourceSelection.hasFirebaseConfig ? "Mock mode is enabled; order and customer data is local and will not persist to Firebase." : "Firebase is not configured; app is running in mock mode and data will not persist."}</div> : null}
@@ -2894,6 +2962,109 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
             </table>
           </div>
           <TablePagination total={drafts.length} currentPage={draftPage} pageSize={PAGE_SIZE} onPageChange={setDraftPage} label="draft orders" />
+        </section>}
+
+        {mode === "payment-check" && <section className="card overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
+            <div>
+              <h3 className="font-semibold">Temporary Payment Cross Check</h3>
+              <div className="text-[12px] text-fg-subtle">One row per order with agent payment detail, image name, and settlement status.</div>
+            </div>
+            <div className="text-[12px] text-fg-subtle">{paymentAuditRows.length} order{paymentAuditRows.length === 1 ? "" : "s"}</div>
+          </div>
+          <div className="grid gap-4 border-b border-border bg-bg-subtle/30 p-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+            <div className="overflow-hidden rounded-xl border border-border bg-bg-card">
+              <table className="w-full text-[13px]">
+                <thead className="bg-bg-card/95 text-left text-[11px] uppercase tracking-wide text-fg-subtle">
+                  <tr>
+                    <th className="px-4 py-2">Metric</th>
+                    <th className="px-4 py-2 text-right">Count</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="border-t border-border/80">
+                    <td className="px-4 py-3 font-medium">Total Orders</td>
+                    <td className="px-4 py-3 text-right font-semibold tabular-nums">{paymentAuditRows.length}</td>
+                  </tr>
+                  <tr className="border-t border-border/80">
+                    <td className="px-4 py-3 font-medium text-emerald-700">Paid Orders</td>
+                    <td className="px-4 py-3 text-right font-semibold tabular-nums text-emerald-700">{paymentAuditRows.filter((row) => row.isPaid).length}</td>
+                  </tr>
+                  <tr className="border-t border-border/80">
+                    <td className="px-4 py-3 font-medium text-rose-700">Not Paid</td>
+                    <td className="px-4 py-3 text-right font-semibold tabular-nums text-rose-700">{paymentAuditRows.filter((row) => !row.isPaid).length}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div className="overflow-hidden rounded-xl border border-border bg-bg-card">
+              <table className="w-full text-[13px]">
+                <thead className="bg-bg-card/95 text-left text-[11px] uppercase tracking-wide text-fg-subtle">
+                  <tr>
+                    <th className="px-4 py-2">Payment Agent</th>
+                    <th className="px-4 py-2 text-right">Orders</th>
+                    <th className="px-4 py-2 text-right">Total Paid</th>
+                  </tr>
+                </thead>
+              </table>
+              <div className="max-h-48 overflow-y-auto">
+                <table className="w-full text-[13px]">
+                  <tbody>
+                    {paymentAuditSummary.length === 0 ? <tr><td colSpan={3} className="px-4 py-8 text-center text-fg-subtle">No payment agent totals yet.</td></tr> : paymentAuditSummary.map((summary) => (
+                      <tr key={summary.name} className="border-t border-border/80">
+                        <td className="px-4 py-3 font-medium">{summary.name}</td>
+                        <td className="px-4 py-3 text-right tabular-nums">{summary.orderCount}</td>
+                        <td className="px-4 py-3 text-right font-semibold tabular-nums">{formatAmount(summary.totalPaid)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[1120px] text-[13px]">
+              <thead className="bg-bg-card/95 text-left text-[11px] uppercase tracking-wide text-fg-subtle">
+                <tr>
+                  <th className="px-4 py-2">Order</th>
+                  <th className="px-4 py-2">Image Name</th>
+                  <th className="px-4 py-2">Payment Agent</th>
+                  <th className="px-4 py-2">Order Amount</th>
+                  <th className="px-4 py-2">Paid Amount</th>
+                  <th className="px-4 py-2">Remaining</th>
+                  <th className="px-4 py-2">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {paymentAuditRows.length === 0 ? <tr><td colSpan={7} className="px-4 py-8 text-center text-fg-subtle">No orders available for payment verification.</td></tr> : paymentAuditRows.map(({ order, photoUrl, photoName, paymentAgentName, paidAmount, remainingPayable, isPaid, orderAmount }) => (
+                  <tr key={order.id} className="border-t border-border/80 align-top hover:bg-bg-subtle/40">
+                    <td className="px-4 py-3">
+                      <div className="font-semibold">{order.number || order.orderNumber || "Draft"}</div>
+                      <div className="mt-1 text-[11px] text-fg-subtle">{formatDate(order.date || order.createdAt || order.updatedAt || "")}</div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        {photoUrl ? <button type="button" className="grid h-10 w-10 place-items-center overflow-hidden rounded-lg border border-border bg-bg-subtle" onClick={() => setPreviewImage({ src: photoUrl, alt: photoName })}><img src={photoUrl} alt={photoName} className="h-full w-full object-cover" loading="lazy" decoding="async" /></button> : <div className="grid h-10 w-10 place-items-center rounded-lg border border-border bg-bg-subtle text-[10px] text-fg-subtle">No</div>}
+                        <div className="min-w-0">
+                          <div className="truncate font-medium">{photoName}</div>
+                          <div className="text-[11px] text-fg-subtle">{order.lines.length} line{order.lines.length === 1 ? "" : "s"}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="font-medium">{paymentAgentName || "Not Paid"}</div>
+                    </td>
+                    <td className="px-4 py-3 tabular-nums font-semibold">{formatAmount(orderAmount)}</td>
+                    <td className="px-4 py-3 tabular-nums font-semibold">{formatAmount(paidAmount)}</td>
+                    <td className="px-4 py-3 tabular-nums font-semibold">{formatAmount(remainingPayable)}</td>
+                    <td className="px-4 py-3">
+                      <span className={cn("rounded-full px-2.5 py-1 text-[11px] font-semibold", isPaid ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300" : "bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300")}>{isPaid ? "Paid" : "Not Paid"}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </section>}
 
         <section className="card overflow-visible">
