@@ -120,6 +120,34 @@ const paymentAgentSplitsFromUnknown = (value: unknown): PaymentAgentOrderSplit[]
     return acc;
   }, []);
 };
+const paymentAgentPaymentEventsFromUnknown = (value: unknown): Order["paymentAgentPaymentEvents"] => {
+  if (!Array.isArray(value)) return undefined;
+  return value.reduce<NonNullable<Order["paymentAgentPaymentEvents"]>>((acc, item) => {
+    const raw = asRecord(item);
+    if (!raw) return acc;
+    const id = asStr(raw.id);
+    if (!id) return acc;
+    const rawSnapshot = asRecord(raw.paymentAgentSnapshot);
+    acc.push({
+      id,
+      paymentAgentId: asStr(raw.paymentAgentId),
+      paymentBy: asStr(raw.paymentBy),
+      paymentAgentName: asStr(raw.paymentAgentName),
+      paymentAgentSnapshot: rawSnapshot
+        ? {
+            id: asStr(rawSnapshot.id),
+            name: asStr(rawSnapshot.name),
+            code: asStr(rawSnapshot.code) || undefined,
+          }
+        : undefined,
+      amount: asNum(raw.amount) ?? 0,
+      note: asStr(raw.note) || undefined,
+      createdAt: asStr(raw.createdAt) || undefined,
+      updatedAt: asStr(raw.updatedAt) || undefined,
+    });
+    return acc;
+  }, []);
+};
 
 
 type SanitizeOptions = { keepNullPaths?: string[] };
@@ -412,7 +440,7 @@ export const orderFromFirestore = (doc: unknown): Order => {
         });
       })
     : [];
-  return { ...(o as any), id: asStr(o.id), number: asStr(o.number) || asStr(o.orderNumber), orderNumber: asStr(o.orderNumber) || asStr(o.number), orderPrefix: asStr(o.orderPrefix) || undefined, orderSequenceNumber: asNum(o.orderSequenceNumber) ?? undefined, date: asStr(o.date), loadingDate: asStr(o.loadingDate) || undefined, wechatId: asStr(o.wechatId), status: (asStr(o.status) as Order["status"]) || "draft", paymentStatus: (asStr(o.paymentStatus) as Order["paymentStatus"]) || "pending", paymentBy: asStr(o.paymentBy), paymentAgentId: asStr(o.paymentAgentId), paymentAgentSplits: paymentAgentSplitsFromUnknown(o.paymentAgentSplits), shippingPrice: asNum(o.shippingPrice) ?? 0, paidToPaymentAgentNow: asNum(o.paidToPaymentAgentNow) ?? 0, lines: lines as any, createdAt: asStr(o.createdAt, now), updatedAt: asStr(o.updatedAt, now), savedAt: asStr(o.savedAt) || undefined, draftAutosavedAt: asStr(o.draftAutosavedAt) || undefined, lastEditedAt: asStr(o.lastEditedAt) || undefined, lifecycle: lifecycleFromUnknown(o.lifecycle, { type: "order", sourceType: "manual" }), dependencyMap: orderDependencyMapFromUnknown(o.dependencyMap) } as Order;
+  return { ...(o as any), id: asStr(o.id), number: asStr(o.number) || asStr(o.orderNumber), orderNumber: asStr(o.orderNumber) || asStr(o.number), orderPrefix: asStr(o.orderPrefix) || undefined, orderSequenceNumber: asNum(o.orderSequenceNumber) ?? undefined, date: asStr(o.date), loadingDate: asStr(o.loadingDate) || undefined, wechatId: asStr(o.wechatId), status: (asStr(o.status) as Order["status"]) || "draft", paymentStatus: (asStr(o.paymentStatus) as Order["paymentStatus"]) || "pending", paymentBy: asStr(o.paymentBy), paymentAgentId: asStr(o.paymentAgentId), paymentAgentSplits: paymentAgentSplitsFromUnknown(o.paymentAgentSplits), paymentAgentPaymentEvents: paymentAgentPaymentEventsFromUnknown(o.paymentAgentPaymentEvents), shippingPrice: asNum(o.shippingPrice) ?? 0, paidToPaymentAgentNow: asNum(o.paidToPaymentAgentNow) ?? 0, lines: lines as any, createdAt: asStr(o.createdAt, now), updatedAt: asStr(o.updatedAt, now), savedAt: asStr(o.savedAt) || undefined, draftAutosavedAt: asStr(o.draftAutosavedAt) || undefined, lastEditedAt: asStr(o.lastEditedAt) || undefined, lifecycle: lifecycleFromUnknown(o.lifecycle, { type: "order", sourceType: "manual" }), dependencyMap: orderDependencyMapFromUnknown(o.dependencyMap) } as Order;
 };
 export const orderToFirestore = (entity: Order): Record<string, unknown> => sanitizeFirestorePayload({
   ...entity,
@@ -456,6 +484,21 @@ export const orderToFirestore = (entity: Order): Record<string, unknown> => sani
             : null,
           createdAt: split.createdAt ?? null,
           updatedAt: split.updatedAt ?? null,
+        })),
+      }
+    : {}),
+  ...(entity.paymentAgentPaymentEvents
+    ? {
+        paymentAgentPaymentEvents: entity.paymentAgentPaymentEvents.map((event) => ({
+          id: event.id ?? "",
+          paymentAgentId: event.paymentAgentId ?? "",
+          paymentBy: event.paymentBy ?? "",
+          paymentAgentName: event.paymentAgentName ?? "",
+          paymentAgentSnapshot: event.paymentAgentSnapshot ?? null,
+          amount: event.amount ?? 0,
+          note: event.note ?? null,
+          createdAt: event.createdAt ?? null,
+          updatedAt: event.updatedAt ?? null,
         })),
       }
     : {}),

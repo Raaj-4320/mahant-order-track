@@ -111,6 +111,13 @@ const warnAccounting = (key: string, message: string, meta: Record<string, unkno
 };
 
 const normalizeText = (value?: string | null) => (value || "").trim().toLowerCase();
+const normalizeOrderStatus = (value?: string | null) => (value || "").trim().toLowerCase();
+const isLiveAccountingOrder = (order: Order) => {
+  const status = normalizeOrderStatus(order.status);
+  if (status === "saved") return true;
+  if (status === "draft" || status === "archived") return false;
+  return status === "";
+};
 
 const splitBelongsToAgent = (agent: PaymentAgent, split: PaymentAgentOrderSplit) => {
   const agentId = normalizeText(agent.id);
@@ -158,6 +165,10 @@ const buildFallbackSettlementEntries = (order: Order, agent: PaymentAgent): Paym
 };
 
 export const isOrderMatchedToPaymentAgent = (order: Order, agent: PaymentAgent) => {
+  const matchedSplits = getOrderPaymentAgentSplits(order).filter((split) => splitBelongsToAgent(agent, split));
+  if (matchedSplits.length > 0) {
+    return true;
+  }
   const resolution = resolveOrderPaymentAgentMatch(order, [agent]);
   if (resolution.agent?.id === agent.id) {
     if (resolution.isLegacyNameFallback) {
@@ -180,21 +191,28 @@ export const buildPaymentAgentAccountingSummary = (
   customers: Customer[] = [],
 ): PaymentAgentAccountingSummary => {
   return measurePerfSync("calc", "paymentAgentAccounting.buildSummary", { agentId: agent.id, ordersCount: orders.length, entriesCount: entries.length }, () => {
-  const matchedOrders = orders.filter((order) => order.status !== "archived" && isOrderMatchedToPaymentAgent(order, agent));
+  const matchedOrders = orders.filter((order) => isLiveAccountingOrder(order) && isOrderMatchedToPaymentAgent(order, agent));
   const matchedOrderIds = new Set(matchedOrders.map((order) => order.id));
   const matchedOrderNumbers = new Set(matchedOrders.map((order) => order.number || order.orderNumber).filter(Boolean));
 
   const matchedEntries = entries.filter((entry) => {
-    const byAgentId = Boolean(entry.agentId && entry.agentId === agent.id);
-    const byOrderId = Boolean(entry.sourceOrderId && matchedOrderIds.has(entry.sourceOrderId));
-    const byOrderNumber = Boolean(entry.sourceOrderNumber && matchedOrderNumbers.has(entry.sourceOrderNumber));
+    const normalizedAgentId = normalizeText(entry.agentId);
+    const byAgentId = Boolean(normalizedAgentId && normalizedAgentId === normalizeText(agent.id));
+    const canUseLegacyOrderFallback = !normalizedAgentId;
+    const byOrderId = canUseLegacyOrderFallback && Boolean(entry.sourceOrderId && matchedOrderIds.has(entry.sourceOrderId));
+    const byOrderNumber = canUseLegacyOrderFallback && Boolean(entry.sourceOrderNumber && matchedOrderNumbers.has(entry.sourceOrderNumber));
     return byAgentId || byOrderId || byOrderNumber;
   });
 
   const activeSettlementSourceEntries = matchedEntries.filter((entry) => entry.type === "order_settlement" && isEntryActive(entry));
   const activeSettlementGroups = new Map<string, PaymentAgentLedgerEntry[]>();
   activeSettlementSourceEntries.forEach((entry) => {
-    const key = entry.sourceOrderId || entry.sourceOrderNumber || entry.id;
+    const key =
+      entry.settlementEntryKey
+      || (entry.sourceOrderId && entry.sourcePaymentAgentSplitId ? `${entry.sourceOrderId}:${entry.sourcePaymentAgentSplitId}` : "")
+      || entry.sourceOrderId
+      || entry.sourceOrderNumber
+      || entry.id;
     const existing = activeSettlementGroups.get(key) ?? [];
     existing.push(entry);
     activeSettlementGroups.set(key, existing);
@@ -210,15 +228,34 @@ export const buildPaymentAgentAccountingSummary = (
   });
   const activeSettlementEntries = pickLatestByKey(
     activeSettlementSourceEntries,
-    (entry) => entry.sourceOrderId || entry.sourceOrderNumber || entry.id,
+    (entry) =>
+      entry.settlementEntryKey
+      || (entry.sourceOrderId && entry.sourcePaymentAgentSplitId ? `${entry.sourceOrderId}:${entry.sourcePaymentAgentSplitId}` : "")
+      || entry.sourceOrderId
+      || entry.sourceOrderNumber
+      || entry.id,
   );
 
   const settlementKeys = new Set(
-    activeSettlementEntries.map((entry) => entry.settlementEntryKey || entry.sourceOrderId || entry.sourceOrderNumber || entry.id),
+    activeSettlementEntries.map((entry) =>
+      entry.settlementEntryKey
+      || (entry.sourceOrderId && entry.sourcePaymentAgentSplitId ? `${entry.sourceOrderId}:${entry.sourcePaymentAgentSplitId}` : "")
+      || entry.sourceOrderId
+      || entry.sourceOrderNumber
+      || entry.id,
+    ),
   );
   const fallbackSettlementEntries = matchedOrders
     .flatMap((order) => buildFallbackSettlementEntries(order, agent))
-    .filter((entry) => !settlementKeys.has(entry.settlementEntryKey || entry.sourceOrderId || entry.sourceOrderNumber || entry.id));
+    .filter((entry) =>
+      !settlementKeys.has(
+        entry.settlementEntryKey
+        || (entry.sourceOrderId && entry.sourcePaymentAgentSplitId ? `${entry.sourceOrderId}:${entry.sourcePaymentAgentSplitId}` : "")
+        || entry.sourceOrderId
+        || entry.sourceOrderNumber
+        || entry.id,
+      ),
+    );
 
   const netSettlementEntries = [...activeSettlementEntries, ...fallbackSettlementEntries];
   const reversalEntries = pickLatestByKey(

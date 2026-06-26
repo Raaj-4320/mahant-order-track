@@ -8,7 +8,7 @@ import { OrderFooter } from "@/components/orders/OrderFooter";
 import { formatAmount, formatDate } from "@/lib/data";
 import { formatDisplayNumber, formatRate, formatWholeMoney } from "@/lib/numbers";
 import { formatIndianDate } from "@/lib/dateFormat";
-import { Customer, Order, OrderNumberSeries, PaymentAgent, PaymentAgentOrderSplit, lineTotalPcs, lineTotalRmb, orderLinesTotal, orderShippingPrice, orderTotal } from "@/lib/types";
+import { Customer, Order, OrderNumberSeries, PaymentAgent, PaymentAgentOrderSplit, PaymentAgentPaymentEvent, lineTotalPcs, lineTotalRmb, orderLinesTotal, orderShippingPrice, orderTotal } from "@/lib/types";
 import { syncOrderLinesToProducts, archiveProductsForOrder, archiveProductsForRemovedOrderLines } from "@/services/productCatalogSync";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -50,6 +50,7 @@ import { getPaymentAgentDirectFinance } from "@/services/paymentAgentFinance";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const createPaymentAgentSplitId = () => `pas-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+const createPaymentAgentPaymentEventId = () => `pae-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const createEmptyPaymentAgentSplit = (): PaymentAgentOrderSplit => ({
   id: createPaymentAgentSplitId(),
   paymentAgentId: "",
@@ -58,10 +59,20 @@ const createEmptyPaymentAgentSplit = (): PaymentAgentOrderSplit => ({
   assignedAmount: 0,
   paidNow: 0,
 });
+const createEmptyPaymentAgentPaymentEvent = (seed?: Partial<PaymentAgentPaymentEvent>): PaymentAgentPaymentEvent => ({
+  id: createPaymentAgentPaymentEventId(),
+  paymentAgentId: seed?.paymentAgentId || "",
+  paymentBy: seed?.paymentBy || "",
+  paymentAgentName: seed?.paymentAgentName || "",
+  paymentAgentSnapshot: seed?.paymentAgentSnapshot,
+  amount: Number(seed?.amount) || 0,
+  note: seed?.note,
+});
 const getDefaultMarkaFromOrderNumber = (orderNumber?: string | null) => {
   const parsed = parseOrderNumber(orderNumber || "");
-  const prefix = parsed?.prefix?.trim() || "";
-  return prefix || "";
+  const rawPrefix = parsed?.prefix?.trim() || "";
+  const normalizedPrefix = rawPrefix.replace(/(?:\s*-\s*)+$/g, "").trim();
+  return normalizedPrefix ? `${normalizedPrefix} - ` : "";
 };
 const LAST_SELECTED_ORDER_SERIES_KEY = "orders:lastSelectedSeriesId";
 const LAST_SELECTED_ORDER_CATEGORY_KEY = "orders:lastSelectedCategory";
@@ -80,6 +91,7 @@ const createEmptyDraft = (_orders: Order[], reservedOrderNumber = "", defaultMar
   paymentStatus: "pending",
   paidToPaymentAgentNow: 0,
   shippingPrice: 0,
+  paymentAgentPaymentEvents: [createEmptyPaymentAgentPaymentEvent()],
   paymentAgentSplits: [createEmptyPaymentAgentSplit()],
   lines: [{ ...newLine(defaultMarka), details: "", marka: defaultMarka, totalCtns: 0, pcsPerCtn: 0, rmbPerPcs: 0, productPhotoUrl: "", photoUrl: "" }],
 });
@@ -334,6 +346,62 @@ const normalizePaymentSplitAmount = (value: number | undefined) => {
   const next = Number(value);
   return Number.isFinite(next) ? next : 0;
 };
+const normalizePaymentEventAmount = (value: number | undefined) => {
+  const next = Number(value);
+  return Number.isFinite(next) ? next : 0;
+};
+const getOrderPaymentStatusBreakdown = (order: Order) => {
+  const grouped = new Map<string, { agentName: string; amount: number }>();
+  const savedEvents = (order.paymentAgentPaymentEvents ?? [])
+    .map(normalizeDraftPaymentEvent)
+    .filter((event) => !isPaymentAgentPaymentEventEmpty(event))
+    .filter((event) => normalizePaymentEventAmount(event.amount) > 0);
+
+  if (savedEvents.length > 0) {
+    savedEvents.forEach((event) => {
+      const agentName =
+        event.paymentAgentSnapshot?.name?.trim()
+        || event.paymentAgentName?.trim()
+        || event.paymentBy?.trim()
+        || event.paymentAgentId?.trim()
+        || "Payment Agent";
+      const key = normalizePaymentAgentValue(event.paymentAgentId || event.paymentBy || agentName);
+      const current = grouped.get(key) || { agentName, amount: 0 };
+      current.amount += Math.max(0, normalizePaymentEventAmount(event.amount));
+      grouped.set(key, current);
+    });
+  } else {
+    getOrderPaymentAgentSplits(order).forEach((split) => {
+      const creditUsed = Number(split.settlementSnapshot?.creditUsed);
+      const paidNow = Number(split.settlementSnapshot?.paidNow);
+      const legacyPaidNow = Number(split.paidNow);
+      const amountPaid = Number.isFinite(creditUsed)
+        ? Math.max(0, creditUsed)
+        : Number.isFinite(paidNow)
+          ? Math.max(0, paidNow)
+          : Number.isFinite(legacyPaidNow)
+            ? Math.max(0, legacyPaidNow)
+            : 0;
+      if (amountPaid <= 0) return;
+      const agentName =
+        split.paymentAgentSnapshot?.name?.trim()
+        || split.paymentAgentName?.trim()
+        || split.paymentBy?.trim()
+        || split.paymentAgentId?.trim()
+        || "Payment Agent";
+      const key = normalizePaymentAgentValue(split.paymentAgentId || split.paymentBy || agentName);
+      const current = grouped.get(key) || { agentName, amount: 0 };
+      current.amount += amountPaid;
+      grouped.set(key, current);
+    });
+  }
+
+  const paymentBreakdown = Array.from(grouped.values()).filter((entry) => entry.amount > 0);
+  const paidAmount = paymentBreakdown.reduce((sum, entry) => sum + entry.amount, 0);
+  const paymentAgentSummary = paymentBreakdown.map((entry) => entry.agentName).join(", ");
+
+  return { paidAmount, paymentBreakdown, paymentAgentSummary };
+};
 const calculateOrderAgentPaidTotal = (splits: PaymentAgentOrderSplit[]) =>
   splits.reduce((sum, split) => sum + normalizePaymentSplitAmount(split.paidNow), 0);
 const calculateOrderRemainingPayable = (orderAmount: number, splits: PaymentAgentOrderSplit[]) =>
@@ -360,8 +428,26 @@ const normalizeDraftPaymentSplit = (split: PaymentAgentOrderSplit): PaymentAgent
   paidNow: normalizePaymentSplitAmount(split.paidNow),
   note: (split.note || "").trim() || undefined,
 });
+const normalizeDraftPaymentEvent = (event: PaymentAgentPaymentEvent): PaymentAgentPaymentEvent => ({
+  ...event,
+  id: event.id || createPaymentAgentPaymentEventId(),
+  paymentAgentId: (event.paymentAgentId || "").trim(),
+  paymentBy: (event.paymentBy || "").trim(),
+  paymentAgentName: (event.paymentAgentName || "").trim(),
+  paymentAgentSnapshot: event.paymentAgentSnapshot
+    ? {
+        id: (event.paymentAgentSnapshot.id || "").trim(),
+        name: (event.paymentAgentSnapshot.name || "").trim(),
+        code: (event.paymentAgentSnapshot.code || "").trim() || undefined,
+      }
+    : undefined,
+  amount: normalizePaymentEventAmount(event.amount),
+  note: (event.note || "").trim() || undefined,
+});
 const isPaymentAgentSplitEmpty = (split: PaymentAgentOrderSplit) =>
   !(split.paymentAgentId || split.paymentBy || split.paymentAgentName || split.paymentAgentSnapshot?.name || normalizePaymentSplitAmount(split.assignedAmount) || normalizePaymentSplitAmount(split.paidNow) || (split.note || "").trim());
+const isPaymentAgentPaymentEventEmpty = (event: PaymentAgentPaymentEvent) =>
+  !(event.paymentAgentId || event.paymentBy || event.paymentAgentName || event.paymentAgentSnapshot?.name || normalizePaymentEventAmount(event.amount) || (event.note || "").trim());
 const buildOrderLineSearchText = (
   line: Order["lines"][number],
   order: Order,
@@ -417,6 +503,24 @@ const getEditablePaymentAgentSplits = (order: Order): PaymentAgentOrderSplit[] =
   const existing = getOrderPaymentAgentSplits(order).map(normalizeDraftPaymentSplit);
   return existing.length > 0 ? existing : [createEmptyPaymentAgentSplit()];
 };
+const getEditablePaymentAgentEvents = (order: Order): PaymentAgentPaymentEvent[] => {
+  const existing = (order.paymentAgentPaymentEvents ?? []).map(normalizeDraftPaymentEvent);
+  if (existing.length > 0) return existing;
+  const virtualEvents = getOrderPaymentAgentSplits(order).map((split) =>
+    normalizeDraftPaymentEvent({
+      id: `virtual-${split.id}`,
+      paymentAgentId: split.paymentAgentId,
+      paymentBy: split.paymentBy,
+      paymentAgentName: split.paymentAgentName,
+      paymentAgentSnapshot: split.paymentAgentSnapshot,
+      amount: normalizePaymentSplitAmount(split.assignedAmount) || normalizePaymentSplitAmount(split.paidNow) || normalizePaymentSplitAmount(split.settlementSnapshot?.orderPortionTotal),
+      note: split.note,
+      createdAt: split.createdAt,
+      updatedAt: split.updatedAt,
+    }),
+  );
+  return virtualEvents.length > 0 ? virtualEvents : [createEmptyPaymentAgentPaymentEvent()];
+};
 const applyLegacyPaymentAgentFromSplits = (order: Order, rawSplits: PaymentAgentOrderSplit[]): Order => {
   const splits = rawSplits.map(normalizeDraftPaymentSplit);
   const firstSplit = splits.find((split) => !isPaymentAgentSplitEmpty(split)) ?? null;
@@ -435,6 +539,18 @@ const applyLegacyPaymentAgentFromSplits = (order: Order, rawSplits: PaymentAgent
         }
       : undefined,
     paidToPaymentAgentNow: firstSplit?.paidNow ?? 0,
+  };
+};
+const applyPaymentAgentDraftState = (
+  order: Order,
+  rawSplits: PaymentAgentOrderSplit[],
+  rawEvents: PaymentAgentPaymentEvent[],
+): Order => {
+  const base = applyLegacyPaymentAgentFromSplits(order, rawSplits);
+  const events = rawEvents.map(normalizeDraftPaymentEvent);
+  return {
+    ...base,
+    paymentAgentPaymentEvents: events.length > 0 ? events : [createEmptyPaymentAgentPaymentEvent()],
   };
 };
 const hasLinkedPaymentAgent = (order: Pick<Order, "paymentBy" | "paymentAgentId">) =>
@@ -493,6 +609,20 @@ const normalizeComposerSplitForComparison = (split: PaymentAgentOrderSplit) => (
   paidNow: Number(split.paidNow) || 0,
   note: (split.note || "").trim(),
 });
+const normalizeComposerPaymentEventForComparison = (event: PaymentAgentPaymentEvent) => ({
+  paymentAgentId: (event.paymentAgentId || "").trim(),
+  paymentBy: (event.paymentBy || "").trim(),
+  paymentAgentName: (event.paymentAgentName || "").trim(),
+  paymentAgentSnapshot: event.paymentAgentSnapshot
+    ? {
+        id: (event.paymentAgentSnapshot.id || "").trim(),
+        name: (event.paymentAgentSnapshot.name || "").trim(),
+        code: (event.paymentAgentSnapshot.code || "").trim(),
+      }
+    : undefined,
+  amount: Number(event.amount) || 0,
+  note: (event.note || "").trim(),
+});
 
 const normalizeComposerOrderForComparison = (order: Order) => ({
   date: order.date || "",
@@ -514,6 +644,7 @@ const normalizeComposerOrderForComparison = (order: Order) => ({
   shippingPrice: Number(order.shippingPrice) || 0,
   lines: (order.lines || []).map(normalizeComposerLineForComparison),
   paymentAgentSplits: getEditablePaymentAgentSplits(order).map(normalizeComposerSplitForComparison),
+  paymentAgentPaymentEvents: getEditablePaymentAgentEvents(order).map(normalizeComposerPaymentEventForComparison),
 });
 
 const getStoredSelectedSeriesId = () => {
@@ -809,6 +940,8 @@ export default function OrdersPage() {
   const wechatNormalizationStartedRef = useRef(false);
   const manuallyEditedPaymentSplitIdsRef = useRef<Set<string>>(new Set());
   const autoManagedPaymentSplitIdsRef = useRef<Set<string>>(new Set());
+  const manuallyEditedPaymentEventIdsRef = useRef<Set<string>>(new Set());
+  const autoManagedPaymentEventIdsRef = useRef<Set<string>>(new Set());
   const previousDraftMarkaDefaultRef = useRef("");
 
   const pickerRef = useRef<HTMLDivElement | null>(null);
@@ -824,9 +957,20 @@ export default function OrdersPage() {
     [draft.number, draft.orderNumber],
   );
 
-  const markDraftPaymentSplitAsManual = (splitId: string) => {
-    manuallyEditedPaymentSplitIdsRef.current.add(splitId);
-    autoManagedPaymentSplitIdsRef.current.delete(splitId);
+  const markDraftPaymentEventAsManual = (eventId: string) => {
+    manuallyEditedPaymentEventIdsRef.current.add(eventId);
+    autoManagedPaymentEventIdsRef.current.delete(eventId);
+  };
+
+  const handleViewOrderPaymentAgentEventsChange = (events: PaymentAgentPaymentEvent[]) => {
+    setViewOrder((current) => {
+      if (!current) return current;
+      const nextOrder = applyPaymentAgentDraftState(current, getEditablePaymentAgentSplits(current), events);
+      if (isOrderModalOpen && current.id === draft.id) {
+        setDraft(nextOrder);
+      }
+      return nextOrder;
+    });
   };
 
   const getDraftSplitAvailableCredit = (split: PaymentAgentOrderSplit) => {
@@ -1176,23 +1320,23 @@ export default function OrdersPage() {
     return existing ?? null;
   };
 
-  const resolvePaymentAgentSplitsForSave = async (
-    rawSplits: PaymentAgentOrderSplit[] | undefined,
+  const resolvePaymentAgentEventsForSave = async (
+    rawEvents: PaymentAgentPaymentEvent[] | undefined,
     expectedTotal: number,
-  ): Promise<{ splits: PaymentAgentOrderSplit[]; primaryAgent: PaymentAgent | null }> => {
-    const normalizedSplits = (rawSplits ?? [])
-      .map(normalizeDraftPaymentSplit)
-      .filter((split) => !isPaymentAgentSplitEmpty(split))
-      .filter((split) => normalizePaymentSplitAmount(split.paidNow) > 0);
-    if (normalizedSplits.length === 0) {
-      return { splits: [], primaryAgent: null };
+  ): Promise<{ events: PaymentAgentPaymentEvent[]; splits: PaymentAgentOrderSplit[]; primaryAgent: PaymentAgent | null }> => {
+    const normalizedEvents = (rawEvents ?? [])
+      .map(normalizeDraftPaymentEvent)
+      .filter((event) => !isPaymentAgentPaymentEventEmpty(event))
+      .filter((event) => normalizePaymentEventAmount(event.amount) > 0);
+    if (normalizedEvents.length === 0) {
+      return { events: [], splits: [], primaryAgent: null };
     }
 
-    const initialIssues = normalizedSplits.flatMap((split, index) => {
+    const initialIssues = normalizedEvents.flatMap((event, index) => {
       const issues: string[] = [];
-      if (normalizePaymentSplitAmount(split.paidNow) < 0) issues.push(`Payment split ${index + 1}: paid now cannot be negative.`);
-      if (!(split.paymentAgentId || split.paymentBy || split.paymentAgentName || split.paymentAgentSnapshot?.name)) {
-        issues.push(`Payment split ${index + 1}: choose a payment agent.`);
+      if (normalizePaymentEventAmount(event.amount) < 0) issues.push(`Payment event ${index + 1}: amount cannot be negative.`);
+      if (!(event.paymentAgentId || event.paymentBy || event.paymentAgentName || event.paymentAgentSnapshot?.name)) {
+        issues.push(`Payment event ${index + 1}: choose a payment agent.`);
       }
       return issues;
     });
@@ -1201,13 +1345,13 @@ export default function OrdersPage() {
     }
 
     const localAgents = [...paymentAgents];
-    const resolvedSplits: PaymentAgentOrderSplit[] = [];
+    const resolvedEvents: PaymentAgentPaymentEvent[] = [];
 
-    for (const split of normalizedSplits) {
-      const typedName = split.paymentAgentName || split.paymentAgentSnapshot?.name || split.paymentBy;
+    for (const event of normalizedEvents) {
+      const typedName = event.paymentAgentName || event.paymentAgentSnapshot?.name || event.paymentBy;
       let resolvedAgent =
-        localAgents.find((agent) => agent.id === split.paymentAgentId)
-        ?? localAgents.find((agent) => agent.id === split.paymentBy)
+        localAgents.find((agent) => agent.id === event.paymentAgentId)
+        ?? localAgents.find((agent) => agent.id === event.paymentBy)
         ?? localAgents.find((agent) => normalizePaymentAgentValue(agent.name) === normalizePaymentAgentValue(typedName))
         ?? null;
 
@@ -1216,26 +1360,46 @@ export default function OrdersPage() {
       }
 
       if (!resolvedAgent) {
-        throw new Error(`Payment split ${resolvedSplits.length + 1}: add the payment agent from the Payment Agents tab first, then select it here.`);
+        throw new Error(`Payment event ${resolvedEvents.length + 1}: add the payment agent from the Payment Agents tab first, then select it here.`);
       }
 
-      const paidAmount = normalizePaymentSplitAmount(split.paidNow);
-      const existingCredit = getPaymentAgentDirectFinance(resolvedAgent).creditLeft;
-      const creditUsed = Math.min(paidAmount, existingCredit);
-      const remainingPayable = Math.max(0, paidAmount - creditUsed);
-
-      const nextName = resolvedAgent.name;
-      const splitStatus: "paid" | "partial" | "unpaid" = paidAmount <= 0 ? "unpaid" : remainingPayable > 0 ? "partial" : "paid";
-      resolvedSplits.push({
-        ...split,
+      resolvedEvents.push({
+        ...event,
         paymentAgentId: resolvedAgent.id,
         paymentBy: resolvedAgent.id,
-        paymentAgentName: nextName,
+        paymentAgentName: resolvedAgent.name,
         paymentAgentSnapshot: { id: resolvedAgent.id, name: resolvedAgent.name, code: resolvedAgent.agentCode },
-        assignedAmount: paidAmount,
+        amount: normalizePaymentEventAmount(event.amount),
+      });
+    }
+
+    const groupedByAgent = new Map<string, { agent: PaymentAgent; totalAmount: number; events: PaymentAgentPaymentEvent[] }>();
+    resolvedEvents.forEach((event) => {
+      const agent = localAgents.find((candidate) => candidate.id === event.paymentAgentId) ?? null;
+      if (!agent) return;
+      const current = groupedByAgent.get(agent.id) || { agent, totalAmount: 0, events: [] };
+      current.totalAmount += normalizePaymentEventAmount(event.amount);
+      current.events.push(event);
+      groupedByAgent.set(agent.id, current);
+    });
+
+    const resolvedSplits: PaymentAgentOrderSplit[] = Array.from(groupedByAgent.values()).map(({ agent, totalAmount, events }) => {
+      const existingCredit = getPaymentAgentDirectFinance(agent).creditLeft;
+      const creditUsed = Math.min(totalAmount, existingCredit);
+      const remainingPayable = Math.max(0, totalAmount - creditUsed);
+      const splitStatus: "paid" | "partial" | "unpaid" = totalAmount <= 0 ? "unpaid" : remainingPayable > 0 ? "partial" : "paid";
+      const firstEvent = events[0];
+      return {
+        id: firstEvent?.id || createPaymentAgentSplitId(),
+        paymentAgentId: agent.id,
+        paymentBy: agent.id,
+        paymentAgentName: agent.name,
+        paymentAgentSnapshot: { id: agent.id, name: agent.name, code: agent.agentCode },
+        assignedAmount: totalAmount,
         paidNow: creditUsed,
+        note: events.map((entry) => entry.note?.trim()).filter(Boolean).join(" | ") || undefined,
         settlementSnapshot: {
-          orderPortionTotal: paidAmount,
+          orderPortionTotal: totalAmount,
           existingCredit,
           creditUsed,
           payableAfterCredit: remainingPayable,
@@ -1244,21 +1408,11 @@ export default function OrdersPage() {
           resultingCreditBalance: Math.max(0, existingCredit - creditUsed),
           paidNow: 0,
           status: splitStatus,
-          createdAt: split.settlementSnapshot?.createdAt || new Date().toISOString(),
+          createdAt: firstEvent?.createdAt || new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         },
-      });
-    }
-
-    const duplicateKeys = new Set<string>();
-    for (const split of resolvedSplits) {
-      const key = split.paymentAgentId || normalizePaymentAgentValue(split.paymentAgentName || split.paymentBy);
-      if (!key) continue;
-      if (duplicateKeys.has(key)) {
-        throw new Error("Duplicate payment agents are not allowed in splits.");
-      }
-      duplicateKeys.add(key);
-    }
+      };
+    });
 
     const usedTotal = calculateOrderAgentPaidTotal(resolvedSplits);
     if (usedTotal > expectedTotal) {
@@ -1266,6 +1420,7 @@ export default function OrdersPage() {
     }
 
     return {
+      events: resolvedEvents,
       splits: resolvedSplits,
       primaryAgent: resolvedSplits[0]
         ? localAgents.find((agent) => agent.id === resolvedSplits[0]!.paymentAgentId) ?? null
@@ -1321,6 +1476,7 @@ export default function OrdersPage() {
   const setDraftPaymentAgentSplits = (updater: PaymentAgentOrderSplit[] | ((current: PaymentAgentOrderSplit[]) => PaymentAgentOrderSplit[])) => {
     setDraft((current) => {
       const existingSplits = getEditablePaymentAgentSplits(current);
+      const existingEvents = getEditablePaymentAgentEvents(current);
       const nextSplits = typeof updater === "function" ? updater(existingSplits) : updater;
       const normalizedSplits = nextSplits.length > 0 ? nextSplits : [createEmptyPaymentAgentSplit()];
       const selectedSplits = normalizedSplits.filter((split) =>
@@ -1349,7 +1505,44 @@ export default function OrdersPage() {
               };
             })
           : normalizedSplits;
-      return applyLegacyPaymentAgentFromSplits(current, hydratedSplits);
+      const allowedAgentKeys = new Set(
+        hydratedSplits
+          .map((split) => normalizePaymentAgentValue(split.paymentAgentId || split.paymentBy || split.paymentAgentName || split.paymentAgentSnapshot?.name))
+          .filter(Boolean),
+      );
+      const nextEvents = existingEvents.filter((event) => {
+        const key = normalizePaymentAgentValue(event.paymentAgentId || event.paymentBy || event.paymentAgentName || event.paymentAgentSnapshot?.name);
+        return !key || allowedAgentKeys.has(key);
+      });
+      const nextEventsWithSeedRows = [...nextEvents];
+      selectedSplits.forEach((split) => {
+        const splitKey = normalizePaymentAgentValue(
+          split.paymentAgentId || split.paymentBy || split.paymentAgentName || split.paymentAgentSnapshot?.name,
+        );
+        if (!splitKey) return;
+        const alreadyHasEvent = nextEventsWithSeedRows.some((event) =>
+          normalizePaymentAgentValue(
+            event.paymentAgentId || event.paymentBy || event.paymentAgentName || event.paymentAgentSnapshot?.name,
+          ) === splitKey,
+        );
+        if (alreadyHasEvent) return;
+        nextEventsWithSeedRows.push(createEmptyPaymentAgentPaymentEvent({
+          paymentAgentId: split.paymentAgentId,
+          paymentBy: split.paymentBy,
+          paymentAgentName: split.paymentAgentName,
+          paymentAgentSnapshot: split.paymentAgentSnapshot,
+          amount: 0,
+        }));
+      });
+      return applyPaymentAgentDraftState(current, hydratedSplits, nextEventsWithSeedRows);
+    });
+  };
+
+  const setDraftPaymentAgentEvents = (updater: PaymentAgentPaymentEvent[] | ((current: PaymentAgentPaymentEvent[]) => PaymentAgentPaymentEvent[])) => {
+    setDraft((current) => {
+      const existingEvents = getEditablePaymentAgentEvents(current);
+      const nextEvents = typeof updater === "function" ? updater(existingEvents) : updater;
+      return applyPaymentAgentDraftState(current, getEditablePaymentAgentSplits(current), nextEvents.length > 0 ? nextEvents : [createEmptyPaymentAgentPaymentEvent()]);
     });
   };
 
@@ -1368,32 +1561,54 @@ export default function OrdersPage() {
 
     const targetSplit = selectedSplits[0];
     if (!targetSplit) return;
-    if (manuallyEditedPaymentSplitIdsRef.current.has(targetSplit.id)) return;
+    const editableEvents = getEditablePaymentAgentEvents(draft);
+    const matchingEvents = editableEvents.filter((event) =>
+      normalizePaymentAgentValue(event.paymentAgentId || event.paymentBy || event.paymentAgentName || event.paymentAgentSnapshot?.name) ===
+      normalizePaymentAgentValue(targetSplit.paymentAgentId || targetSplit.paymentBy || targetSplit.paymentAgentName || targetSplit.paymentAgentSnapshot?.name),
+    );
+    const targetEvent = matchingEvents[0];
+    if (!targetEvent) {
+      const safeAutoAmount = getSafeAutoAllocatedAmount(targetSplit, total);
+      setDraft((current) =>
+        applyPaymentAgentDraftState(
+          current,
+          getEditablePaymentAgentSplits(current),
+          [...getEditablePaymentAgentEvents(current), createEmptyPaymentAgentPaymentEvent({
+            paymentAgentId: targetSplit.paymentAgentId,
+            paymentBy: targetSplit.paymentBy,
+            paymentAgentName: targetSplit.paymentAgentName,
+            paymentAgentSnapshot: targetSplit.paymentAgentSnapshot,
+            amount: safeAutoAmount,
+          })],
+        ),
+      );
+      return;
+    }
+    if (manuallyEditedPaymentEventIdsRef.current.has(targetEvent.id)) return;
 
-    const currentPaidNow = Number(targetSplit.paidNow) || 0;
-    const currentAssignedAmount = Number(targetSplit.assignedAmount) || 0;
+    const currentAmount = Number(targetEvent.amount) || 0;
     const shouldAutoManage =
-      autoManagedPaymentSplitIdsRef.current.has(targetSplit.id) ||
-      (currentPaidNow === 0 && currentAssignedAmount === 0);
+      autoManagedPaymentEventIdsRef.current.has(targetEvent.id) ||
+      currentAmount === 0;
 
     if (!shouldAutoManage) return;
 
-    autoManagedPaymentSplitIdsRef.current.add(targetSplit.id);
+    autoManagedPaymentEventIdsRef.current.add(targetEvent.id);
     const safeAutoAmount = getSafeAutoAllocatedAmount(targetSplit, total);
 
-    if (currentPaidNow === safeAutoAmount && currentAssignedAmount === safeAutoAmount) return;
+    if (currentAmount === safeAutoAmount) return;
 
     setDraft((current) =>
-      applyLegacyPaymentAgentFromSplits(
+      applyPaymentAgentDraftState(
         current,
-        getEditablePaymentAgentSplits(current).map((split) =>
-          split.id === targetSplit.id
+        getEditablePaymentAgentSplits(current),
+        getEditablePaymentAgentEvents(current).map((event) =>
+          event.id === targetEvent.id
             ? {
-                ...split,
-                assignedAmount: safeAutoAmount,
-                paidNow: safeAutoAmount,
+                ...event,
+                amount: safeAutoAmount,
               }
-            : split,
+            : event,
         ),
       ),
     );
@@ -1841,6 +2056,7 @@ try {
       } else if (field === "payment") {
         if (!trimmedValue) {
           nextOrder.paymentAgentSplits = [createEmptyPaymentAgentSplit()];
+          nextOrder.paymentAgentPaymentEvents = [createEmptyPaymentAgentPaymentEvent()];
           nextOrder.paymentAgentId = "";
           nextOrder.paymentBy = "";
           nextOrder.paymentByName = "";
@@ -1853,11 +2069,12 @@ try {
           if (trimmedValue && !resolvedAgent) throw new Error("Payment agent not found. Add it from the Payment Agents tab first.");
           const nextPaymentAgentId = resolvedAgent?.id || "";
           const currentSplits = getEditablePaymentAgentSplits(nextOrder);
+          const currentEvents = getEditablePaymentAgentEvents(nextOrder);
           const primarySplit = currentSplits[0] ?? createEmptyPaymentAgentSplit();
           const existingCredit = resolvedAgent ? getPaymentAgentDirectFinance(resolvedAgent).creditLeft : 0;
           const hadPreviousPaymentAgent = Boolean((order.paymentAgentId || order.paymentBy || "").trim());
           const paidAmount = hadPreviousPaymentAgent
-            ? normalizePaymentSplitAmount(primarySplit.paidNow)
+            ? normalizePaymentEventAmount(currentEvents[0]?.amount)
             : Math.max(0, Math.min(orderTotal(nextOrder), existingCredit));
           const remainingPayable = Math.max(0, orderTotal(nextOrder) - paidAmount);
           const splitStatus: "paid" | "unpaid" = paidAmount > 0 ? "paid" : "unpaid";
@@ -1882,7 +2099,16 @@ try {
               createdAt: primarySplit.settlementSnapshot?.createdAt || new Date().toISOString(),
             },
           }];
+          const nextEvents = [{
+            ...(currentEvents[0] ?? createEmptyPaymentAgentPaymentEvent()),
+            paymentAgentId: nextPaymentAgentId,
+            paymentBy: nextPaymentAgentId,
+            paymentAgentName: resolvedAgent?.name || "",
+            paymentAgentSnapshot: resolvedAgent ? { id: resolvedAgent.id, name: resolvedAgent.name, code: resolvedAgent.agentCode } : undefined,
+            amount: paidAmount,
+          }];
           nextOrder.paymentAgentSplits = nextSplits;
+          nextOrder.paymentAgentPaymentEvents = nextEvents;
           nextOrder.paymentAgentId = nextPaymentAgentId;
           nextOrder.paymentBy = nextPaymentAgentId;
           nextOrder.paymentByName = resolvedAgent?.name || "";
@@ -1994,6 +2220,7 @@ try {
 
     const meaningfulLines = getMeaningfulOrderLines(draft.lines).map((line) => withDerivedLegacyDetails(seedDetailBoxesFromLegacy(line)));
     const normalizedDraftSplits = (draft.paymentAgentSplits ?? []).map(normalizeDraftPaymentSplit);
+    const normalizedDraftEvents = (draft.paymentAgentPaymentEvents ?? []).map(normalizeDraftPaymentEvent);
     const paymentAgentCleared = normalizedDraftSplits.filter((split) => !isPaymentAgentSplitEmpty(split)).length === 0;
     const cleanedDraft = {
       ...draft,
@@ -2003,6 +2230,7 @@ try {
       wechatId: draft.wechatId.trim(),
       shippingPrice: Math.max(0, Number(draft.shippingPrice) || 0),
       lines: meaningfulLines,
+      paymentAgentPaymentEvents: normalizedDraftEvents,
       paymentAgentSplits: normalizedDraftSplits,
       paymentByName: paymentAgentCleared ? "" : draft.paymentByName || "",
       paymentAgentName: paymentAgentCleared ? "" : draft.paymentAgentName || "",
@@ -2018,11 +2246,11 @@ try {
         return;
       }
       saveAudit.mark("validation:done", { draftMode: true, forceDraft, isValid: validation.isValid });
-      let draftSplitResolution: Awaited<ReturnType<typeof resolvePaymentAgentSplitsForSave>>;
+      let draftSplitResolution: Awaited<ReturnType<typeof resolvePaymentAgentEventsForSave>>;
       try {
         saveAudit.mark("paymentAgentResolve:start");
-        draftSplitResolution = await resolvePaymentAgentSplitsForSave(
-          cleanedDraft.paymentAgentSplits,
+        draftSplitResolution = await resolvePaymentAgentEventsForSave(
+          cleanedDraft.paymentAgentPaymentEvents,
           orderTotal({ ...cleanedDraft, lines: meaningfulLines }),
         );
         saveAudit.mark("paymentAgentResolve:end", {
@@ -2036,7 +2264,7 @@ try {
         pushToast({ tone: "danger", text: `Payment agent selection failed: ${message}` });
         return;
       }
-      const draftOrderBase = applyLegacyPaymentAgentFromSplits(cleanedDraft, draftSplitResolution.splits);
+      const draftOrderBase = applyPaymentAgentDraftState(cleanedDraft, draftSplitResolution.splits, draftSplitResolution.events);
       const primaryDraftSplit = draftSplitResolution.splits[0];
       const draftPaidAmount = calculateOrderAgentPaidTotal(draftSplitResolution.splits);
       const draftTotalAmount = orderTotal({ ...cleanedDraft, lines: meaningfulLines });
@@ -2169,11 +2397,11 @@ try {
       saveAudit.flush("save:blocked", { stage: "duplicate_order_number", orderNumber: finalOrderNumber });
       return;
     }
-    let splitResolution: Awaited<ReturnType<typeof resolvePaymentAgentSplitsForSave>>;
+    let splitResolution: Awaited<ReturnType<typeof resolvePaymentAgentEventsForSave>>;
     try {
       saveAudit.mark("paymentAgentResolve:start");
-      splitResolution = await resolvePaymentAgentSplitsForSave(
-        cleanedDraft.paymentAgentSplits,
+      splitResolution = await resolvePaymentAgentEventsForSave(
+        cleanedDraft.paymentAgentPaymentEvents,
         orderTotal({ ...cleanedDraft, lines: resolvedLines }),
       );
       saveAudit.mark("paymentAgentResolve:end", {
@@ -2188,7 +2416,7 @@ try {
       return;
     }
     const resolvedAgent = splitResolution.primaryAgent;
-    const resolvedDraftWithSplits = applyLegacyPaymentAgentFromSplits(cleanedDraft, splitResolution.splits);
+    const resolvedDraftWithSplits = applyPaymentAgentDraftState(cleanedDraft, splitResolution.splits, splitResolution.events);
     const resolvedPaymentAgentId = resolvedAgent?.id || resolvedDraftWithSplits.paymentAgentId || "";
     const primaryResolvedSplit = splitResolution.splits[0];
     const primarySettlementSnapshot = primaryResolvedSplit?.settlementSnapshot;
@@ -2411,6 +2639,8 @@ try {
   const resetOrderComposer = (notify = true) => {
     manuallyEditedPaymentSplitIdsRef.current.clear();
     autoManagedPaymentSplitIdsRef.current.clear();
+    manuallyEditedPaymentEventIdsRef.current.clear();
+    autoManagedPaymentEventIdsRef.current.clear();
     previousDraftMarkaDefaultRef.current = "";
     setEditingOrderId(null);
     setComposerBaseline(null);
@@ -2446,6 +2676,8 @@ try {
     if (o.status === "draft" && !ensureFirebaseOrderWriteReady()) return;
     manuallyEditedPaymentSplitIdsRef.current.clear();
     autoManagedPaymentSplitIdsRef.current.clear();
+    manuallyEditedPaymentEventIdsRef.current.clear();
+    autoManagedPaymentEventIdsRef.current.clear();
     previousDraftMarkaDefaultRef.current = "";
     setEditingOrderId(o.id); setRemovedLineIds([]); setOriginalLineIds(new Set(o.lines.map(l=>l.id)));
     setExpandedOrderIds({});
@@ -2453,14 +2685,14 @@ try {
     const normalizedOrderNumber = normalizeEditableOrderNumber(copy.number || copy.orderNumber);
     const matchedSeries = orderSeries.find((series) => series.prefix === (parseOrderNumber(normalizedOrderNumber)?.prefix || "")) ?? null;
     setSelectedSeriesId(matchedSeries?.id || "");
-    const preparedDraft = applyLegacyPaymentAgentFromSplits({
+    const preparedDraft = applyPaymentAgentDraftState({
       ...copy,
       number: normalizedOrderNumber,
       orderNumber: normalizedOrderNumber,
       ...deriveOrderSeriesFields(normalizedOrderNumber),
       wechatId: (copy.wechatId || "").trim(),
       lines: (copy.lines || []).map((line: Order["lines"][number]) => seedDetailBoxesFromLegacy(line)),
-    }, getEditablePaymentAgentSplits(copy));
+    }, getEditablePaymentAgentSplits(copy), getEditablePaymentAgentEvents(copy));
     setDraft(preparedDraft);
     setComposerBaseline(normalizeComposerOrderForComparison(preparedDraft));
     setHasAttemptedFinalSave(false);
@@ -3129,31 +3361,13 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                   const rate = selectedLine ? getLineRate(selectedLine) : 0;
                   const amount = getOrderTotalAmount(order);
                   const shippingAmount = getOrderShippingAmount(order);
-                  const splitPaidAmount = paymentSplits.reduce((sum, split) => {
-                    const creditUsed = Number(split.settlementSnapshot?.creditUsed);
-                    if (Number.isFinite(creditUsed)) return sum + Math.max(0, creditUsed);
-                    const paidNow = Number(split.paidNow);
-                    return sum + (Number.isFinite(paidNow) ? Math.max(0, paidNow) : 0);
-                  }, 0);
-                  const hasSplitSettlementInfo = paymentSplits.some((split) =>
-                    Number.isFinite(Number(split.settlementSnapshot?.creditUsed)) || Number.isFinite(Number(split.paidNow)),
-                  );
-                  const paidAmount = Math.max(0, hasSplitSettlementInfo ? splitPaidAmount : (Number.isFinite(Number(order.paidAmount)) ? Number(order.paidAmount) : 0));
-                  const remainingPayable = Math.max(0, hasSplitSettlementInfo ? Math.max(0, amount - paidAmount) : (Number.isFinite(Number(order.dueAmount)) ? Number(order.dueAmount) : Math.max(0, amount - paidAmount)));
+                  const paymentStatus = getOrderPaymentStatusBreakdown(order);
+                  const hasGroupedBreakdown = paymentStatus.paymentBreakdown.length > 0;
+                  const paidAmount = Math.max(0, hasGroupedBreakdown ? paymentStatus.paidAmount : (Number.isFinite(Number(order.paidAmount)) ? Number(order.paidAmount) : 0));
+                  const remainingPayable = Math.max(0, hasGroupedBreakdown ? Math.max(0, amount - paidAmount) : (Number.isFinite(Number(order.dueAmount)) ? Number(order.dueAmount) : Math.max(0, amount - paidAmount)));
                   const isFullySettled = remainingPayable <= 0;
-                  const paymentAgentSummary = paymentSplits
-                    .map((split) => split.paymentAgentSnapshot?.name?.trim() || split.paymentAgentName?.trim() || split.paymentBy?.trim())
-                    .filter(Boolean)
-                    .join(", ") || paymentName;
-                  const paymentBreakdown = paymentSplits
-                    .map((split) => {
-                      const creditUsed = Number(split.settlementSnapshot?.creditUsed);
-                      const paidNow = Number(split.paidNow);
-                      const amountPaid = Number.isFinite(creditUsed) ? Math.max(0, creditUsed) : (Number.isFinite(paidNow) ? Math.max(0, paidNow) : 0);
-                      const agentName = split.paymentAgentSnapshot?.name?.trim() || split.paymentAgentName?.trim() || split.paymentBy?.trim() || split.paymentAgentId?.trim() || "Payment Agent";
-                      return amountPaid > 0 ? { agentName, amount: amountPaid } : null;
-                    })
-                    .filter((entry): entry is { agentName: string; amount: number } => Boolean(entry));
+                  const paymentAgentSummary = paymentStatus.paymentAgentSummary || paymentName;
+                  const paymentBreakdown = paymentStatus.paymentBreakdown;
                   const marka = selectedLine?.marka?.trim() || "-";
                   const customerName = getCardCustomerValue(selectedLine);
                   const hasMultipleLines = orderLines.length > 1;
@@ -3424,8 +3638,8 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                   {orderSeries.length === 0 ? <div className="pt-0.5 text-[10.5px] text-amber-700">No order number series yet. Create one before saving a new order number.</div> : null}
                 </label>
               </section>
-              <section className="min-w-0">
-                <label className="flex flex-col gap-1.5 text-[14px] text-fg-muted"><span className="font-medium tracking-[0.01em]">WeChat ID</span><div className="relative"><Input className="h-10 rounded-xl px-3 text-[13px]" autoComplete="off" autoCorrect="off" autoCapitalize="none" spellCheck={false} value={draft.wechatId} onFocus={() => setHeaderWechatOpen(true)} onBlur={() => window.setTimeout(() => setHeaderWechatOpen(false), 120)} onChange={(e)=>{const next=e.target.value; setHeaderWechatOpen(true); setDraft((d)=>({...d,wechatId:next}));}} />{headerWechatOpen && headerWechatSuggestions.length>0 ? <div className="absolute z-30 mt-1.5 max-h-44 w-full overflow-auto rounded-xl border border-border bg-bg-card shadow-card">{headerWechatSuggestions.map((w)=><button key={w} type="button" className="block w-full px-3 py-2 text-left text-[12px] hover:bg-bg-subtle" onMouseDown={(e)=>{e.preventDefault(); setHeaderWechatOpen(false); setDraft((d)=>({...d,wechatId:w}));}}>{w}</button>)}</div> : null}</div></label>
+              <section className="min-w-0 relative z-50">
+                <label className="flex flex-col gap-1.5 text-[14px] text-fg-muted"><span className="font-medium tracking-[0.01em]">WeChat ID</span><div className="relative z-50"><Input className="h-10 rounded-xl px-3 text-[13px]" autoComplete="off" autoCorrect="off" autoCapitalize="none" spellCheck={false} value={draft.wechatId} onFocus={() => setHeaderWechatOpen(true)} onBlur={() => window.setTimeout(() => setHeaderWechatOpen(false), 120)} onChange={(e)=>{const next=e.target.value; setHeaderWechatOpen(true); setDraft((d)=>({...d,wechatId:next}));}} />{headerWechatOpen && headerWechatSuggestions.length>0 ? <div className="absolute left-0 top-full z-[90] mt-1.5 max-h-44 w-full overflow-auto rounded-xl border border-border bg-bg-card shadow-[0_18px_48px_rgba(15,23,42,0.22)]">{headerWechatSuggestions.map((w)=><button key={w} type="button" className="block w-full px-3 py-2 text-left text-[12px] hover:bg-bg-subtle" onMouseDown={(e)=>{e.preventDefault(); setHeaderWechatOpen(false); setDraft((d)=>({...d,wechatId:w}));}}>{w}</button>)}</div> : null}</div></label>
               </section>
               <section className="min-w-0">
                 <div className="flex h-full items-end justify-end">
@@ -3455,7 +3669,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
           <div className="min-h-0 flex-1 overflow-hidden bg-bg-subtle/20">
             <OrderForm showOrderInfo={false} draft={draft} setDraft={(u) => setDraft((d) => u(d))} paymentAgents={paymentAgents} customers={customers} onUploadingChange={onUploadingChange} onRemoveLine={handleRemoveLine} wechatSuggestions={wechatSuggestions.filter((w) => draft.wechatId.trim() ? w.toLowerCase().includes(draft.wechatId.trim().toLowerCase()) : false)} customerSuggestions={customerSuggestions} onPreviewImage={(src) => setPreviewImage({ src, alt: "Order line photo preview" })} onCustomerValidityChange={(lineId, issue) => setPopupCustomerIssues((prev) => ({ ...prev, [lineId]: issue }))} defaultMarka={mode === "add" ? currentDraftDefaultMarka : ""} />
           </div>
-          <OrderFooter lineTotal={lineTotal} shippingPrice={getOrderShippingAmount(draft)} total={total} onCancel={requestExitComposer} showCancel={false} onSaveDraft={() => onSave("draft")} onSaveOrder={() => onSave("saved")} onViewDetails={() => setViewOrder(draft)} saveOrderLabel={orderSaveState === "saving" ? "Saving Order..." : (editingOrderId ? "Save Changes" : "Save Order")} saveDraftLabel={orderSaveState === "saving" ? "Saving Draft..." : "Save as Draft"} disableSaveDraft={orderSaveState !== "idle"} disableSaveOrder={orderSaveState !== "idle"} paymentAgents={paymentAgents} paymentAgentSplits={getEditablePaymentAgentSplits(draft)} onPaymentAgentSplitsChange={setDraftPaymentAgentSplits} onPaymentAgentSplitManualAmountEdit={markDraftPaymentSplitAsManual} onShippingPriceChange={(value) => setDraft((d) => ({ ...d, shippingPrice: value }))} />
+          <OrderFooter lineTotal={lineTotal} shippingPrice={getOrderShippingAmount(draft)} total={total} onCancel={requestExitComposer} showCancel={false} onSaveDraft={() => onSave("draft")} onSaveOrder={() => onSave("saved")} onViewDetails={() => setViewOrder(draft)} saveOrderLabel={orderSaveState === "saving" ? "Saving Order..." : (editingOrderId ? "Save Changes" : "Save Order")} saveDraftLabel={orderSaveState === "saving" ? "Saving Draft..." : "Save as Draft"} disableSaveDraft={orderSaveState !== "idle"} disableSaveOrder={orderSaveState !== "idle"} paymentAgents={paymentAgents} paymentAgentSplits={getEditablePaymentAgentSplits(draft)} paymentAgentEvents={getEditablePaymentAgentEvents(draft)} onPaymentAgentEventsChange={setDraftPaymentAgentEvents} onPaymentAgentEventManualAmountEdit={markDraftPaymentEventAsManual} onShippingPriceChange={(value) => setDraft((d) => ({ ...d, shippingPrice: value }))} />
         </div>
       </div>}
       {showExitConfirm ? <div className="fixed inset-0 z-[65] bg-black/50 grid place-items-center p-4"><div className="card w-full max-w-lg p-4 space-y-3"><div className="text-lg font-semibold">{editingOrderId ? "Save changes before closing?" : "Save order before closing?"}</div><div className="text-sm text-fg-subtle">{editingOrderId ? "You made changes to this order. Save them now or discard them." : "Save this order as a draft before closing, or discard it."}</div><div className="flex flex-wrap justify-end gap-2"><Button variant="secondary" onClick={() => { setShowExitConfirm(false); resetOrderComposer(); }}>{editingOrderId ? "Discard Changes" : "Discard Order"}</Button><Button variant="primary" onClick={() => { setShowExitConfirm(false); void onSave(editingOrderId ? "saved" : "draft", true); }}>{editingOrderId ? "Save Changes" : "Save Draft"}</Button></div></div></div> : null}
@@ -3486,7 +3700,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
         title={orderSaveState === "saving" ? "Saving order" : "Loading"}
         message={orderSaveState === "saving" ? "Saving your order now..." : "Fetching the latest data..."}
       />
-      <OrderLinesDetailModal order={viewOrder} isOpen={!!viewOrder} onClose={() => setViewOrder(null)} />
+      <OrderLinesDetailModal order={viewOrder} isOpen={!!viewOrder} onClose={() => setViewOrder(null)} paymentAgents={paymentAgents} paymentAgentSplits={viewOrder ? getEditablePaymentAgentSplits(viewOrder) : []} paymentAgentEvents={viewOrder ? getEditablePaymentAgentEvents(viewOrder) : []} onPaymentAgentEventsChange={viewOrder ? handleViewOrderPaymentAgentEventsChange : undefined} onPaymentAgentEventManualAmountEdit={viewOrder && isOrderModalOpen && viewOrder.id === draft.id ? markDraftPaymentEventAsManual : undefined} />
     </div>
   );
 }

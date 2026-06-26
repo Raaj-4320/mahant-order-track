@@ -10,7 +10,6 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   RotateCcw,
-  Search,
   Settings,
   Users,
   Wallet,
@@ -27,7 +26,6 @@ type Item = {
 const items: Item[] = [
   { label: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { label: "Order Booking", href: "/orders", icon: ClipboardList },
-  { label: "Product Discovery", href: "/product-discovery", icon: Search },
   { label: "Customers", href: "/customers", icon: Users },
   { label: "Payment Agents", href: "/payment-agents", icon: Wallet },
   { label: "Products", href: "/products", icon: Package },

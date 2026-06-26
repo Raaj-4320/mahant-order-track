@@ -8,11 +8,17 @@ import { ImageLightbox } from "@/components/ui/ImageLightbox";
 import { Copy, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { getLineDetailsParts } from "@/lib/orderLineDetails";
+import type { PaymentAgent, PaymentAgentOrderSplit, PaymentAgentPaymentEvent } from "@/lib/types";
 
 type OrderLinesDetailModalProps = {
   order: Order | null;
   isOpen: boolean;
   onClose: () => void;
+  paymentAgents?: PaymentAgent[];
+  paymentAgentSplits?: PaymentAgentOrderSplit[];
+  paymentAgentEvents?: PaymentAgentPaymentEvent[];
+  onPaymentAgentEventsChange?: (events: PaymentAgentPaymentEvent[]) => void;
+  onPaymentAgentEventManualAmountEdit?: (eventId: string) => void;
 };
 
 const formatFinalAmount = (value: number) => formatWholeMoney(value);
@@ -26,7 +32,16 @@ const TwoLineHeader = ({ zh, en }: { zh: string; en?: string }) => (
   </div>
 );
 
-export function OrderLinesDetailModal({ order, isOpen, onClose }: OrderLinesDetailModalProps) {
+export function OrderLinesDetailModal({
+  order,
+  isOpen,
+  onClose,
+  paymentAgents = [],
+  paymentAgentSplits = [],
+  paymentAgentEvents = [],
+  onPaymentAgentEventsChange,
+  onPaymentAgentEventManualAmountEdit,
+}: OrderLinesDetailModalProps) {
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [jpgState, setJpgState] = useState<"idle" | "copying" | "copied" | "failed">("idle");

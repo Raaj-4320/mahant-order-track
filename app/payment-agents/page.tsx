@@ -21,8 +21,6 @@ import { orderLifecycleService } from "@/services/orderLifecycleService";
 import { buildPaymentAgentAccountingSummary, buildPaymentAgentOrderRows, buildPaymentAgentPaymentRows, buildPaymentAgentTransactionRows } from "@/services/settlement/paymentAgentAccounting";
 import { getLineCustomerDisplay } from "@/services/customers/customerResolution";
 import { measurePerfSync } from "@/lib/perfDebug";
-import { getOrderPaymentAgentSplits } from "@/services/settlement/paymentAgentSplits";
-import { splitBelongsToAgent, splitOrderPortionAmount, splitUsedAmount } from "@/services/paymentAgentDirectFinanceSync";
 
 const ALL_LEDGER_ROWS_KEY = "__all__";
 type LedgerViewRow = {
@@ -42,7 +40,6 @@ const formatPercent = (value: number) => {
   return Number.isInteger(safe) ? String(safe) : safe.toFixed(1);
 };
 const canonicalComparisonDebugEnabled = process.env.NODE_ENV !== "production";
-const crossVerifyComparisonEnabled = true;
 const clampMoney = (value: number | undefined | null) => Math.max(0, Number.isFinite(Number(value)) ? Number(value) : 0);
 const clampCount = (value: number | undefined | null) => Math.max(0, Number(value) || 0);
 
@@ -56,7 +53,7 @@ export default function PaymentAgentsPage() {
   const sourceOrders = ordersSource === "firebase" ? firebaseOrders : orders;
 
   const [q, setQ] = useState("");
-  const [sortBy, setSortBy] = useState("name");
+  const [sortBy, setSortBy] = useState("priority");
   const [open, setOpen] = useState(false);
   const [ledgerAgent, setLedgerAgent] = useState<string | null>(null);
   const [payAgentId, setPayAgentId] = useState<string | null>(null);
@@ -183,123 +180,6 @@ export default function PaymentAgentsPage() {
     () => rows.filter((row) => row.agent.status !== "inactive" && row.agent.lifecycle?.status !== "deleted"),
     [rows],
   );
-  const crossVerifyOrders = useMemo(
-    () => sourceOrders.filter((order) => order.status !== "draft" && order.status !== "archived"),
-    [sourceOrders],
-  );
-  const comparisonRows = useMemo(() => {
-    const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
-    return visibleRows.map((row) => {
-      const uniqueCrossOrderIds = new Set<string>();
-      const nonSavedCrossOrderIds = new Set<string>();
-      let crossTotalPaid = 0;
-      let crossRemaining = 0;
-      let unpaidCount = 0;
-      let paidNowFallbackCount = 0;
-      let assignedAmountFallbackCount = 0;
-      let splitAttributionCount = 0;
-
-      crossVerifyOrders.forEach((order) => {
-        const splits = getOrderPaymentAgentSplits(order).filter((split) => splitBelongsToAgent(row.agent, split));
-        if (splits.length === 0) return;
-        uniqueCrossOrderIds.add(order.id);
-        if (order.status !== "saved") {
-          nonSavedCrossOrderIds.add(order.id);
-        }
-        if (splits.length > 1) {
-          splitAttributionCount += splits.length;
-        }
-        splits.forEach((split) => {
-          const orderAmount = Math.max(0, splitOrderPortionAmount(order, split));
-          const creditUsed = clampMoney(split.settlementSnapshot?.creditUsed);
-          const paidNow = clampMoney(split.paidNow);
-          const snapshotPaidNow = clampMoney(split.settlementSnapshot?.paidNow);
-          let paidAmount = creditUsed;
-          if (!(paidAmount > 0) && paidNow > 0) {
-            paidAmount = paidNow;
-            paidNowFallbackCount += 1;
-          }
-          if (!(paidAmount > 0) && snapshotPaidNow > 0) {
-            paidAmount = snapshotPaidNow;
-            paidNowFallbackCount += 1;
-          }
-          if (!(paidAmount > 0) && orderAmount > 0 && splits.length === 1 && !split.settlementSnapshot) {
-            paidAmount = orderAmount;
-            assignedAmountFallbackCount += 1;
-          }
-          const remainingPayable = Math.max(
-            0,
-            Number.isFinite(Number(split.settlementSnapshot?.remainingPayable))
-              ? Number(split.settlementSnapshot?.remainingPayable)
-              : Math.max(0, orderAmount - paidAmount),
-          );
-          crossTotalPaid += paidAmount;
-          crossRemaining += remainingPayable;
-          if (remainingPayable > 0) {
-            unpaidCount += 1;
-          }
-        });
-      });
-
-      const estimatedCrossCredit = Math.max(0, row.totalAdvanced - crossTotalPaid);
-      const reasons: string[] = [];
-      if (nonSavedCrossOrderIds.size > 0) {
-        reasons.push(`saved vs non-draft: +${nonSavedCrossOrderIds.size} non-saved order${nonSavedCrossOrderIds.size === 1 ? "" : "s"} in Cross Verify`);
-      }
-      if (splitAttributionCount > 0) {
-        reasons.push("split-level attribution affects totals on multi-agent orders");
-      }
-      if (paidNowFallbackCount > 0) {
-        reasons.push(`creditUsed vs paidNow: ${paidNowFallbackCount} split${paidNowFallbackCount === 1 ? "" : "s"} fell back to paidNow`);
-      }
-      if (assignedAmountFallbackCount > 0) {
-        reasons.push(`assignedAmount fallback used on ${assignedAmountFallbackCount} split${assignedAmountFallbackCount === 1 ? "" : "s"}`);
-      }
-      if (row.totalAdvanced > row.totalUsed || row.creditLeft > 0) {
-        reasons.push("manual payments/opening credit exist only in canonical financial view");
-      }
-      if (
-        row.storedFinance.totalOrders !== row.totalOrders
-        || row.storedFinance.totalAdvanced !== row.totalAdvanced
-        || row.storedFinance.totalUsed !== row.totalUsed
-        || row.storedFinance.duePending !== row.duePending
-        || row.storedFinance.creditLeft !== row.creditLeft
-      ) {
-        reasons.push("stored fields differ from canonical summary");
-      }
-
-      return {
-        agentId: row.agent.id,
-        agentName: row.agent.name,
-        canonical: {
-          orders: row.totalOrders,
-          totalAdvanced: row.totalAdvanced,
-          totalUsed: row.totalUsed,
-          creditLeft: row.creditLeft,
-          duePending: row.duePending,
-        },
-        cross: {
-          orders: uniqueCrossOrderIds.size,
-          totalPaid: crossTotalPaid,
-          remaining: crossRemaining,
-          unpaidCount,
-          estimatedCredit: estimatedCrossCredit,
-        },
-        diff: {
-          orderCount: uniqueCrossOrderIds.size - row.totalOrders,
-          usedPaid: crossTotalPaid - row.totalUsed,
-          credit: estimatedCrossCredit - row.creditLeft,
-          due: crossRemaining - row.duePending,
-        },
-        reasons,
-      };
-    }).sort((left, right) => {
-      const leftPriority = left.agentName.trim().toLowerCase() === "knitting item boss" ? 0 : 1;
-      const rightPriority = right.agentName.trim().toLowerCase() === "knitting item boss" ? 0 : 1;
-      if (leftPriority !== rightPriority) return leftPriority - rightPriority;
-      return collator.compare(left.agentName, right.agentName);
-    });
-  }, [crossVerifyOrders, visibleRows]);
 
   const filtered = useMemo(() => {
     const query = q.toLowerCase().trim();
@@ -308,6 +188,14 @@ export default function PaymentAgentsPage() {
   }, [visibleRows, q]);
   const filteredAndSorted = useMemo(() => {
     return [...filtered].sort((left, right) => {
+      if (sortBy === "priority") {
+        const leftHasDue = left.duePending > 0 ? 1 : 0;
+        const rightHasDue = right.duePending > 0 ? 1 : 0;
+        if (rightHasDue !== leftHasDue) return rightHasDue - leftHasDue;
+        if (right.duePending !== left.duePending) return right.duePending - left.duePending;
+        if (right.creditLeft !== left.creditLeft) return right.creditLeft - left.creditLeft;
+        return left.agent.name.localeCompare(right.agent.name);
+      }
       if (sortBy === "orders") return right.totalOrders - left.totalOrders;
       if (sortBy === "credit") return right.totalAdvanced - left.totalAdvanced;
       if (sortBy === "used") return right.totalUsed - left.totalUsed;
@@ -589,6 +477,7 @@ export default function PaymentAgentsPage() {
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value)}
                 options={[
+                  { value: "priority", label: "Sort: Due first, then credit left" },
                   { value: "name", label: "Sort: Agent Name" },
                   { value: "orders", label: "Sort: Total Orders High to Low" },
                   { value: "used", label: "Sort: Net Credit Used High to Low" },
@@ -613,69 +502,6 @@ export default function PaymentAgentsPage() {
               Export
             </Button>
           </section>
-
-          {crossVerifyComparisonEnabled ? (
-            <section className="card overflow-hidden">
-              <div className="border-b border-border px-4 py-3">
-                <div className="text-[16px] font-semibold">Temporary Accounting Comparison</div>
-                <div className="mt-1 text-[12px] text-fg-subtle">Read-only comparison of canonical payment-agent accounting versus the Cross Verify split scan. KNITTING ITEM BOSS is pinned first when present.</div>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[1600px] text-[12px]">
-                  <thead className="bg-bg-card/95 text-[10px] uppercase tracking-[0.01em] text-fg-muted">
-                    <tr className="border-b border-border">
-                      <th className="px-3 py-2 text-left">Agent</th>
-                      <th className="px-3 py-2 text-right">Canonical Orders</th>
-                      <th className="px-3 py-2 text-right">Canonical Advanced</th>
-                      <th className="px-3 py-2 text-right">Canonical Used</th>
-                      <th className="px-3 py-2 text-right">Canonical Credit</th>
-                      <th className="px-3 py-2 text-right">Canonical Due</th>
-                      <th className="px-3 py-2 text-right">Cross Orders</th>
-                      <th className="px-3 py-2 text-right">Cross Paid</th>
-                      <th className="px-3 py-2 text-right">Cross Remaining</th>
-                      <th className="px-3 py-2 text-right">Cross Unpaid</th>
-                      <th className="px-3 py-2 text-right">Order Diff</th>
-                      <th className="px-3 py-2 text-right">Used/Paid Diff</th>
-                      <th className="px-3 py-2 text-right">Credit Diff</th>
-                      <th className="px-3 py-2 text-right">Due Diff</th>
-                      <th className="px-3 py-2 text-left">Top Reasons</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {comparisonRows.map((row) => (
-                      <tr key={row.agentId} className="border-b border-border transition-colors last:border-b-0 hover:bg-bg-subtle/40">
-                        <td className="px-3 py-3 align-top">
-                          <div className="font-semibold text-fg">{row.agentName}</div>
-                          <div className="mt-1 text-[11px] text-fg-subtle">{row.agentName.trim().toLowerCase() === "knitting item boss" ? "Pinned example agent" : "Payment agent"}</div>
-                        </td>
-                        <td className="px-3 py-3 text-right tabular-nums">{row.canonical.orders}</td>
-                        <td className="px-3 py-3 text-right tabular-nums">{formatAmount(row.canonical.totalAdvanced)}</td>
-                        <td className="px-3 py-3 text-right tabular-nums">{formatAmount(row.canonical.totalUsed)}</td>
-                        <td className="px-3 py-3 text-right tabular-nums">{formatAmount(row.canonical.creditLeft)}</td>
-                        <td className="px-3 py-3 text-right tabular-nums">{formatAmount(row.canonical.duePending)}</td>
-                        <td className="px-3 py-3 text-right tabular-nums">{row.cross.orders}</td>
-                        <td className="px-3 py-3 text-right tabular-nums">{formatAmount(row.cross.totalPaid)}</td>
-                        <td className="px-3 py-3 text-right tabular-nums">{formatAmount(row.cross.remaining)}</td>
-                        <td className="px-3 py-3 text-right tabular-nums">{row.cross.unpaidCount}</td>
-                        <td className="px-3 py-3 text-right tabular-nums">{row.diff.orderCount}</td>
-                        <td className="px-3 py-3 text-right tabular-nums">{formatAmount(row.diff.usedPaid)}</td>
-                        <td className="px-3 py-3 text-right tabular-nums">{formatAmount(row.diff.credit)}</td>
-                        <td className="px-3 py-3 text-right tabular-nums">{formatAmount(row.diff.due)}</td>
-                        <td className="px-3 py-3 align-top text-[11px] text-fg-subtle">
-                          {row.reasons.length > 0 ? row.reasons.join(" | ") : "No obvious drift reason detected"}
-                        </td>
-                      </tr>
-                    ))}
-                    {comparisonRows.length === 0 ? (
-                      <tr>
-                        <td colSpan={15} className="px-4 py-8 text-center text-fg-subtle">No payment agents available for comparison.</td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          ) : null}
 
           <section className="card overflow-hidden">
             <div className="overflow-x-auto overflow-y-visible">
