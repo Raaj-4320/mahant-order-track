@@ -5,21 +5,20 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { formatAmount } from "@/lib/data";
 import { formatIndianDate } from "@/lib/dateFormat";
-import type { Customer, Order, PaymentAgent, PaymentAgentLedgerEntry } from "@/lib/types";
+import type { Customer, Order, PaymentAgentLedgerEntry } from "@/lib/types";
 import { CalendarDays, Download, Plus, Trash2, Wallet, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { TablePagination } from "@/components/table/TablePagination";
-import { getPaymentAgentDirectFinance } from "@/services/paymentAgentFinance";
-import { getLineCustomerDisplay } from "@/services/customers/customerResolution";
-import { getPaymentAgentDirectOrderFacts } from "@/services/paymentAgentDirectFinanceSync";
-
-type AgentSummary = {
-  agent: PaymentAgent;
-};
+import {
+  buildPaymentAgentOrderRows,
+  buildPaymentAgentPaymentRows,
+  buildPaymentAgentTransactionRows,
+  type PaymentAgentAccountingSummary,
+} from "@/services/settlement/paymentAgentAccounting";
 
 type Props = {
   open: boolean;
-  summary: AgentSummary | null;
+  summary: PaymentAgentAccountingSummary | null;
   entries: PaymentAgentLedgerEntry[];
   orders: Order[];
   customers: Customer[];
@@ -30,49 +29,16 @@ type Props = {
   onDeletePayment: (entryId: string) => Promise<void>;
 };
 
-type CreditUsageRow = {
-  id: string;
-  date: string;
-  orderNumber: string;
-  customer: string;
-  amount: number;
-  runningCreditLeft: number;
-};
-
-type PaymentRow = {
-  id: string;
-  date: string;
-  amount: number;
-  method: string;
-  notes: string;
-  canDelete: boolean;
-  createdSortAt?: string;
-};
-
-type OrderRow = {
-  id: string;
-  date: string;
-  orderNumber: string;
-  customer: string;
-  lineLabel: string;
-  amount: number;
-  showOrderNumber: boolean;
-};
-
 const formatDateLabel = (value?: string) => {
   if (!value) return "-";
   return formatIndianDate(value);
 };
 
-const clampMoney = (value: number | undefined | null) => Math.max(0, Number.isFinite(Number(value)) ? Number(value) : 0);
 const sortableTime = (value?: string) => {
   if (!value) return 0;
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? 0 : parsed;
 };
-const entryTime = (entry: PaymentAgentLedgerEntry) => entry.paymentDate || entry.updatedAt || entry.createdAt || "";
-const getOrderCustomerSummary = (order: Order, customers: Customer[]) =>
-  Array.from(new Set((order.lines || []).map((line) => getLineCustomerDisplay(line, customers)).filter(Boolean))).join(", ") || "-";
 
 export function PaymentAgentLedgerModal({ open, summary, entries, orders, customers, error, onClose, onExport, onAddPayment, onDeletePayment }: Props) {
   const PAGE_SIZE = 100;
@@ -90,137 +56,18 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
   const [deletingPaymentId, setDeletingPaymentId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const directFinance = useMemo(
-    () => (summary ? getPaymentAgentDirectFinance(summary.agent) : null),
+  const transactionRows = useMemo(
+    () => (summary ? buildPaymentAgentTransactionRows(summary) : []),
     [summary],
   );
-  const directOrderFacts = useMemo(
-    () => (summary ? getPaymentAgentDirectOrderFacts(summary.agent, orders) : []),
-    [summary, orders],
+  const paymentRows = useMemo(
+    () => (summary ? buildPaymentAgentPaymentRows(summary) : []),
+    [summary],
   );
-  const transactionRows = useMemo<CreditUsageRow[]>(() => {
-    if (!summary) return [];
-
-    const usageRows = directOrderFacts
-      .filter((fact) => fact.usedAmount > 0)
-      .map((fact) => ({
-        id: `${fact.order.id}:${fact.split.id}`,
-        date:
-          fact.split.settlementSnapshot?.updatedAt
-          || fact.split.settlementSnapshot?.createdAt
-          || fact.split.updatedAt
-          || fact.split.createdAt
-          || fact.order.updatedAt
-          || fact.order.createdAt
-          || fact.order.date
-          || "",
-        orderNumber: fact.order.number || fact.order.orderNumber || "-",
-        customer: getOrderCustomerSummary(fact.order, customers),
-        amount: clampMoney(fact.usedAmount),
-        runningCreditLeft: 0,
-      }));
-
-    const datedEvents = [
-      ...(clampMoney(summary.agent.openingCreditBalance) > 0
-        ? [{
-            id: `opening-${summary.agent.id}`,
-            date: summary.agent.createdAt || summary.agent.updatedAt || "",
-            delta: clampMoney(summary.agent.openingCreditBalance),
-            usageRowId: "",
-          }]
-        : []),
-      ...entries
-        .filter((entry) => entry.agentId === summary.agent.id && entry.type === "agent_payment" && entry.active !== false && entry.isReversed !== true)
-        .map((entry) => ({
-          id: `payment-${entry.id}`,
-          date: entryTime(entry),
-          delta: clampMoney(entry.amount),
-          usageRowId: "",
-        })),
-      ...usageRows.map((row) => ({
-        id: `usage-${row.id}`,
-        date: row.date,
-        delta: -row.amount,
-        usageRowId: row.id,
-      })),
-    ].sort((left, right) => sortableTime(left.date) - sortableTime(right.date) || left.id.localeCompare(right.id));
-
-    let runningCredit = 0;
-    const runningByUsageId = new Map<string, number>();
-    datedEvents.forEach((event) => {
-      runningCredit = Math.max(0, runningCredit + event.delta);
-      if (event.usageRowId) {
-        runningByUsageId.set(event.usageRowId, runningCredit);
-      }
-    });
-
-    return usageRows
-      .map((row) => ({
-        ...row,
-        runningCreditLeft: runningByUsageId.get(row.id) ?? directFinance?.creditLeft ?? 0,
-      }))
-      .sort((left, right) => sortableTime(right.date) - sortableTime(left.date) || right.id.localeCompare(left.id));
-  }, [customers, directFinance?.creditLeft, directOrderFacts, entries, summary]);
-  const paymentRows = useMemo<PaymentRow[]>(() => {
-    if (!summary) return [];
-    const rows: PaymentRow[] = [];
-    const openingAmount = clampMoney(summary.agent.openingCreditBalance);
-    if (openingAmount > 0) {
-      rows.push({
-        id: `opening-${summary.agent.id}`,
-        date: summary.agent.createdAt || summary.agent.updatedAt || "",
-        amount: openingAmount,
-        method: "Opening Balance",
-        notes: "Opening advance balance",
-        canDelete: false,
-        createdSortAt: summary.agent.createdAt || summary.agent.updatedAt || "",
-      });
-    }
-    entries
-      .filter((entry) => entry.agentId === summary.agent.id && entry.type === "agent_payment" && entry.active !== false && entry.isReversed !== true)
-      .forEach((entry) => {
-        rows.push({
-          id: entry.id,
-          date: entry.paymentDate || entry.createdAt || "",
-          amount: clampMoney(entry.amount),
-          method: entry.paymentMethod?.trim() || "Manual Payment",
-          notes: entry.note?.trim() || "-",
-          canDelete: true,
-          createdSortAt: entry.createdAt || entry.updatedAt || entry.paymentDate || "",
-        });
-      });
-    return rows.sort((left, right) => sortableTime(right.createdSortAt) - sortableTime(left.createdSortAt) || sortableTime(right.date) - sortableTime(left.date) || right.id.localeCompare(left.id));
-  }, [entries, summary]);
-  const orderRows = useMemo<OrderRow[]>(() => {
-    return directOrderFacts
-      .flatMap((fact) => {
-        const orderNumber = fact.order.number || fact.order.orderNumber || "-";
-        const orderDate = fact.order.date || fact.order.createdAt || fact.order.updatedAt || "";
-        const customer = getOrderCustomerSummary(fact.order, customers);
-        const lineCount = Math.max(1, fact.order.lines?.length || 0);
-        const perLineAmount = lineCount > 0 ? clampMoney(fact.orderPortionAmount) / lineCount : clampMoney(fact.orderPortionAmount);
-
-        return (fact.order.lines?.length ? fact.order.lines : [null]).map((line, index) => ({
-          id: `${fact.order.id}-${line?.id || index}`,
-          date: orderDate,
-          orderNumber,
-          customer,
-          lineLabel:
-            line
-              ? [line.marka, line.detail1 || line.details, line.detail2, line.detail3].filter(Boolean).join(" · ") || `Line ${index + 1}`
-              : `Line ${index + 1}`,
-          amount: perLineAmount,
-          showOrderNumber: index === 0,
-        }));
-      })
-      .sort((left, right) => {
-        const dateDiff = sortableTime(right.date) - sortableTime(left.date);
-        if (dateDiff !== 0) return dateDiff;
-        const orderDiff = right.orderNumber.localeCompare(left.orderNumber, undefined, { numeric: true, sensitivity: "base" });
-        if (orderDiff !== 0) return orderDiff;
-        return left.id.localeCompare(right.id);
-      });
-  }, [customers, directOrderFacts]);
+  const orderRows = useMemo(
+    () => (summary ? buildPaymentAgentOrderRows(summary) : []),
+    [summary],
+  );
   const pagedTransactionRows = useMemo(
     () => transactionRows.slice((transactionsPage - 1) * PAGE_SIZE, transactionsPage * PAGE_SIZE),
     [transactionRows, transactionsPage],
@@ -265,7 +112,7 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
     };
   }, [open]);
 
-  if (!open || !summary || !directFinance) return null;
+  if (!open || !summary) return null;
 
   const deletePayment = async (entryId: string) => {
     setDeletingPaymentId(entryId);
@@ -304,11 +151,11 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
   };
 
   const kpis = [
-    { label: "Advance Payments", value: formatAmount(directFinance.totalAdvanced), tone: "text-sky-700 bg-sky-50 border-sky-100", icon: <Wallet size={16} /> },
-    { label: "Net Credit Used", value: formatAmount(directFinance.totalUsed), tone: "text-fg bg-bg-subtle border-border", icon: <Download size={16} /> },
-    { label: "Available Credit", value: formatAmount(directFinance.creditLeft), tone: "text-emerald-700 bg-emerald-50 border-emerald-100", icon: <Wallet size={16} /> },
-    { label: "Due / Pending", value: formatAmount(directFinance.duePending), tone: "text-rose-700 bg-rose-50 border-rose-100", icon: <CalendarDays size={16} /> },
-    { label: "Total Orders", value: directFinance.totalOrders.toLocaleString(), tone: "text-sky-700 bg-sky-50 border-sky-100", icon: <CalendarDays size={16} /> },
+    { label: "Advance Payments", value: formatAmount(summary.totalAdvanced), tone: "text-sky-700 bg-sky-50 border-sky-100", icon: <Wallet size={16} /> },
+    { label: "Net Credit Used", value: formatAmount(summary.totalUsed), tone: "text-fg bg-bg-subtle border-border", icon: <Download size={16} /> },
+    { label: "Available Credit", value: formatAmount(summary.creditLeft), tone: "text-emerald-700 bg-emerald-50 border-emerald-100", icon: <Wallet size={16} /> },
+    { label: "Due / Pending", value: formatAmount(summary.duePending), tone: "text-rose-700 bg-rose-50 border-rose-100", icon: <CalendarDays size={16} /> },
+    { label: "Total Orders", value: summary.totalOrders.toLocaleString(), tone: "text-sky-700 bg-sky-50 border-sky-100", icon: <CalendarDays size={16} /> },
   ];
 
   return (
@@ -361,20 +208,22 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
                 <div className="max-h-[44vh] overflow-y-auto overflow-x-hidden">
                   <table className="w-full text-[12px]">
                     <thead className="sticky top-0 z-30 bg-bg-card/95 shadow-[0_1px_0_rgba(15,23,42,0.06)] backdrop-blur">
-                      <tr className="border-b border-border text-[10px] uppercase tracking-[0.01em] text-fg-muted">
-                        <th className="px-3 py-2 text-left">Date</th>
-                        <th className="px-3 py-2 text-left">Order No</th>
-                        <th className="px-3 py-2 text-left">Customer</th>
-                        <th className="px-3 py-2 text-right">Credit Used</th>
-                        <th className="px-3 py-2 text-right">Available Credit After Entry</th>
-                      </tr>
-                    </thead>
-                    <tbody>
+                    <tr className="border-b border-border text-[10px] uppercase tracking-[0.01em] text-fg-muted">
+                      <th className="px-3 py-2 text-left">Date</th>
+                      <th className="px-3 py-2 text-left">Order No</th>
+                      <th className="px-3 py-2 text-left">Customer</th>
+                      <th className="px-3 py-2 text-left">Type</th>
+                      <th className="px-3 py-2 text-right">Amount</th>
+                      <th className="px-3 py-2 text-right">Available Credit After Entry</th>
+                    </tr>
+                  </thead>
+                  <tbody>
                       {pagedTransactionRows.map((row) => (
                         <tr key={row.id} className="border-b border-border transition-colors last:border-b-0 hover:bg-bg-subtle/40">
                           <td className="px-3 py-2.5 leading-tight">{formatDateLabel(row.date)}</td>
                           <td className="px-3 py-2.5 font-semibold leading-tight">{row.orderNumber}</td>
                           <td className="px-3 py-2.5 leading-tight">{row.customer}</td>
+                          <td className="px-3 py-2.5 leading-tight text-fg-subtle">{row.type}</td>
                           <td className="px-3 py-2.5 text-right font-semibold leading-tight tabular-nums text-fg">{formatAmount(row.amount)}</td>
                           <td className="px-3 py-2.5 text-right font-semibold leading-tight tabular-nums text-emerald-700">{formatAmount(row.runningCreditLeft)}</td>
                         </tr>
@@ -464,10 +313,10 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
                   <tbody>
                     {pagedOrderRows.map((row) => (
                       <tr key={row.id} className="border-b border-border transition-colors last:border-b-0 hover:bg-bg-subtle/40">
-                        <td className="px-3 py-2.5">{formatDateLabel(row.date)}</td>
-                        <td className="px-3 py-2.5 font-semibold">{row.showOrderNumber ? row.orderNumber : ""}</td>
+                        <td className="px-3 py-2.5">{formatDateLabel(row.orderDate)}</td>
+                        <td className="px-3 py-2.5 font-semibold">{row.orderNumber}</td>
                         <td className="px-3 py-2.5">{row.customer}</td>
-                        <td className="px-3 py-2.5 text-fg-subtle">{row.lineLabel}</td>
+                        <td className="px-3 py-2.5 text-fg-subtle">{[row.marka, row.details].filter(Boolean).join(" · ")}</td>
                         <td className="px-3 py-2.5 text-right font-semibold tabular-nums">{formatAmount(row.amount)}</td>
                       </tr>
                     ))}

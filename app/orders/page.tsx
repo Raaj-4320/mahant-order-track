@@ -45,6 +45,7 @@ import { getOrderNumberSeriesService } from "@/services/orderNumberSeriesService
 import { getPaymentAgentsService } from "@/services/paymentAgentsService";
 import { measurePerfAsync, measurePerfSync, runPerfAction } from "@/lib/perfDebug";
 import { getOrderPaymentAgentSplits } from "@/services/settlement/paymentAgentSplits";
+import { splitOrderPortionAmount, splitUsedAmount } from "@/services/paymentAgentDirectFinanceSync";
 import { getPaymentAgentDirectFinance } from "@/services/paymentAgentFinance";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -2524,44 +2525,67 @@ try {
     const cleaned = photoUrl.split("?")[0].split("#")[0];
     return cleaned.split("/").filter(Boolean).pop() || "No image";
   };
-  const paymentAuditRows = useMemo(() => paymentAuditOrders.map((order) => {
+  const paymentAuditRows = useMemo(() => paymentAuditOrders.flatMap((order) => {
     const paymentMeta = getOrderPaymentAgentDisplay(order, paymentAgents);
     const paymentSplits = getOrderPaymentAgentSplits(order);
-    const amount = getOrderTotalAmount(order);
-    const splitPaidAmount = paymentSplits.reduce((sum, split) => {
-      const creditUsed = Number(split.settlementSnapshot?.creditUsed);
-      if (Number.isFinite(creditUsed)) return sum + Math.max(0, creditUsed);
-      const paidNow = Number(split.paidNow);
-      return sum + (Number.isFinite(paidNow) ? Math.max(0, paidNow) : 0);
-    }, 0);
-    const hasSplitSettlementInfo = paymentSplits.some((split) => Number.isFinite(Number(split.settlementSnapshot?.creditUsed)) || Number.isFinite(Number(split.paidNow)));
-    const paidAmount = Math.max(0, hasSplitSettlementInfo ? splitPaidAmount : (Number.isFinite(Number(order.paidAmount)) ? Number(order.paidAmount) : 0));
-    const remainingPayable = Math.max(0, hasSplitSettlementInfo ? Math.max(0, amount - paidAmount) : (Number.isFinite(Number(order.dueAmount)) ? Number(order.dueAmount) : Math.max(0, amount - paidAmount)));
-    const isPaid = remainingPayable <= 0;
-    const agentName = paymentSplits
-      .map((split) => split.paymentAgentSnapshot?.name?.trim() || split.paymentAgentName?.trim() || split.paymentBy?.trim() || split.paymentAgentId?.trim())
-      .filter(Boolean)[0] || paymentMeta.value;
-    return {
-      order,
-      photoUrl: getOrderPrimaryPhoto(order),
-      photoName: getPhotoFileName(getOrderPrimaryPhoto(order)),
-      paymentAgentName: paymentMeta.isMissing ? paymentMeta.value : agentName,
-      paidAmount,
-      remainingPayable,
-      isPaid,
-      orderAmount: amount,
-    };
+    const photoUrl = getOrderPrimaryPhoto(order);
+    const photoName = getPhotoFileName(photoUrl);
+
+    if (paymentSplits.length === 0) {
+      const orderAmount = getOrderTotalAmount(order);
+      const paidAmount = Math.max(0, Number.isFinite(Number(order.paidAmount)) ? Number(order.paidAmount) : 0);
+      const remainingPayable = Math.max(0, Number.isFinite(Number(order.dueAmount)) ? Number(order.dueAmount) : Math.max(0, orderAmount - paidAmount));
+      return [{
+        id: `${order.id}:unlinked`,
+        order,
+        photoUrl,
+        photoName,
+        paymentAgentName: paymentMeta.value,
+        paidAmount,
+        remainingPayable,
+        isPaid: remainingPayable <= 0,
+        orderAmount,
+      }];
+    }
+
+    return paymentSplits.map((split) => {
+      const orderAmount = Math.max(0, splitOrderPortionAmount(order, split));
+      const paidAmount = Math.max(0, splitUsedAmount(split));
+      const remainingFromSnapshot = Number(split.settlementSnapshot?.remainingPayable);
+      const remainingPayable = Math.max(
+        0,
+        Number.isFinite(remainingFromSnapshot) ? remainingFromSnapshot : Math.max(0, orderAmount - paidAmount),
+      );
+      const agentName =
+        split.paymentAgentSnapshot?.name?.trim()
+        || split.paymentAgentName?.trim()
+        || split.paymentBy?.trim()
+        || split.paymentAgentId?.trim()
+        || paymentMeta.value;
+      return {
+        id: `${order.id}:${split.id}`,
+        order,
+        photoUrl,
+        photoName,
+        paymentAgentName: agentName,
+        paidAmount,
+        remainingPayable,
+        isPaid: remainingPayable <= 0,
+        orderAmount,
+      };
+    });
   }), [paymentAuditOrders, paymentAgents]);
   const paymentAuditSummary = useMemo(() => {
-    const totals = new Map<string, { name: string; totalPaid: number; orderCount: number }>();
+    const totals = new Map<string, { name: string; totalPaid: number; orderCount: number; orderIds: Set<string> }>();
     paymentAuditRows.forEach((row) => {
       const name = row.paymentAgentName || "Unlinked";
-      const current = totals.get(name) || { name, totalPaid: 0, orderCount: 0 };
+      const current = totals.get(name) || { name, totalPaid: 0, orderCount: 0, orderIds: new Set<string>() };
       current.totalPaid += row.paidAmount;
-      current.orderCount += 1;
+      current.orderIds.add(row.order.id);
+      current.orderCount = current.orderIds.size;
       totals.set(name, current);
     });
-    return Array.from(totals.values()).sort((left, right) => right.totalPaid - left.totalPaid);
+    return Array.from(totals.values()).map(({ orderIds: _orderIds, ...summary }) => summary).sort((left, right) => right.totalPaid - left.totalPaid);
   }, [paymentAuditRows]);
   const orderHeaderTabs = useMemo(
     () => orderCategoryTabs,
@@ -3036,8 +3060,8 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                 </tr>
               </thead>
               <tbody>
-                {paymentAuditRows.length === 0 ? <tr><td colSpan={7} className="px-4 py-8 text-center text-fg-subtle">No orders available for payment verification.</td></tr> : paymentAuditRows.map(({ order, photoUrl, photoName, paymentAgentName, paidAmount, remainingPayable, isPaid, orderAmount }) => (
-                  <tr key={order.id} className="border-t border-border/80 align-top hover:bg-bg-subtle/40">
+                {paymentAuditRows.length === 0 ? <tr><td colSpan={7} className="px-4 py-8 text-center text-fg-subtle">No orders available for payment verification.</td></tr> : paymentAuditRows.map(({ id, order, photoUrl, photoName, paymentAgentName, paidAmount, remainingPayable, isPaid, orderAmount }) => (
+                  <tr key={id} className="border-t border-border/80 align-top hover:bg-bg-subtle/40">
                     <td className="px-4 py-3">
                       <div className="font-semibold">{order.number || order.orderNumber || "Draft"}</div>
                       <div className="mt-1 text-[11px] text-fg-subtle">{formatDate(order.date || order.createdAt || order.updatedAt || "")}</div>
