@@ -5,12 +5,12 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { formatAmount } from "@/lib/data";
 import { formatIndianDate } from "@/lib/dateFormat";
-import type { Customer, Order, PaymentAgentLedgerEntry } from "@/lib/types";
+import { orderTotal, type Customer, type Order, type PaymentAgentLedgerEntry } from "@/lib/types";
 import { CalendarDays, Download, Plus, Trash2, Wallet, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { TablePagination } from "@/components/table/TablePagination";
+import { getLineCustomerDisplay } from "@/services/customers/customerResolution";
 import {
-  buildPaymentAgentOrderRows,
   buildPaymentAgentPaymentRows,
   buildPaymentAgentTransactionRows,
   type PaymentAgentAccountingSummary,
@@ -64,10 +64,54 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
     () => (summary ? buildPaymentAgentPaymentRows(summary) : []),
     [summary],
   );
-  const orderRows = useMemo(
-    () => (summary ? buildPaymentAgentOrderRows(summary) : []),
-    [summary],
-  );
+  const orderRows = useMemo(() => {
+    if (!summary) return [];
+
+    const settlementsByOrderId = new Map<string, PaymentAgentLedgerEntry[]>();
+    summary.activeSettlementEntries.forEach((entry) => {
+      const orderId = entry.sourceOrderId || "";
+      if (!orderId) return;
+      const existing = settlementsByOrderId.get(orderId) ?? [];
+      existing.push(entry);
+      settlementsByOrderId.set(orderId, existing);
+    });
+
+    return summary.matchedOrders
+      .map((order) => {
+        const lines = order.lines || [];
+        const firstLine = lines[0];
+        const firstProduct =
+          firstLine?.marka?.trim()
+          || firstLine?.productSnapshot?.name?.trim()
+          || firstLine?.details?.trim()
+          || [firstLine?.detail1, firstLine?.detail2, firstLine?.detail3].filter(Boolean).join(" ").trim()
+          || "-";
+        const products = lines.length > 1 ? `${firstProduct} + ${lines.length - 1} more` : firstProduct;
+        const settlements = settlementsByOrderId.get(order.id) ?? [];
+
+        return {
+          id: order.id,
+          orderDate: order.date || order.createdAt || order.updatedAt || "",
+          orderNumber: order.number || order.orderNumber || "-",
+          customer: Array.from(new Set(
+            lines
+              .map((line) => getLineCustomerDisplay(line, customers))
+              .filter(Boolean),
+          )).join(", ") || "-",
+          products,
+          orderAmount: Math.max(0, Number(orderTotal(order)) || 0),
+          agentPaid: settlements.reduce(
+            (sum, entry) => sum + Math.max(0, Number(entry.creditUsed) || 0) + Math.max(0, Number(entry.paidNow) || 0),
+            0,
+          ),
+          remaining: settlements.reduce(
+            (sum, entry) => sum + Math.max(0, Number(entry.remainingPayable) || 0),
+            0,
+          ),
+        };
+      })
+      .sort((left, right) => sortableTime(right.orderDate) - sortableTime(left.orderDate) || right.orderNumber.localeCompare(left.orderNumber, undefined, { numeric: true, sensitivity: "base" }));
+  }, [customers, summary]);
   const pagedTransactionRows = useMemo(
     () => transactionRows.slice((transactionsPage - 1) * PAGE_SIZE, transactionsPage * PAGE_SIZE),
     [transactionRows, transactionsPage],
@@ -306,8 +350,10 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
                       <th className="px-3 py-2 text-left">Date</th>
                       <th className="px-3 py-2 text-left">Order No</th>
                       <th className="px-3 py-2 text-left">Customer</th>
-                      <th className="px-3 py-2 text-left">Line</th>
-                      <th className="px-3 py-2 text-right">Amount</th>
+                      <th className="px-3 py-2 text-left">Products</th>
+                      <th className="px-3 py-2 text-right">Order Amount</th>
+                      <th className="px-3 py-2 text-right">Agent Paid</th>
+                      <th className="px-3 py-2 text-right">Remaining</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -316,8 +362,10 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
                         <td className="px-3 py-2.5">{formatDateLabel(row.orderDate)}</td>
                         <td className="px-3 py-2.5 font-semibold">{row.orderNumber}</td>
                         <td className="px-3 py-2.5">{row.customer}</td>
-                        <td className="px-3 py-2.5 text-fg-subtle">{[row.marka, row.details].filter(Boolean).join(" · ")}</td>
-                        <td className="px-3 py-2.5 text-right font-semibold tabular-nums">{formatAmount(row.amount)}</td>
+                        <td className="px-3 py-2.5 text-fg-subtle">{row.products}</td>
+                        <td className="px-3 py-2.5 text-right font-semibold tabular-nums">{formatAmount(row.orderAmount)}</td>
+                        <td className="px-3 py-2.5 text-right font-semibold tabular-nums">{formatAmount(row.agentPaid)}</td>
+                        <td className="px-3 py-2.5 text-right font-semibold tabular-nums">{formatAmount(row.remaining)}</td>
                       </tr>
                     ))}
                   </tbody>
