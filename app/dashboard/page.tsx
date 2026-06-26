@@ -95,10 +95,10 @@ export default function DashboardPage() {
       order.lines.forEach((line) => {
         current.rows.push({
           orderId: order.id,
-          orderNumber: order.number || order.orderNumber || "—",
+          orderNumber: order.number || order.orderNumber || "-",
           imageUrl: line.productPhotoUrl || line.photoUrl || "",
-          productName: [line.productSnapshot?.name, line.marka].filter(Boolean).join(" / ") || line.details || "—",
-          customer: getLineCustomerDisplay(line, customers) || "—",
+          productName: [line.productSnapshot?.name, line.marka].filter(Boolean).join(" / ") || line.details || "-",
+          customer: getLineCustomerDisplay(line, customers) || "-",
           totalCtns: Number(line.totalCtns) || 0,
           pcsPerCtn: Number(line.pcsPerCtn) || 0,
           totalPcs: lineTotalPcs(line),

@@ -3374,7 +3374,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                   const customerMissing = isMissingCustomerDisplay(customerName);
                   const hasLoadingDateHighlight = Boolean(order.loadingDate?.trim());
 
-                  return <div key={row.key} className={cn("rounded-lg border border-border/70 bg-bg-card", hasLoadingDateHighlight && "border-emerald-300/25 bg-emerald-50/55 dark:border-emerald-400/40 dark:bg-emerald-500/10")}>
+                  return <div key={row.key} className={cn("rounded-lg border border-border/70 bg-bg-card", hasLoadingDateHighlight && "border-emerald-300/45 bg-emerald-100/70 dark:border-emerald-400/50 dark:bg-emerald-500/14")}>
                     <div className={rowClass} style={{ gridTemplateColumns: historyGridTemplate }}>
                       <div className="min-w-0 px-1 py-1.5 text-center">
                         <div className="min-w-0">

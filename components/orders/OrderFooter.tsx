@@ -5,7 +5,6 @@ import { PaymentAgentSplitsEditor } from "@/components/orders/PaymentAgentSplits
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
 import { formatWholeMoney } from "@/lib/numbers";
-import { getPaymentAgentDirectFinance } from "@/services/paymentAgentFinance";
 import type { PaymentAgent, PaymentAgentOrderSplit, PaymentAgentPaymentEvent } from "@/lib/types";
 
 type Props = {
@@ -92,71 +91,27 @@ export function OrderFooter({
   onShippingPriceChange,
 }: Props) {
   const [shippingInput, setShippingInput] = useState(shippingPrice ? String(shippingPrice) : "");
-  const splitSummaries = useMemo(() => {
-    return paymentAgentSplits
-      .map((split, index) => {
-        const agent =
-          paymentAgents.find((candidate) => candidate.id === split.paymentAgentId)
-          ?? paymentAgents.find((candidate) => candidate.id === split.paymentBy)
-          ?? null;
-        const agentEvents = paymentAgentEvents.filter((event) =>
-          (event.paymentAgentId || event.paymentBy || event.paymentAgentName) &&
-          (event.paymentAgentId === split.paymentAgentId
-            || event.paymentBy === split.paymentBy
-            || event.paymentAgentName === split.paymentAgentName),
-        );
-        const paidNow = agentEvents.reduce((sum, event) => sum + (Number(event.amount) || 0), 0);
-        const existingCredit = agent ? getPaymentAgentDirectFinance(agent).creditLeft : 0;
-        const creditUsed = Math.min(paidNow, existingCredit);
-        const payable = Math.max(0, paidNow - creditUsed);
-        const label =
-          split.paymentAgentSnapshot?.name?.trim()
-          || split.paymentAgentName?.trim()
-          || split.paymentBy?.trim()
-          || (index === 0 ? "Primary payment agent" : `Payment agent ${index + 1}`);
+  const settlementSummary = useMemo(() => {
+    const paid = paymentAgentEvents.reduce((sum, event) => {
+      const amount = Number(event.amount);
+      return sum + (Number.isFinite(amount) ? Math.max(0, amount) : 0);
+    }, 0);
 
-        return {
-          id: split.id,
-          label,
-          paidNow,
-          existingCredit,
-          creditUsed,
-          payable,
-          creditLeft: Math.max(0, existingCredit - creditUsed),
-        };
-      })
-      .filter((entry) => entry.label || entry.paidNow > 0 || entry.creditUsed > 0 || entry.creditLeft > 0);
-  }, [paymentAgentSplits, paymentAgentEvents, paymentAgents, total]);
-  const summary = useMemo(() => {
-    const totals = paymentAgentSplits.reduce(
-      (acc, split) => {
-        const agent =
-          paymentAgents.find((candidate) => candidate.id === split.paymentAgentId)
-          ?? paymentAgents.find((candidate) => candidate.id === split.paymentBy)
-          ?? null;
-        const availableCredit = agent ? getPaymentAgentDirectFinance(agent).creditLeft : 0;
-        const enteredAmount = paymentAgentEvents
-          .filter((event) => event.paymentAgentId === split.paymentAgentId || event.paymentBy === split.paymentBy || event.paymentAgentName === split.paymentAgentName)
-          .reduce((sum, event) => sum + (Number(event.amount) || 0), 0);
-        const usedAmount = Math.min(enteredAmount, availableCredit);
-        const payableAmount = Math.max(0, enteredAmount - usedAmount);
-        acc.agentCredit += availableCredit;
-        acc.creditUsed += usedAmount;
-        acc.payable += payableAmount;
-        acc.creditLeft += Math.max(0, availableCredit - usedAmount);
-        return acc;
-      },
-      { agentCredit: 0, creditUsed: 0, payable: 0, creditLeft: 0 },
-    );
+    const paymentAgentsCount = new Set(
+      paymentAgentSplits
+        .map((split) => split.paymentAgentId || split.paymentBy || split.paymentAgentName)
+        .filter(Boolean),
+    ).size;
 
     return {
-      agentCredit: totals.agentCredit,
       orderTotal: total,
-      creditUsed: totals.creditUsed,
-      pendingDue: totals.payable,
-      creditLeft: totals.creditLeft,
+      paid,
+      orderDue: Math.max(0, total - paid),
+      shipping: Math.max(0, Number(shippingPrice) || 0),
+      grandTotal: total,
+      paymentAgentsCount,
     };
-  }, [paymentAgentSplits, paymentAgentEvents, paymentAgents, total]);
+  }, [paymentAgentEvents, paymentAgentSplits, shippingPrice, total]);
 
   useEffect(() => {
     setShippingInput(shippingPrice ? String(shippingPrice) : "");
@@ -180,36 +135,13 @@ export function OrderFooter({
 
           <div className="min-w-0 rounded-xl border border-border/60 bg-bg-subtle/10 p-3">
             <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.1em] text-fg-subtle">Settlement Summary</div>
-            <div className="overflow-x-auto">
-              <div className="grid min-w-[520px] grid-cols-[minmax(144px,1.2fr)_repeat(4,minmax(72px,1fr))] items-center gap-2 border-b border-border/60 pb-1 text-[11px] font-semibold uppercase tracking-[0.04em] text-fg-subtle">
-                <span>Agent</span>
-                <span className="text-right">Credit</span>
-                <span className="text-right">Used</span>
-                <span className="text-right">Payable</span>
-                <span className="text-right">Left</span>
-              </div>
-              <div className="min-w-[520px]">
-                {splitSummaries.length > 0 ? splitSummaries.map((entry) => (
-                  <div key={entry.id} className="grid grid-cols-[minmax(144px,1.2fr)_repeat(4,minmax(72px,1fr))] items-center gap-2 border-b border-border/40 py-1.5 text-[13px] last:border-b-0">
-                    <div className="min-w-0">
-                      <div className="truncate font-semibold text-fg">{entry.label}</div>
-                      <div className="text-[11px] text-fg-subtle">Paid: {fmtFinal(entry.paidNow)}</div>
-                    </div>
-                    <div className="text-right font-semibold tabular-nums text-sky-600">{fmtFinal(entry.existingCredit)}</div>
-                    <div className="text-right font-semibold tabular-nums text-sky-600">{fmtFinal(entry.creditUsed)}</div>
-                    <div className="text-right font-semibold tabular-nums text-amber-600">{fmtFinal(entry.payable)}</div>
-                    <div className="text-right font-semibold tabular-nums text-[var(--success)]">{fmtFinal(entry.creditLeft)}</div>
-                  </div>
-                )) : <div className="py-3 text-[12px] text-fg-subtle">No payment allocations yet.</div>}
-              </div>
-            </div>
-
-            <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3 xl:grid-cols-[repeat(5,minmax(0,1fr))]">
-              <Metric label="Agent Credit" value={fmtFinal(summary.agentCredit)} tone="info" />
-              <Metric label="Order Total" value={fmtFinal(summary.orderTotal)} tone="warning" zeroDanger />
-              <Metric label="Credit Used" value={fmtFinal(summary.creditUsed)} tone="info" />
-              <Metric label="Payable" value={fmtFinal(summary.pendingDue)} tone="warning" />
-              <Metric label="Credit Left" value={fmtFinal(summary.creditLeft)} tone="info" />
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3 xl:grid-cols-[repeat(6,minmax(0,1fr))]">
+              <Metric label="Order Total" value={fmtFinal(settlementSummary.orderTotal)} tone="warning" zeroDanger />
+              <Metric label="Paid" value={fmtFinal(settlementSummary.paid)} tone="info" />
+              <Metric label="Order Due" value={fmtFinal(settlementSummary.orderDue)} tone="warning" />
+              <Metric label="Shipping" value={fmtFinal(settlementSummary.shipping)} tone="info" />
+              <Metric label="Grand Total" value={fmtFinal(settlementSummary.grandTotal)} tone="warning" zeroDanger />
+              <Metric label="Agents" value={String(settlementSummary.paymentAgentsCount)} tone="default" />
             </div>
           </div>
         </div>
