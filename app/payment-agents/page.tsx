@@ -15,7 +15,7 @@ import { formatAmount } from "@/lib/data";
 import { formatIndianDate } from "@/lib/dateFormat";
 import { logDataFlow, logPageAccess, logUI } from "@/lib/logger";
 import type { PaymentAgent, PaymentAgentLedgerEntry } from "@/lib/types";
-import { orderTotal } from "@/lib/types";
+import { lineTotalPcs, lineTotalRmb, orderTotal } from "@/lib/types";
 import { ordersDataSource } from "@/lib/runtimeConfig";
 import { openStatementPdfPrint } from "@/services/statementPdf";
 import { orderLifecycleService } from "@/services/orderLifecycleService";
@@ -153,14 +153,14 @@ export default function PaymentAgentsPage() {
           orderAmount: row.assigned,
           agentPaid: row.creditUsed,
           remaining: row.remaining,
-          productImage: firstLine?.imageUrl || "",
+          productImage: firstLine?.productPhotoUrl || firstLine?.photoUrl || "",
           marka: firstLine?.marka,
           details: [firstLine?.detail1, firstLine?.detail2, firstLine?.detail3].filter(Boolean).join(" / "),
           totalCtns: firstLine?.totalCtns,
           pcsPerCtn: firstLine?.pcsPerCtn,
-          totalPcs: firstLine?.totalPcs,
+          totalPcs: firstLine ? lineTotalPcs(firstLine) : 0,
           rate: firstLine?.rmbPerPcs,
-          amount: firstLine?.amount,
+          amount: firstLine ? lineTotalRmb(firstLine) : 0,
           loadingDate: order.loadingDate || "",
         };
       });
