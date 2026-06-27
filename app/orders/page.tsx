@@ -8,7 +8,7 @@ import { OrderFooter } from "@/components/orders/OrderFooter";
 import { formatAmount, formatDate } from "@/lib/data";
 import { formatDisplayNumber, formatRate, formatWholeMoney } from "@/lib/numbers";
 import { formatIndianDate } from "@/lib/dateFormat";
-import { Customer, Order, OrderNumberSeries, PaymentAgent, PaymentAgentOrderSplit, PaymentAgentPaymentEvent, lineTotalPcs, lineTotalRmb, orderLinesTotal, orderShippingPrice, orderTotal } from "@/lib/types";
+import { Customer, Order, OrderNumberSeries, PaymentAgent, PaymentAgentLedgerEntry, PaymentAgentOrderSplit, PaymentAgentPaymentEvent, lineTotalPcs, lineTotalRmb, orderLinesTotal, orderShippingPrice, orderTotal } from "@/lib/types";
 import { syncOrderLinesToProducts, archiveProductsForOrder, archiveProductsForRemovedOrderLines } from "@/services/productCatalogSync";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -44,9 +44,8 @@ import { buildSeriesPrefix, deriveOrderSeriesFields, formatSeriesOrderNumber, ge
 import { getOrderNumberSeriesService } from "@/services/orderNumberSeriesService";
 import { getPaymentAgentsService } from "@/services/paymentAgentsService";
 import { measurePerfAsync, measurePerfSync, runPerfAction } from "@/lib/perfDebug";
-import { getOrderPaymentAgentSplits } from "@/services/settlement/paymentAgentSplits";
-import { splitOrderPortionAmount, splitUsedAmount } from "@/services/paymentAgentDirectFinanceSync";
-import { getPaymentAgentDirectFinance } from "@/services/paymentAgentFinance";
+import { getOrderPaymentAgentLinkedAgentIds, getOrderPaymentAgentSplits } from "@/services/settlement/paymentAgentSplits";
+import { calculatePaymentAgentLiveFinance, splitOrderPortionAmount, splitUsedAmount } from "@/services/paymentAgentDirectFinanceSync";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const createPaymentAgentSplitId = () => `pas-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -538,7 +537,7 @@ const applyLegacyPaymentAgentFromSplits = (order: Order, rawSplits: PaymentAgent
           code: firstSplit.paymentAgentSnapshot.code || undefined,
         }
       : undefined,
-    paidToPaymentAgentNow: firstSplit?.paidNow ?? 0,
+    paidToPaymentAgentNow: 0,
   };
 };
 const applyPaymentAgentDraftState = (
@@ -546,15 +545,17 @@ const applyPaymentAgentDraftState = (
   rawSplits: PaymentAgentOrderSplit[],
   rawEvents: PaymentAgentPaymentEvent[],
 ): Order => {
-  const base = applyLegacyPaymentAgentFromSplits(order, rawSplits);
+  const splits = rawSplits.map(normalizeDraftPaymentSplit);
+  const base = applyLegacyPaymentAgentFromSplits(order, splits);
   const events = rawEvents.map(normalizeDraftPaymentEvent);
   return {
     ...base,
+    paymentAgentSplits: splits,
     paymentAgentPaymentEvents: events.length > 0 ? events : [createEmptyPaymentAgentPaymentEvent()],
   };
 };
-const hasLinkedPaymentAgent = (order: Pick<Order, "paymentBy" | "paymentAgentId">) =>
-  Boolean(order.paymentBy.trim() || order.paymentAgentId.trim());
+const hasLinkedPaymentAgent = (order: Order) =>
+  getOrderPaymentAgentLinkedAgentIds(order).length > 0;
 const hasLinkedCustomerInOrder = (order: Pick<Order, "lines">) =>
   order.lines.some((line) => Boolean(line.customerId?.trim()));
 const normalizeEditableOrderNumber = (value?: string) => {
@@ -888,6 +889,7 @@ export default function OrdersPage() {
   const { data: paymentAgents, isLoading: paymentAgentsLoading, recalculateFromOrders, applyOrderSettlement, reverseOrderSettlement, reload: reloadPaymentAgents } = usePaymentAgents();
   const { data: firebaseOrders, isLoading: isOrdersLoading, error: ordersLoadError, draftOrders: firebaseDraftOrders, autosaveDraft, upsertOrder: upsertFirebaseOrder, reload: reloadFirebaseOrders } = useOrders();
   const { data: customers, isLoading: isCustomersLoading, reload: reloadCustomers, upsertCustomer } = useCustomers();
+  const paymentAgentsService = useMemo(() => getPaymentAgentsService(), []);
   const [query, setQuery] = useState("");
   const [filterOpen, setFilterOpen] = useState(false);
   const [filters, setFilters] = useState<OrdersFilterState>({
@@ -928,6 +930,8 @@ export default function OrdersPage() {
   const [popupCustomerIssues, setPopupCustomerIssues] = useState<Record<string, string | null>>({});
   const [previewImage, setPreviewImage] = useState<{ src: string; alt: string; caption?: string } | null>(null);
   const [rowEdits, setRowEdits] = useState<Record<string, RowEditState>>({});
+  const [liveComposerPaymentAgentsById, setLiveComposerPaymentAgentsById] = useState<Record<string, PaymentAgent>>({});
+  const [paymentAgentLedgerEntries, setPaymentAgentLedgerEntries] = useState<PaymentAgentLedgerEntry[]>([]);
   const [outsideEdits, setOutsideEdits] = useState<Record<string, OutsideEditState>>({});
   const [outsideEditConfirm, setOutsideEditConfirm] = useState<OutsideEditConfirmState | null>(null);
   const [orderSaveState, setOrderSaveState] = useState<"idle" | "saving">("idle");
@@ -956,6 +960,98 @@ export default function OrdersPage() {
     () => getDefaultMarkaFromOrderNumber(draft.number || draft.orderNumber),
     [draft.number, draft.orderNumber],
   );
+  const composerPaymentAgentIds = useMemo(
+    () =>
+      Array.from(new Set(
+        getEditablePaymentAgentSplits(draft)
+          .map((split) => split.paymentAgentId || split.paymentBy)
+          .filter((value): value is string => Boolean(value?.trim())),
+      )),
+    [draft],
+  );
+  const composerPaymentAgents = useMemo(() => {
+    const merged = new Map(paymentAgents.map((agent) => [agent.id, agent]));
+    Object.values(liveComposerPaymentAgentsById).forEach((agent) => {
+      if (!agent?.id) return;
+      merged.set(agent.id, agent);
+    });
+    return Array.from(merged.values());
+  }, [liveComposerPaymentAgentsById, paymentAgents]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!isOrderModalOpen || composerPaymentAgentIds.length === 0) {
+      setLiveComposerPaymentAgentsById({});
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void (async () => {
+      const freshAgents = await Promise.all(
+        composerPaymentAgentIds.map(async (agentId) => {
+          try {
+            return await paymentAgentsService.getPaymentAgentById(agentId);
+          } catch {
+            return null;
+          }
+        }),
+      );
+
+      if (cancelled) return;
+
+      const next: Record<string, PaymentAgent> = {};
+      freshAgents.forEach((agent) => {
+        if (!agent?.id) return;
+        next[agent.id] = agent;
+      });
+      setLiveComposerPaymentAgentsById(next);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [composerPaymentAgentIds, isOrderModalOpen, paymentAgentsService]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!isOrderModalOpen) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void paymentAgentsService.listPaymentAgentLedger()
+      .then((entries) => {
+        if (cancelled) return;
+        setPaymentAgentLedgerEntries(entries);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setPaymentAgentLedgerEntries([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOrderModalOpen, paymentAgentsService]);
+
+  const composerPaymentAgentLiveFinanceById = useMemo(() => {
+    const next = new Map<string, ReturnType<typeof calculatePaymentAgentLiveFinance>>();
+    composerPaymentAgents.forEach((agent) => {
+      next.set(agent.id, calculatePaymentAgentLiveFinance(agent, activeOrders, paymentAgentLedgerEntries));
+    });
+    return next;
+  }, [activeOrders, composerPaymentAgents, paymentAgentLedgerEntries]);
+  const composerAvailableCreditByAgentId = useMemo(
+    () =>
+      Object.fromEntries(
+        Array.from(composerPaymentAgentLiveFinanceById.entries()).map(([agentId, finance]) => [agentId, finance.available]),
+      ),
+    [composerPaymentAgentLiveFinanceById],
+  );
 
   const markDraftPaymentEventAsManual = (eventId: string) => {
     manuallyEditedPaymentEventIdsRef.current.add(eventId);
@@ -975,11 +1071,11 @@ export default function OrdersPage() {
 
   const getDraftSplitAvailableCredit = (split: PaymentAgentOrderSplit) => {
     const matchedAgent =
-      paymentAgents.find((agent) => agent.id === split.paymentAgentId)
-      ?? paymentAgents.find((agent) => agent.id === split.paymentBy)
-      ?? paymentAgents.find((agent) => normalizePaymentAgentValue(agent.name) === normalizePaymentAgentValue(split.paymentAgentName || split.paymentAgentSnapshot?.name || split.paymentBy));
+      composerPaymentAgents.find((agent) => agent.id === split.paymentAgentId)
+      ?? composerPaymentAgents.find((agent) => agent.id === split.paymentBy)
+      ?? composerPaymentAgents.find((agent) => normalizePaymentAgentValue(agent.name) === normalizePaymentAgentValue(split.paymentAgentName || split.paymentAgentSnapshot?.name || split.paymentBy));
 
-    return matchedAgent ? getPaymentAgentDirectFinance(matchedAgent).creditLeft : 0;
+    return matchedAgent ? (composerPaymentAgentLiveFinanceById.get(matchedAgent.id)?.available ?? 0) : 0;
   };
 
   const getSafeAutoAllocatedAmount = (split: PaymentAgentOrderSplit, orderAmount: number) =>
@@ -1020,7 +1116,7 @@ export default function OrdersPage() {
         const markaText = order.lines.map((line) => line.marka || "").join(" ");
         const detailText = order.lines.map((line) => joinLineDetails(line)).join(" ");
         const hasLoadingDate = Boolean(order.loadingDate?.trim());
-        const hasPaymentAgent = Boolean((order.paymentAgentId || order.paymentBy || "").trim());
+        const hasPaymentAgent = hasLinkedPaymentAgent(order);
         const orderDate = order.date || "";
         if (filters.status !== "all" && order.status !== filters.status) return false;
         if (filters.loadingDate === "set" && !hasLoadingDate) return false;
@@ -1125,7 +1221,6 @@ export default function OrdersPage() {
     const fromOrders = activeOrders.flatMap((o) => o.lines.map((l) => getResolvedLineCustomerName(l))).filter(Boolean) as string[];
     return Array.from(new Set([...fromCustomerRows, ...fromOrders]));
   }, [customers, activeOrders]);
-  const selectedPaymentAgentId = draft.paymentAgentId || draft.paymentBy;
   const validation = useMemo(() => validateOrderForSave(draft), [draft]);
   const seriesPreview = useMemo(() => {
     const normalizedLabel = normalizeSeriesLabel(seriesForm.label);
@@ -1316,13 +1411,14 @@ export default function OrdersPage() {
   const resolveExistingPaymentAgentByName = async (rawName: string) => {
     const cleanName = rawName.trim();
     if (!cleanName) return null;
-    const existing = paymentAgents.find((agent) => normalizePaymentAgentValue(agent.name) === normalizePaymentAgentValue(cleanName));
+    const existing = composerPaymentAgents.find((agent) => normalizePaymentAgentValue(agent.name) === normalizePaymentAgentValue(cleanName));
     return existing ?? null;
   };
 
   const resolvePaymentAgentEventsForSave = async (
     rawEvents: PaymentAgentPaymentEvent[] | undefined,
     expectedTotal: number,
+    rawSplits: PaymentAgentOrderSplit[] = [],
   ): Promise<{ events: PaymentAgentPaymentEvent[]; splits: PaymentAgentOrderSplit[]; primaryAgent: PaymentAgent | null }> => {
     const normalizedEvents = (rawEvents ?? [])
       .map(normalizeDraftPaymentEvent)
@@ -1344,7 +1440,7 @@ export default function OrdersPage() {
       throw new Error(initialIssues[0]!);
     }
 
-    const localAgents = [...paymentAgents];
+    const localAgents = [...composerPaymentAgents];
     const resolvedEvents: PaymentAgentPaymentEvent[] = [];
 
     for (const event of normalizedEvents) {
@@ -1373,33 +1469,51 @@ export default function OrdersPage() {
       });
     }
 
-    const groupedByAgent = new Map<string, { agent: PaymentAgent; totalAmount: number; events: PaymentAgentPaymentEvent[] }>();
+    const groupedByAgent = new Map<string, { agent: PaymentAgent; totalCreditUsedNow: number; events: PaymentAgentPaymentEvent[] }>();
     resolvedEvents.forEach((event) => {
       const agent = localAgents.find((candidate) => candidate.id === event.paymentAgentId) ?? null;
       if (!agent) return;
-      const current = groupedByAgent.get(agent.id) || { agent, totalAmount: 0, events: [] };
-      current.totalAmount += normalizePaymentEventAmount(event.amount);
+      const current = groupedByAgent.get(agent.id) || { agent, totalCreditUsedNow: 0, events: [] };
+      current.totalCreditUsedNow += normalizePaymentEventAmount(event.amount);
       current.events.push(event);
       groupedByAgent.set(agent.id, current);
     });
 
-    const resolvedSplits: PaymentAgentOrderSplit[] = Array.from(groupedByAgent.values()).map(({ agent, totalAmount, events }) => {
-      const existingCredit = getPaymentAgentDirectFinance(agent).creditLeft;
-      const creditUsed = Math.min(totalAmount, existingCredit);
-      const remainingPayable = Math.max(0, totalAmount - creditUsed);
-      const splitStatus: "paid" | "partial" | "unpaid" = totalAmount <= 0 ? "unpaid" : remainingPayable > 0 ? "partial" : "paid";
+    const normalizedSourceSplits = rawSplits
+      .map(normalizeDraftPaymentSplit)
+      .filter((split) => !isPaymentAgentSplitEmpty(split));
+
+    const resolvedAgentGroups = Array.from(groupedByAgent.values());
+    const hasSingleResolvedAgent = resolvedAgentGroups.length === 1;
+
+    const resolvedSplits: PaymentAgentOrderSplit[] = resolvedAgentGroups.map(({ agent, totalCreditUsedNow, events }) => {
+      const sourceSplit = normalizedSourceSplits.find((split) =>
+        normalizePaymentAgentValue(split.paymentAgentId || split.paymentBy || split.paymentAgentName || split.paymentAgentSnapshot?.name) ===
+        normalizePaymentAgentValue(agent.id || agent.name),
+      ) ?? null;
+      const existingCredit = composerPaymentAgentLiveFinanceById.get(agent.id)?.available ?? 0;
+      const explicitAssignedAmount = normalizePaymentSplitAmount(sourceSplit?.assignedAmount);
+      const assignedAmount = hasSingleResolvedAgent
+        ? expectedTotal
+        : Math.max(explicitAssignedAmount, totalCreditUsedNow);
+      if (!hasSingleResolvedAgent && assignedAmount <= 0) {
+        throw new Error(`Payment split for ${agent.name} is missing an assigned order amount.`);
+      }
+      const creditUsed = Math.min(totalCreditUsedNow, existingCredit, assignedAmount);
+      const remainingPayable = Math.max(0, assignedAmount - creditUsed);
+      const splitStatus: "paid" | "partial" | "unpaid" = assignedAmount <= 0 ? "unpaid" : remainingPayable > 0 ? "partial" : "paid";
       const firstEvent = events[0];
       return {
-        id: firstEvent?.id || createPaymentAgentSplitId(),
+        id: sourceSplit?.id || firstEvent?.id || createPaymentAgentSplitId(),
         paymentAgentId: agent.id,
         paymentBy: agent.id,
         paymentAgentName: agent.name,
         paymentAgentSnapshot: { id: agent.id, name: agent.name, code: agent.agentCode },
-        assignedAmount: totalAmount,
+        assignedAmount,
         paidNow: creditUsed,
         note: events.map((entry) => entry.note?.trim()).filter(Boolean).join(" | ") || undefined,
         settlementSnapshot: {
-          orderPortionTotal: totalAmount,
+          orderPortionTotal: assignedAmount,
           existingCredit,
           creditUsed,
           payableAfterCredit: remainingPayable,
@@ -1408,16 +1522,27 @@ export default function OrdersPage() {
           resultingCreditBalance: Math.max(0, existingCredit - creditUsed),
           paidNow: 0,
           status: splitStatus,
-          createdAt: firstEvent?.createdAt || new Date().toISOString(),
+          createdAt: sourceSplit?.settlementSnapshot?.createdAt || firstEvent?.createdAt || new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         },
       };
     });
 
+    const assignedTotal = resolvedSplits.reduce((sum, split) => sum + normalizePaymentSplitAmount(split.assignedAmount), 0);
     const usedTotal = calculateOrderAgentPaidTotal(resolvedSplits);
+    if (assignedTotal > expectedTotal) {
+      throw new Error(`Total assigned amount cannot exceed order total ${expectedTotal}.`);
+    }
     if (usedTotal > expectedTotal) {
       throw new Error(`Total paid amount cannot exceed order total ${expectedTotal}.`);
     }
+    resolvedSplits.forEach((split, index) => {
+      const assignedAmount = normalizePaymentSplitAmount(split.assignedAmount);
+      const creditUsed = normalizePaymentSplitAmount(split.settlementSnapshot?.creditUsed ?? split.paidNow);
+      if (creditUsed > assignedAmount) {
+        throw new Error(`Payment split ${index + 1}: credit used cannot exceed assigned amount.`);
+      }
+    });
 
     return {
       events: resolvedEvents,
@@ -1926,9 +2051,11 @@ try {
 
     syncTasks.push((async () => {
       try {
-        if (nextOrder.paymentAgentId || nextOrder.paymentBy) {
-          await measurePerfAsync("sync", "orders.outsideEdit.applyPaymentAgentSettlement", { orderId: nextOrder.id, paymentAgentId: nextOrder.paymentAgentId || nextOrder.paymentBy || "" }, () => paymentAgentsService.applyOrderSettlement?.(nextOrder) ?? Promise.resolve());
-        } else if (previousOrder.paymentAgentId || previousOrder.paymentBy) {
+        const nextLinkedPaymentAgentIds = getOrderPaymentAgentLinkedAgentIds(nextOrder);
+        const previousLinkedPaymentAgentIds = getOrderPaymentAgentLinkedAgentIds(previousOrder);
+        if (nextLinkedPaymentAgentIds.length > 0) {
+          await measurePerfAsync("sync", "orders.outsideEdit.applyPaymentAgentSettlement", { orderId: nextOrder.id, paymentAgentId: nextLinkedPaymentAgentIds[0] || "" }, () => paymentAgentsService.applyOrderSettlement?.(nextOrder) ?? Promise.resolve());
+        } else if (previousLinkedPaymentAgentIds.length > 0) {
           await measurePerfAsync("sync", "orders.outsideEdit.reversePaymentAgentSettlement", { orderId: nextOrder.id }, () => paymentAgentsService.reverseOrderSettlement?.(nextOrder) ?? Promise.resolve());
         }
       } catch (error) {
@@ -2064,15 +2191,15 @@ try {
           nextOrder.paymentAgentSnapshot = undefined;
           nextOrder.paymentAgentSettlementSnapshot = undefined;
         } else {
-          let resolvedAgent = paymentAgents.find((agent) => agent.id === trimmedValue || normalizePaymentAgentValue(agent.name) === normalizePaymentAgentValue(trimmedValue)) ?? null;
+          let resolvedAgent = composerPaymentAgents.find((agent) => agent.id === trimmedValue || normalizePaymentAgentValue(agent.name) === normalizePaymentAgentValue(trimmedValue)) ?? null;
           if (trimmedValue && !resolvedAgent) resolvedAgent = await resolveExistingPaymentAgentByName(trimmedValue);
           if (trimmedValue && !resolvedAgent) throw new Error("Payment agent not found. Add it from the Payment Agents tab first.");
           const nextPaymentAgentId = resolvedAgent?.id || "";
           const currentSplits = getEditablePaymentAgentSplits(nextOrder);
           const currentEvents = getEditablePaymentAgentEvents(nextOrder);
           const primarySplit = currentSplits[0] ?? createEmptyPaymentAgentSplit();
-          const existingCredit = resolvedAgent ? getPaymentAgentDirectFinance(resolvedAgent).creditLeft : 0;
-          const hadPreviousPaymentAgent = Boolean((order.paymentAgentId || order.paymentBy || "").trim());
+          const existingCredit = resolvedAgent ? (composerPaymentAgentLiveFinanceById.get(resolvedAgent.id)?.available ?? 0) : 0;
+          const hadPreviousPaymentAgent = hasLinkedPaymentAgent(order);
           const paidAmount = hadPreviousPaymentAgent
             ? normalizePaymentEventAmount(currentEvents[0]?.amount)
             : Math.max(0, Math.min(orderTotal(nextOrder), existingCredit));
@@ -2114,21 +2241,7 @@ try {
           nextOrder.paymentByName = resolvedAgent?.name || "";
           nextOrder.paymentAgentName = resolvedAgent?.name || "";
           nextOrder.paymentAgentSnapshot = { id: nextPaymentAgentId, name: resolvedAgent?.name || "", code: resolvedAgent?.agentCode || "" };
-          nextOrder.paymentAgentSettlementSnapshot = {
-            orderTotal: nextSplits[0].settlementSnapshot.orderPortionTotal,
-            existingCredit: nextSplits[0].settlementSnapshot.existingCredit,
-            creditUsed: nextSplits[0].settlementSnapshot.creditUsed,
-            payableAfterCredit: 0,
-            remainingPayable,
-            newCreditCreated: 0,
-            resultingCreditBalance: nextSplits[0].settlementSnapshot.resultingCreditBalance,
-            paidNow: 0,
-            status: nextSplits[0].settlementSnapshot.status,
-            paymentAgentId: nextPaymentAgentId,
-            paymentAgentName: resolvedAgent?.name || "",
-            updatedAt: new Date().toISOString(),
-            createdAt: nextSplits[0].settlementSnapshot.createdAt || order.paymentAgentSettlementSnapshot?.createdAt || new Date().toISOString(),
-          };
+          nextOrder.paymentAgentSettlementSnapshot = undefined;
         }
       } else if (field === "shipping") {
         nextOrder.shippingPrice = Math.max(0, Number(rawValue) || 0);
@@ -2252,6 +2365,7 @@ try {
         draftSplitResolution = await resolvePaymentAgentEventsForSave(
           cleanedDraft.paymentAgentPaymentEvents,
           orderTotal({ ...cleanedDraft, lines: meaningfulLines }),
+          cleanedDraft.paymentAgentSplits ?? [],
         );
         saveAudit.mark("paymentAgentResolve:end", {
           resolvedAgentId: draftSplitResolution.primaryAgent?.id || null,
@@ -2265,7 +2379,6 @@ try {
         return;
       }
       const draftOrderBase = applyPaymentAgentDraftState(cleanedDraft, draftSplitResolution.splits, draftSplitResolution.events);
-      const primaryDraftSplit = draftSplitResolution.splits[0];
       const draftPaidAmount = calculateOrderAgentPaidTotal(draftSplitResolution.splits);
       const draftTotalAmount = orderTotal({ ...cleanedDraft, lines: meaningfulLines });
       const draftDueAmount = calculateOrderRemainingPayable(draftTotalAmount, draftSplitResolution.splits);
@@ -2278,26 +2391,7 @@ try {
         paidAmount: draftPaidAmount,
         dueAmount: draftDueAmount,
         paymentStatus: getOrderPaymentStatusFromDue(draftTotalAmount, draftDueAmount),
-      paymentAgentSettlementSnapshot: (() => {
-        const now = new Date().toISOString();
-        return primaryDraftSplit?.settlementSnapshot
-          ? {
-              orderTotal: primaryDraftSplit.settlementSnapshot.orderPortionTotal,
-              existingCredit: primaryDraftSplit.settlementSnapshot.existingCredit,
-              creditUsed: primaryDraftSplit.settlementSnapshot.creditUsed,
-              payableAfterCredit: primaryDraftSplit.settlementSnapshot.payableAfterCredit,
-              remainingPayable: primaryDraftSplit.settlementSnapshot.remainingPayable,
-              newCreditCreated: primaryDraftSplit.settlementSnapshot.newCreditCreated,
-              resultingCreditBalance: primaryDraftSplit.settlementSnapshot.resultingCreditBalance,
-              paidNow: primaryDraftSplit.settlementSnapshot.paidNow,
-              status: primaryDraftSplit.settlementSnapshot.status,
-              paymentAgentId: draftOrderBase.paymentAgentId || "",
-              paymentAgentName: draftOrderBase.paymentAgentName || "",
-              createdAt: primaryDraftSplit.settlementSnapshot.createdAt || now,
-              updatedAt: now,
-            }
-          : undefined;
-      })(),
+        paymentAgentSettlementSnapshot: undefined,
       };
       saveAudit.mark("orderPayload:built", { status: "draft" });
       try {
@@ -2403,6 +2497,7 @@ try {
       splitResolution = await resolvePaymentAgentEventsForSave(
         cleanedDraft.paymentAgentPaymentEvents,
         orderTotal({ ...cleanedDraft, lines: resolvedLines }),
+        cleanedDraft.paymentAgentSplits ?? [],
       );
       saveAudit.mark("paymentAgentResolve:end", {
         resolvedAgentId: splitResolution.primaryAgent?.id || null,
@@ -2416,14 +2511,22 @@ try {
       return;
     }
     const resolvedAgent = splitResolution.primaryAgent;
-    const resolvedDraftWithSplits = applyPaymentAgentDraftState(cleanedDraft, splitResolution.splits, splitResolution.events);
+    const resolvedSplitsForSave = splitResolution.splits.map(normalizeDraftPaymentSplit);
+    const resolvedEventsForSave = splitResolution.events.map(normalizeDraftPaymentEvent);
+    const resolvedDraftWithSplits = applyPaymentAgentDraftState(
+      {
+        ...cleanedDraft,
+        paymentAgentSplits: [],
+        paymentAgentPaymentEvents: [],
+      },
+      resolvedSplitsForSave,
+      resolvedEventsForSave,
+    );
     const resolvedPaymentAgentId = resolvedAgent?.id || resolvedDraftWithSplits.paymentAgentId || "";
-    const primaryResolvedSplit = splitResolution.splits[0];
-    const primarySettlementSnapshot = primaryResolvedSplit?.settlementSnapshot;
     const finalOrderSeriesFields = deriveOrderSeriesFields(finalOrderNumber);
     const finalTotalAmount = orderTotal({ ...cleanedDraft, lines: resolvedLines });
-    const finalPaidAmount = calculateOrderAgentPaidTotal(splitResolution.splits);
-    const finalDueAmount = calculateOrderRemainingPayable(finalTotalAmount, splitResolution.splits);
+    const finalPaidAmount = calculateOrderAgentPaidTotal(resolvedSplitsForSave);
+    const finalDueAmount = calculateOrderRemainingPayable(finalTotalAmount, resolvedSplitsForSave);
     let savedOrder: Order = {
       ...resolvedDraftWithSplits,
       number: finalOrderNumber,
@@ -2436,6 +2539,8 @@ try {
       paidAmount: finalPaidAmount,
       dueAmount: finalDueAmount,
       paymentStatus: getOrderPaymentStatusFromDue(finalTotalAmount, finalDueAmount),
+      paymentAgentSplits: resolvedSplitsForSave,
+      paymentAgentPaymentEvents: resolvedEventsForSave,
       paymentAgentId: resolvedPaymentAgentId,
       paymentBy: resolvedPaymentAgentId || resolvedDraftWithSplits.paymentBy,
       paymentByName: resolvedDraftWithSplits.paymentByName || "",
@@ -2443,23 +2548,7 @@ try {
       paymentAgentSnapshot: resolvedAgent
         ? { id: resolvedAgent.id, name: resolvedAgent.name, code: resolvedAgent.agentCode }
         : resolvedDraftWithSplits.paymentAgentSnapshot,
-      paymentAgentSettlementSnapshot: primarySettlementSnapshot
-        ? {
-            orderTotal: primarySettlementSnapshot.orderPortionTotal,
-            existingCredit: primarySettlementSnapshot.existingCredit,
-            creditUsed: primarySettlementSnapshot.creditUsed,
-            payableAfterCredit: primarySettlementSnapshot.payableAfterCredit,
-            remainingPayable: primarySettlementSnapshot.remainingPayable,
-            newCreditCreated: primarySettlementSnapshot.newCreditCreated,
-            resultingCreditBalance: primarySettlementSnapshot.resultingCreditBalance,
-            paidNow: primarySettlementSnapshot.paidNow,
-            status: primarySettlementSnapshot.status,
-            paymentAgentId: resolvedPaymentAgentId,
-            paymentAgentName: resolvedAgent?.name || resolvedDraftWithSplits.paymentAgentName || "",
-            updatedAt: now,
-            createdAt: primarySettlementSnapshot.createdAt || draft.paymentAgentSettlementSnapshot?.createdAt || now,
-          }
-        : undefined,
+      paymentAgentSettlementSnapshot: undefined,
     };
     saveAudit.mark("orderPayload:built", { finalOrderNumber, resolvedLines: resolvedLines.length, resolvedPaymentAgentId: resolvedPaymentAgentId || null });
     try {
@@ -2481,10 +2570,11 @@ try {
     }
     const mergedOrders = activeOrders.some((o) => o.id === savedOrder.id) ? activeOrders.map((o) => (o.id === savedOrder.id ? savedOrder : o)) : [savedOrder, ...activeOrders];
     logCustomer("skipped_unrelated_customer_upserts", { reason: "normal_save_should_not_rewrite_unrelated_customers", affectedCustomerIds: Array.from(new Set(savedOrder.lines.map((l) => l.customerId).filter(Boolean))) });
-    const result: OrderSideEffectResult = { mode: editingOrderId ? "edit" : "create", orderSaved: true, productsSynced: false, productSyncFailures: [], paymentSettlementApplied: !isFirebaseOrdersMode && Boolean(selectedPaymentAgentId), paymentSettlementReversed: false, customerReceivablesApplied: false, customerReceivablesReversed: false, generatedProductsArchived: editingOrderId ? false : true, blocked: false, warnings: [], errors: [] };
+    const savedOrderPaymentAgentIds = getOrderPaymentAgentLinkedAgentIds(savedOrder);
+    const result: OrderSideEffectResult = { mode: editingOrderId ? "edit" : "create", orderSaved: true, productsSynced: false, productSyncFailures: [], paymentSettlementApplied: !isFirebaseOrdersMode && savedOrderPaymentAgentIds.length > 0, paymentSettlementReversed: false, customerReceivablesApplied: false, customerReceivablesReversed: false, generatedProductsArchived: editingOrderId ? false : true, blocked: false, warnings: [], errors: [] };
     const affectedCustomerIds = Array.from(new Set(savedOrder.lines.map((l) => l.customerId).filter(Boolean)));
     const generatedProductIds = savedOrder.lines.map((l) => `order-line-${savedOrder.id}-${l.id}`);
-    logDataFlow("Orders", JSON.stringify({ event: "order_side_effects_started", orderId: savedOrder.id, orderNumber: savedOrder.number, mode: result.mode, affectedCustomerIds, affectedPaymentAgentId: savedOrder.paymentAgentId || savedOrder.paymentBy, generatedProductIds }, null, 2));
+    logDataFlow("Orders", JSON.stringify({ event: "order_side_effects_started", orderId: savedOrder.id, orderNumber: savedOrder.number, mode: result.mode, affectedCustomerIds, affectedPaymentAgentIds: savedOrderPaymentAgentIds, generatedProductIds }, null, 2));
 
     setOrderSaveState("idle");
     saveAudit.mark("ui:modalClosed");
@@ -2536,11 +2626,11 @@ try {
         }
       })());
 
-      if (isFirebaseOrdersMode && (savedOrder.paymentAgentId || savedOrder.paymentBy)) {
+      if (isFirebaseOrdersMode && savedOrderPaymentAgentIds.length > 0) {
         syncTasks.push((async () => {
           saveAudit.mark("paymentAgentLedger:start");
           try {
-            await measurePerfAsync("sync", "orders.applyPaymentAgentSettlement", { orderId: savedOrder.id, paymentAgentId: savedOrder.paymentAgentId || savedOrder.paymentBy || "" }, () => paymentAgentsService.applyOrderSettlement?.(savedOrder) ?? Promise.resolve());
+            await measurePerfAsync("sync", "orders.applyPaymentAgentSettlement", { orderId: savedOrder.id, paymentAgentId: savedOrderPaymentAgentIds[0] || "" }, () => paymentAgentsService.applyOrderSettlement?.(savedOrder) ?? Promise.resolve());
             result.paymentSettlementApplied = true;
             logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: savedOrder.id, mode: result.mode, step: "apply_payment_settlement", success: true }, null, 2));
           } catch (e) {
@@ -2551,11 +2641,11 @@ try {
             saveAudit.mark("paymentAgentLedger:end", { applied: result.paymentSettlementApplied });
           }
         })());
-      } else if (isFirebaseOrdersMode && editingOrder && (editingOrder.paymentAgentId || editingOrder.paymentBy)) {
+      } else if (isFirebaseOrdersMode && editingOrder && getOrderPaymentAgentLinkedAgentIds(editingOrder).length > 0) {
         syncTasks.push((async () => {
           saveAudit.mark("paymentAgentLedger:start");
           try {
-            await measurePerfAsync("sync", "orders.reversePaymentAgentSettlement", { orderId: editingOrder.id, paymentAgentId: editingOrder.paymentAgentId || editingOrder.paymentBy || "" }, () => paymentAgentsService.reverseOrderSettlement?.(editingOrder) ?? Promise.resolve());
+            await measurePerfAsync("sync", "orders.reversePaymentAgentSettlement", { orderId: editingOrder.id, paymentAgentId: getOrderPaymentAgentLinkedAgentIds(editingOrder)[0] || "" }, () => paymentAgentsService.reverseOrderSettlement?.(editingOrder) ?? Promise.resolve());
             result.paymentSettlementReversed = true;
             logDataFlow("Orders", JSON.stringify({ event: "order_side_effect_step_completed", orderId: savedOrder.id, mode: result.mode, step: "reverse_payment_settlement", success: true }, null, 2));
           } catch (e) {
@@ -3578,7 +3668,9 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
               <section className="min-w-0">
                 <PaymentAgentHeaderPicker
                   splits={getEditablePaymentAgentSplits(draft)}
-                  paymentAgents={paymentAgents}
+                  events={getEditablePaymentAgentEvents(draft)}
+                  paymentAgents={composerPaymentAgents}
+                  availableCreditByAgentId={composerAvailableCreditByAgentId}
                   onChange={setDraftPaymentAgentSplits}
                   onAdd={() => setDraftPaymentAgentSplits((current) => [...current, createEmptyPaymentAgentSplit()])}
                   onRemove={(splitId) => setDraftPaymentAgentSplits((current) => current.length <= 1 ? [createEmptyPaymentAgentSplit()] : current.filter((split) => split.id !== splitId))}
@@ -3669,7 +3761,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
           <div className="bg-bg-subtle/20">
             <OrderForm showOrderInfo={false} draft={draft} setDraft={(u) => setDraft((d) => u(d))} paymentAgents={paymentAgents} customers={customers} onUploadingChange={onUploadingChange} onRemoveLine={handleRemoveLine} wechatSuggestions={wechatSuggestions.filter((w) => draft.wechatId.trim() ? w.toLowerCase().includes(draft.wechatId.trim().toLowerCase()) : false)} customerSuggestions={customerSuggestions} onPreviewImage={(src) => setPreviewImage({ src, alt: "Order line photo preview" })} onCustomerValidityChange={(lineId, issue) => setPopupCustomerIssues((prev) => ({ ...prev, [lineId]: issue }))} defaultMarka={mode === "add" ? currentDraftDefaultMarka : ""} />
           </div>
-          <OrderFooter lineTotal={lineTotal} shippingPrice={getOrderShippingAmount(draft)} total={total} onCancel={requestExitComposer} showCancel={false} onSaveDraft={() => onSave("draft")} onSaveOrder={() => onSave("saved")} onViewDetails={() => setViewOrder(draft)} saveOrderLabel={orderSaveState === "saving" ? "Saving Order..." : (editingOrderId ? "Save Changes" : "Save Order")} saveDraftLabel={orderSaveState === "saving" ? "Saving Draft..." : "Save as Draft"} disableSaveDraft={orderSaveState !== "idle"} disableSaveOrder={orderSaveState !== "idle"} paymentAgents={paymentAgents} paymentAgentSplits={getEditablePaymentAgentSplits(draft)} paymentAgentEvents={getEditablePaymentAgentEvents(draft)} onPaymentAgentEventsChange={setDraftPaymentAgentEvents} onPaymentAgentEventManualAmountEdit={markDraftPaymentEventAsManual} onShippingPriceChange={(value) => setDraft((d) => ({ ...d, shippingPrice: value }))} />
+          <OrderFooter lineTotal={lineTotal} shippingPrice={getOrderShippingAmount(draft)} total={total} onCancel={requestExitComposer} showCancel={false} onSaveDraft={() => onSave("draft")} onSaveOrder={() => onSave("saved")} onViewDetails={() => setViewOrder(draft)} saveOrderLabel={orderSaveState === "saving" ? "Saving Order..." : (editingOrderId ? "Save Changes" : "Save Order")} saveDraftLabel={orderSaveState === "saving" ? "Saving Draft..." : "Save as Draft"} disableSaveDraft={orderSaveState !== "idle"} disableSaveOrder={orderSaveState !== "idle"} paymentAgents={composerPaymentAgents} availableCreditByAgentId={composerAvailableCreditByAgentId} paymentAgentSplits={getEditablePaymentAgentSplits(draft)} paymentAgentEvents={getEditablePaymentAgentEvents(draft)} onPaymentAgentEventsChange={setDraftPaymentAgentEvents} onPaymentAgentEventManualAmountEdit={markDraftPaymentEventAsManual} onShippingPriceChange={(value) => setDraft((d) => ({ ...d, shippingPrice: value }))} />
         </div>
       </div>}
       {showExitConfirm ? <div className="fixed inset-0 z-[65] bg-black/50 grid place-items-center p-4"><div className="card w-full max-w-lg p-4 space-y-3"><div className="text-lg font-semibold">{editingOrderId ? "Save changes before closing?" : "Save order before closing?"}</div><div className="text-sm text-fg-subtle">{editingOrderId ? "You made changes to this order. Save them now or discard them." : "Save this order as a draft before closing, or discard it."}</div><div className="flex flex-wrap justify-end gap-2"><Button variant="secondary" onClick={() => { setShowExitConfirm(false); resetOrderComposer(); }}>{editingOrderId ? "Discard Changes" : "Discard Order"}</Button><Button variant="primary" onClick={() => { setShowExitConfirm(false); void onSave(editingOrderId ? "saved" : "draft", true); }}>{editingOrderId ? "Save Changes" : "Save Draft"}</Button></div></div></div> : null}
@@ -3700,7 +3792,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
         title={orderSaveState === "saving" ? "Saving order" : "Loading"}
         message={orderSaveState === "saving" ? "Saving your order now..." : "Fetching the latest data..."}
       />
-      <OrderLinesDetailModal order={viewOrder} isOpen={!!viewOrder} onClose={() => setViewOrder(null)} paymentAgents={paymentAgents} paymentAgentSplits={viewOrder ? getEditablePaymentAgentSplits(viewOrder) : []} paymentAgentEvents={viewOrder ? getEditablePaymentAgentEvents(viewOrder) : []} onPaymentAgentEventsChange={viewOrder ? handleViewOrderPaymentAgentEventsChange : undefined} onPaymentAgentEventManualAmountEdit={viewOrder && isOrderModalOpen && viewOrder.id === draft.id ? markDraftPaymentEventAsManual : undefined} />
+      <OrderLinesDetailModal order={viewOrder} isOpen={!!viewOrder} onClose={() => setViewOrder(null)} paymentAgents={composerPaymentAgents} paymentAgentSplits={viewOrder ? getEditablePaymentAgentSplits(viewOrder) : []} paymentAgentEvents={viewOrder ? getEditablePaymentAgentEvents(viewOrder) : []} onPaymentAgentEventsChange={viewOrder ? handleViewOrderPaymentAgentEventsChange : undefined} onPaymentAgentEventManualAmountEdit={viewOrder && isOrderModalOpen && viewOrder.id === draft.id ? markDraftPaymentEventAsManual : undefined} />
     </div>
   );
 }

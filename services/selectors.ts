@@ -4,6 +4,7 @@ import { orderTotal } from "@/lib/types";
 import type { DashboardStats } from "./contracts";
 import { getLineCustomerDisplay } from "@/services/customers/customerResolution";
 import { measurePerfSync } from "@/lib/perfDebug";
+import { getOrderPaymentAgentLinkedAgentIds } from "@/services/settlement/paymentAgentSplits";
 
 const DASHBOARD_INCLUDED_STATUSES = ["saved", "packed", "received", "completed", "cancelled", "delayed"] as const;
 export const isDashboardOrder = (order: Order) => (DASHBOARD_INCLUDED_STATUSES as readonly string[]).includes(order.status);
@@ -53,7 +54,7 @@ export function getSupplierStats(suppliers: Supplier[], orders: Order[]) {
 
 export function getPaymentAgentStats(paymentAgents: PaymentAgent[], orders: Order[]) {
   return paymentAgents.map((a) => {
-    const own = orders.filter((o) => (o.paymentAgentId || o.paymentBy) === a.id);
+    const own = orders.filter((o) => getOrderPaymentAgentLinkedAgentIds(o).includes(a.id));
     return { agent: a, totalOrdersPaid: own.length, totalPaidAmount: own.reduce((s, o) => s + (o.paidAmount ?? 0), 0) };
   });
 }

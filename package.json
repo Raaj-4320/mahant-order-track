@@ -7,14 +7,16 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-        "check:type": "tsc --noEmit",
+    "check:type": "tsc --noEmit",
     "check:build": "next build",
     "perf:build": "npm run check:type && npm run check:build",
     "perf:size": "node -e \"const fs=require('fs');const path=require('path');function size(p){if(!fs.existsSync(p))return 0;const s=fs.statSync(p);if(s.isFile())return s.size;return fs.readdirSync(p).reduce((a,f)=>a+size(path.join(p,f)),0)};['.next','.next/static'].forEach(p=>console.log(p, (size(p)/1024/1024).toFixed(2)+' MB'))\""
   },
   "dependencies": {
     "clsx": "^2.1.1",
-    "firebase": "^12.13.0",
+    "dotenv": "^17.4.2",
+    "firebase": "^12.15.0",
+    "firebase-admin": "^14.1.0",
     "lucide-react": "^0.460.0",
     "next": "14.2.15",
     "react": "^18.3.1",

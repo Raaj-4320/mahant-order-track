@@ -13,6 +13,7 @@ import {
   Settings,
   Users,
   Wallet,
+  WalletCards,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { getFirebaseConfigStatus } from "@/lib/firebase/client";
@@ -28,6 +29,7 @@ const items: Item[] = [
   { label: "Order Booking", href: "/orders", icon: ClipboardList },
   { label: "Customers", href: "/customers", icon: Users },
   { label: "Payment Agents", href: "/payment-agents", icon: Wallet },
+  { label: "Payment Agents V2", href: "/payment-agents-v2", icon: WalletCards },
   { label: "Products", href: "/products", icon: Package },
   { label: "Settings", href: "/settings", icon: Settings },
   { label: "Recycle Bin", href: "/recycle-bin", icon: RotateCcw },

@@ -1,5 +1,6 @@
 import type { Order } from "@/lib/types";
 import { joinLineDetails } from "@/lib/orderLineDetails";
+import { getOrderPaymentAgentSplits } from "@/services/settlement/paymentAgentSplits";
 
 export type OrderLineValidationIssue = {
   lineId: string;
@@ -39,15 +40,31 @@ export const validateOrderForSave = (order: Order): OrderValidationResult => {
 };
 
 export const hasAnyDraftContent = (order: Order) => {
+  const hasPaymentAgentDraftContent =
+    getOrderPaymentAgentSplits(order).some((split) =>
+      Boolean(
+        split.paymentAgentId?.trim()
+        || split.paymentBy?.trim()
+        || split.paymentAgentName?.trim()
+        || split.paymentAgentSnapshot?.name?.trim()
+        || Number(split.assignedAmount) > 0
+        || Number(split.paidNow) > 0,
+      ),
+    )
+    || (order.paymentAgentPaymentEvents ?? []).some((event) =>
+      Boolean(
+        event.paymentAgentId?.trim()
+        || event.paymentBy?.trim()
+        || event.paymentAgentName?.trim()
+        || event.paymentAgentSnapshot?.name?.trim()
+        || Number(event.amount) > 0,
+      ),
+    );
   const header = Boolean(
     order.wechatId?.trim()
-    || order.paymentBy?.trim()
-    || order.paymentAgentId?.trim()
-    || (order as Partial<Order> & { paymentByName?: string }).paymentByName?.trim()
-    || (order as Partial<Order> & { paymentAgentName?: string }).paymentAgentName?.trim()
+    || hasPaymentAgentDraftContent
     || order.loadingDate?.trim()
     || Number(order.shippingPrice) > 0
-    || Number(order.paidToPaymentAgentNow) > 0,
   );
   const lines = order.lines.some((line) => isMeaningfulLine(line));
   return header || lines;

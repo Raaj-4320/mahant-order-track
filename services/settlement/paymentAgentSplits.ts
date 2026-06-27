@@ -39,6 +39,9 @@ export const getOrderPaymentAgentLedgerEntryIds = (order: Order) =>
 export const getOrderPaymentAgentLinkedAgentIds = (order: Order) =>
   Array.from(new Set(getOrderPaymentAgentSplits(order).map((split) => getPaymentAgentSplitAgentId(split)).filter(Boolean)));
 
+export const getOrderPrimaryPaymentAgentSplit = (order: Order): PaymentAgentOrderSplit | null =>
+  getOrderPaymentAgentSplits(order)[0] ?? null;
+
 const createVirtualLegacySplit = (order: Order): PaymentAgentOrderSplit | null => {
   const paymentAgentId = trimValue(order.paymentAgentId);
   const paymentBy = trimValue(order.paymentBy);

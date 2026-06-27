@@ -20,6 +20,7 @@ type Props = {
   disableSaveOrder?: boolean;
   disableSaveDraft?: boolean;
   paymentAgents: PaymentAgent[];
+  availableCreditByAgentId?: Record<string, number>;
   paymentAgentSplits: PaymentAgentOrderSplit[];
   paymentAgentEvents: PaymentAgentPaymentEvent[];
   onPaymentAgentEventsChange: (events: PaymentAgentPaymentEvent[]) => void;
@@ -83,6 +84,7 @@ export function OrderFooter({
   disableSaveOrder = false,
   disableSaveDraft = false,
   paymentAgents,
+  availableCreditByAgentId,
   paymentAgentSplits,
   paymentAgentEvents,
   onPaymentAgentEventsChange,
@@ -126,6 +128,7 @@ export function OrderFooter({
               splits={paymentAgentSplits}
               events={paymentAgentEvents}
               paymentAgents={paymentAgents}
+              availableCreditByAgentId={availableCreditByAgentId}
               totalAmount={total}
               onChange={onPaymentAgentEventsChange}
               onManualAmountEdit={onPaymentAgentEventManualAmountEdit}

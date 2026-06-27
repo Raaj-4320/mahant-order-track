@@ -75,6 +75,9 @@ export const paymentAgentsMockService: PaymentAgentsService = {
       paymentAgentsRecalculated: paymentAgentsState.length,
     };
   },
+  async applyTestingPaymentAgentRepair() {
+    throw new Error("Testing payment-agent repair apply is only enabled for the Firebase testing data source.");
+  },
   async recordPaymentToAgent(agentId, payment) {
     const idx = paymentAgentsState.findIndex((a) => a.id === agentId);
     if (idx < 0) throw new Error("Payment agent not found.");

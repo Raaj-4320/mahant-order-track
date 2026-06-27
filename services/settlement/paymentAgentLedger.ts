@@ -4,6 +4,7 @@ import {
   getOrderPaymentAgentSplitSettlementEntryId,
   getPaymentAgentSplitAgentId,
   getOrderPaymentAgentSplits,
+  getOrderPrimaryPaymentAgentSplit,
   isVirtualLegacyPaymentAgentSplit,
 } from "@/services/settlement/paymentAgentSplits";
 
@@ -30,8 +31,10 @@ const getSplitSettlementHash = (order: Order, split: PaymentAgentOrderSplit) => 
 };
 
 export function recalculateAgentFromOpeningAndOrders(agent: PaymentAgent, orders: Order[]): PaymentAgent {
-  const own = orders.filter((o) => (o.paymentAgentId || o.paymentBy) === agent.id && o.paymentAgentSettlementSnapshot);
-  const eligible = own.filter((order) => isOrderEligibleForCreditSettlement(order));
+  const eligible = orders.filter((order) =>
+    isOrderEligibleForCreditSettlement(order)
+    && getOrderPaymentAgentSplits(order).some((split) => getPaymentAgentSplitAgentId(split) === agent.id && Boolean(split.settlementSnapshot)),
+  );
   let creditBalance = clamp(agent.openingCreditBalance ?? agent.creditBalance ?? 0);
   let totalOrderAmount = 0;
   let totalPaidAmount = 0;
@@ -39,12 +42,16 @@ export function recalculateAgentFromOpeningAndOrders(agent: PaymentAgent, orders
   let totalUsedAmount = 0;
 
   for (const o of eligible) {
-    const s = o.paymentAgentSettlementSnapshot!;
-    totalOrderAmount += clamp(s.orderTotal);
-    totalPaidAmount += clamp(s.paidNow);
-    currentDuePayable += clamp(s.remainingPayable);
-    totalUsedAmount += clamp(s.creditUsed);
-    creditBalance = clamp(creditBalance - clamp(s.creditUsed) + clamp(s.newCreditCreated));
+    const settlements = getOrderPaymentAgentSplits(o)
+      .filter((split) => getPaymentAgentSplitAgentId(split) === agent.id && split.settlementSnapshot)
+      .map((split) => split.settlementSnapshot!);
+    settlements.forEach((s) => {
+      totalOrderAmount += clamp(s.orderPortionTotal);
+      totalPaidAmount += clamp(s.paidNow);
+      currentDuePayable += clamp(s.remainingPayable);
+      totalUsedAmount += clamp(s.creditUsed);
+      creditBalance = clamp(creditBalance - clamp(s.creditUsed) + clamp(s.newCreditCreated));
+    });
   }
 
   return {
@@ -97,7 +104,7 @@ export function applyOrderSettlementToAgent(
 }
 
 export function createSettlementHash(order: Order) {
-  const split = getOrderPaymentAgentSplits(order)[0];
+  const split = getOrderPrimaryPaymentAgentSplit(order);
   return split ? getSplitSettlementHash(order, split) : "";
 }
 

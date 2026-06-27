@@ -46,6 +46,14 @@ export function usePaymentAgents() {
     await reload();
     return result;
   }, [reload, service]);
+  const applyTestingPaymentAgentRepair = useCallback(async () => {
+    if (!service.applyTestingPaymentAgentRepair) {
+      return null;
+    }
+    const result = await service.applyTestingPaymentAgentRepair();
+    await reload();
+    return result;
+  }, [reload, service]);
   const recordPaymentToAgent = useCallback(async (agentId: string, payment: { amount: number; paymentDate: string; note?: string; paymentMethod?: string }) => {
     const updated = await service.recordPaymentToAgent(agentId, payment);
     setData((prev) => prev.map((entry) => (entry.id === updated.id ? updated : entry)));
@@ -70,5 +78,5 @@ export function usePaymentAgents() {
       await reload();
     }
   }, [reload, service]);
-  return { data, isLoading, error, isEmpty: !isLoading && data.length === 0, reload, upsertPaymentAgent, deletePaymentAgent, recalculateFromOrders, repairPaymentAgentsFromSavedOrders, recordPaymentToAgent, deletePaymentAgentLedgerEntry, listPaymentAgentLedger, applyOrderSettlement, reverseOrderSettlement };
+  return { data, isLoading, error, isEmpty: !isLoading && data.length === 0, reload, upsertPaymentAgent, deletePaymentAgent, recalculateFromOrders, repairPaymentAgentsFromSavedOrders, applyTestingPaymentAgentRepair, recordPaymentToAgent, deletePaymentAgentLedgerEntry, listPaymentAgentLedger, applyOrderSettlement, reverseOrderSettlement };
 }

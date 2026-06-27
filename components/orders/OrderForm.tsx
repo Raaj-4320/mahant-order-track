@@ -3,11 +3,9 @@
 import { Pencil, Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Field, Input } from "@/components/ui/Input";
-import { formatAmount } from "@/lib/data";
 import { OrderLineRow, LINE_GRID, LINE_GRID_TEMPLATE, LINE_TABLE_MIN_WIDTH } from "./OrderLineRow";
 import { Customer, Order, OrderLine, PaymentAgent } from "@/lib/types";
 import { resolveOrderPaymentAgent } from "@/lib/orderDisplay";
-import { getPaymentAgentDirectFinance } from "@/services/paymentAgentFinance";
 
 export function newLine(defaultMarka = ""): OrderLine {
   return {
@@ -61,10 +59,7 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
       .slice(0, 4);
   }, [collator, paymentAgents, paymentQuery]);
 
-  const paymentLabel = (p: PaymentAgent) => {
-    const creditLeft = getPaymentAgentDirectFinance(p).creditLeft;
-    return creditLeft > 0 ? `${p.name} - Credit: ${formatAmount(creditLeft)}` : p.name;
-  };
+  const paymentLabel = (p: PaymentAgent) => p.name;
 
   const filteredWechatSuggestions = useMemo(() => {
     const q = draft.wechatId.trim().toLowerCase();

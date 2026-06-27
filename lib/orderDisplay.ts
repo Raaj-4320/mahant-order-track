@@ -1,5 +1,5 @@
 import type { Order, PaymentAgent } from "@/lib/types";
-import { formatPaymentAgentSplitsDisplay, hasRealPaymentAgentSplits } from "@/services/settlement/paymentAgentSplits";
+import { formatPaymentAgentSplitsDisplay, getOrderPrimaryPaymentAgentSplit, hasRealPaymentAgentSplits } from "@/services/settlement/paymentAgentSplits";
 
 export const PAYMENT_AGENT_NOT_LINKED = "Not Paid";
 export const PAYMENT_AGENT_DELETED = "Deleted Payment Agent";
@@ -45,6 +45,14 @@ const getOrderResolverDebugId = (order: Partial<Order>) =>
 const getOrderPaymentAgentFallbackNames = (
   order: Order | (Partial<Order> & { paymentByName?: string; paymentAgentName?: string }),
 ) => {
+  if ("paymentAgentSplits" in order && hasRealPaymentAgentSplits(order as Pick<Order, "paymentAgentSplits">)) {
+    const primarySplit = getOrderPrimaryPaymentAgentSplit(order as Order);
+    const splitName = primarySplit?.paymentAgentSnapshot?.name?.trim()
+      || primarySplit?.paymentAgentName?.trim()
+      || primarySplit?.paymentBy?.trim()
+      || "";
+    return splitName ? [splitName] : [];
+  }
   const paymentBy = typeof order.paymentBy === "string" ? order.paymentBy.trim() : "";
   const snapshotName = typeof order.paymentAgentSnapshot?.name === "string" ? order.paymentAgentSnapshot.name.trim() : "";
   const paymentByName = typeof (order as { paymentByName?: string }).paymentByName === "string" ? (order as { paymentByName?: string }).paymentByName!.trim() : "";
@@ -96,9 +104,13 @@ export function resolveOrderPaymentAgentMatch(
   order: Order | (Partial<Order> & { paymentByName?: string; paymentAgentName?: string }),
   paymentAgents: PaymentAgent[] = [],
 ): PaymentAgentResolution {
-  const paymentAgentId = typeof order.paymentAgentId === "string" ? order.paymentAgentId.trim() : "";
-  const paymentBy = typeof order.paymentBy === "string" ? order.paymentBy.trim() : "";
-  const snapshotId = typeof order.paymentAgentSnapshot?.id === "string" ? order.paymentAgentSnapshot.id.trim() : "";
+  const primarySplit =
+    "paymentAgentSplits" in order && hasRealPaymentAgentSplits(order as Pick<Order, "paymentAgentSplits">)
+      ? getOrderPrimaryPaymentAgentSplit(order as Order)
+      : null;
+  const paymentAgentId = primarySplit?.paymentAgentId?.trim() || (typeof order.paymentAgentId === "string" ? order.paymentAgentId.trim() : "");
+  const paymentBy = primarySplit?.paymentBy?.trim() || (typeof order.paymentBy === "string" ? order.paymentBy.trim() : "");
+  const snapshotId = primarySplit?.paymentAgentSnapshot?.id?.trim() || (typeof order.paymentAgentSnapshot?.id === "string" ? order.paymentAgentSnapshot.id.trim() : "");
   const debugOrderId = getOrderResolverDebugId(order);
 
   if (paymentAgentId) {
@@ -176,12 +188,13 @@ export function getOrderPaymentAgentDisplay(order: Order, paymentAgents: Payment
   const matchedAgent = resolution.agent;
   if (matchedAgent?.name) return { value: matchedAgent.name, isMissing: false };
 
-  const paymentAgentId = typeof order.paymentAgentId === "string" ? order.paymentAgentId.trim() : "";
-  const snapshotId = typeof order.paymentAgentSnapshot?.id === "string" ? order.paymentAgentSnapshot.id.trim() : "";
-  const snapshotName = typeof order.paymentAgentSnapshot?.name === "string" ? order.paymentAgentSnapshot.name.trim() : "";
+  const primarySplit = hasRealPaymentAgentSplits(order) ? getOrderPrimaryPaymentAgentSplit(order) : null;
+  const paymentAgentId = primarySplit?.paymentAgentId?.trim() || (typeof order.paymentAgentId === "string" ? order.paymentAgentId.trim() : "");
+  const snapshotId = primarySplit?.paymentAgentSnapshot?.id?.trim() || (typeof order.paymentAgentSnapshot?.id === "string" ? order.paymentAgentSnapshot.id.trim() : "");
+  const snapshotName = primarySplit?.paymentAgentSnapshot?.name?.trim() || (typeof order.paymentAgentSnapshot?.name === "string" ? order.paymentAgentSnapshot.name.trim() : "");
   const paymentByName = typeof (order as any).paymentByName === "string" ? (order as any).paymentByName.trim() : "";
-  const paymentAgentName = typeof (order as any).paymentAgentName === "string" ? (order as any).paymentAgentName.trim() : "";
-  const paymentBy = typeof order.paymentBy === "string" ? order.paymentBy.trim() : "";
+  const paymentAgentName = primarySplit?.paymentAgentName?.trim() || (typeof (order as any).paymentAgentName === "string" ? (order as any).paymentAgentName.trim() : "");
+  const paymentBy = primarySplit?.paymentBy?.trim() || (typeof order.paymentBy === "string" ? order.paymentBy.trim() : "");
 
   const hasLinkedId = Boolean(paymentAgentId || snapshotId);
   const hasStoredMetadata = Boolean(snapshotName || paymentByName || paymentAgentName);

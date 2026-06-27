@@ -6,12 +6,12 @@ import { Input } from "@/components/ui/Input";
 import { cn } from "@/lib/cn";
 import { formatAmount } from "@/lib/data";
 import type { PaymentAgent, PaymentAgentOrderSplit, PaymentAgentPaymentEvent } from "@/lib/types";
-import { getPaymentAgentDirectFinance } from "@/services/paymentAgentFinance";
 
 type Props = {
   splits: PaymentAgentOrderSplit[];
   events: PaymentAgentPaymentEvent[];
   paymentAgents: PaymentAgent[];
+  availableCreditByAgentId?: Record<string, number>;
   totalAmount: number;
   onChange: (events: PaymentAgentPaymentEvent[]) => void;
   onManualAmountEdit?: (eventId: string) => void;
@@ -21,7 +21,7 @@ type Props = {
 
 const normalizeValue = (value?: string | null) => (value || "").trim().toLowerCase();
 const fmt = (value: number) => formatAmount(value);
-const EVENT_GRID = "grid grid-cols-[minmax(168px,1.2fr)_84px_minmax(110px,128px)_minmax(118px,138px)_92px] items-center gap-2";
+const EVENT_GRID = "grid grid-cols-[minmax(168px,1.2fr)_84px_minmax(110px,128px)_92px] items-center gap-2";
 const PILL_CLASS = "rounded-full border border-border/60 bg-bg-card px-3 py-1.5 font-medium text-fg";
 
 const getSplitLabel = (split: PaymentAgentOrderSplit) =>
@@ -49,6 +49,7 @@ export function PaymentAgentSplitsEditor({
   splits,
   events,
   paymentAgents,
+  availableCreditByAgentId,
   totalAmount,
   onChange,
   onManualAmountEdit,
@@ -111,15 +112,12 @@ export function PaymentAgentSplitsEditor({
               <span>Agent</span>
               <span>Event</span>
               <span className="text-right">Amount</span>
-              <span className="text-right">Credit Left</span>
               <span className="text-right">Action</span>
             </div>
           ) : null}
           <div className="min-w-[640px]">
           {groupedAgents.map(({ split, agent, label, index, agentEvents }) => {
-            const existingCredit = agent ? getPaymentAgentDirectFinance(agent).creditLeft : 0;
             const agentTotal = agentEvents.reduce((sum, event) => sum + (Number(event.amount) || 0), 0);
-            const remainingCredit = Math.max(0, existingCredit - Math.min(existingCredit, agentTotal));
 
             return (
               <div key={split.id} className="border-b border-border/40 last:border-b-0">
@@ -127,11 +125,14 @@ export function PaymentAgentSplitsEditor({
                     <div className={`${EVENT_GRID} px-2 py-1.5 text-[13px]`}>
                       <div className="min-w-0">
                         <div className="truncate font-semibold text-fg">{label}</div>
-                        <div className="text-[11px] text-fg-subtle">{index === 0 ? "Primary" : `Agent ${index + 1}`}</div>
+                        <div className="text-[11px] text-fg-subtle">
+                          {agent
+                            ? `Credit left: ${fmt(Math.max(0, Number(availableCreditByAgentId?.[agent.id]) || 0))}`
+                            : (index === 0 ? "Primary" : `Agent ${index + 1}`)}
+                        </div>
                       </div>
                       <div className="text-fg-subtle">-</div>
                       <div className="text-right tabular-nums text-fg-subtle">0</div>
-                      <div className="text-right font-semibold tabular-nums text-sky-700">{fmt(existingCredit)}</div>
                       <div className="flex justify-end">
                         <button
                           type="button"
@@ -146,18 +147,15 @@ export function PaymentAgentSplitsEditor({
                   ) : null}
                   {agentEvents.map((event, eventIndex) => {
                     const currentAmount = Number(event.amount) || 0;
-                    const usedAfterRow = Math.min(
-                      existingCredit,
-                      agentEvents
-                        .slice(0, eventIndex + 1)
-                        .reduce((sum, currentEvent) => sum + (Number(currentEvent.amount) || 0), 0),
-                    );
-                    const projectedCreditLeft = Math.max(0, existingCredit - usedAfterRow);
                     return (
                       <div key={event.id} className={`${EVENT_GRID} px-2 py-1.5 text-[13px]`}>
                         <div className="min-w-0 pr-1">
                           <div className="truncate font-semibold text-fg">{label}</div>
-                          <div className="text-[11px] text-fg-subtle">Group Total {fmt(agentTotal)}</div>
+                          <div className="text-[11px] text-fg-subtle">
+                            {agent
+                              ? `Credit left: ${fmt(Math.max(0, Number(availableCreditByAgentId?.[agent.id]) || 0))} · Group Total ${fmt(agentTotal)}`
+                              : `Group Total ${fmt(agentTotal)}`}
+                          </div>
                         </div>
                         <div className="text-fg-subtle">#{eventIndex + 1}</div>
                         <label className="block min-w-0">
@@ -179,7 +177,6 @@ export function PaymentAgentSplitsEditor({
                             className={cn("h-8 w-full min-w-0 rounded-md border-border/55 bg-bg-card px-2.5 text-right text-[13px] shadow-none", expanded && "text-[13px]")}
                           />
                         </label>
-                        <div className="text-right font-semibold tabular-nums text-sky-700">{fmt(projectedCreditLeft)}</div>
                         <div className="flex justify-end">
                           <div className="flex items-center justify-end gap-1">
                             {eventIndex === agentEvents.length - 1 ? (
@@ -206,11 +203,6 @@ export function PaymentAgentSplitsEditor({
                       </div>
                     );
                   })}
-                  {agentEvents.length > 0 ? (
-                    <div className="px-2 pb-1 text-right text-[11px] text-fg-subtle">
-                      <span>Credit Left After Agent Total: {fmt(remainingCredit)}</span>
-                    </div>
-                  ) : null}
               </div>
             );
           })}

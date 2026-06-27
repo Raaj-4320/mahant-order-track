@@ -2,7 +2,7 @@ import { collection, deleteDoc, doc, getDoc, getDocs, runTransaction, setDoc } f
 import { getFirestoreDb } from "@/lib/firebase/client";
 import { areBusinessValuesEqual } from "@/lib/firebase/noopWrite";
 import { measurePerfAsync, recordPerfEvent, recordPerfNoopWrite } from "@/lib/perfDebug";
-import { orderFromFirestore, paymentAgentFromFirestore, paymentAgentLedgerEntryFromFirestore, paymentAgentLedgerEntryToFirestore, paymentAgentToFirestore } from "@/lib/firebase/mappers";
+import { orderFromFirestore, orderToFirestore, paymentAgentFromFirestore, paymentAgentLedgerEntryFromFirestore, paymentAgentLedgerEntryToFirestore, paymentAgentToFirestore } from "@/lib/firebase/mappers";
 import { ordersPath, paymentAgentLedgerPath, paymentAgentsPath, paymentAgentPath } from "@/lib/firebase/paths";
 import type { PaymentAgentsService } from "@/services/contracts";
 import type { Order, PaymentAgent, PaymentAgentLedgerEntry, PaymentAgentOrderSplit, PaymentAgentSplitSettlementSnapshot } from "@/lib/types";
@@ -10,11 +10,14 @@ import { buildOrderSplitSettlementEntry, buildOrderSplitSettlementReversalEntry 
 import { isOrderEligibleForCreditSettlement } from "@/services/settlement/orderCreditEligibility";
 import {
   getOrderPaymentAgentLedgerEntryIds,
+  getOrderPaymentAgentSplitSettlementEntryId,
   getOrderPaymentAgentSplits,
   getPaymentAgentSplitAgentId,
+  hasRealPaymentAgentSplits,
+  isVirtualLegacyPaymentAgentSplit,
   validatePaymentAgentSplits,
 } from "@/services/settlement/paymentAgentSplits";
-import { computePaymentAgentDirectFinance } from "@/services/paymentAgentDirectFinanceSync";
+import { calculatePaymentAgentLiveFinance } from "@/services/paymentAgentDirectFinanceSync";
 
 const BUSINESS_ID = process.env.NEXT_PUBLIC_FIREBASE_BUSINESS_ID ?? "mahant";
 const makeId = () => (globalThis.crypto?.randomUUID?.() ?? `pa-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
@@ -77,7 +80,17 @@ const computeAgentFinanceFromRawFacts = (
   orders: Order[],
   ledger: PaymentAgentLedgerEntry[],
 ): AgentFinanceComputation => {
-  return computePaymentAgentDirectFinance(agent, orders, ledger);
+  const liveFinance = calculatePaymentAgentLiveFinance(agent, orders, ledger);
+  return {
+    totalOrdersPaid: liveFinance.ordersCount,
+    creditBalance: liveFinance.available,
+    totalOrderAmount: liveFinance.assigned,
+    totalPaidAmount: liveFinance.manualPayments,
+    totalPayableAmount: liveFinance.pending,
+    currentDuePayable: liveFinance.pending,
+    totalUsedAmount: liveFinance.creditUsed,
+    currentPayable: liveFinance.pending,
+  };
 };
 
 const writeRecomputedAgentFinance = async (
@@ -121,9 +134,394 @@ const listSavedOrdersFromDb = async (): Promise<Order[]> => {
     .filter((order) => order.status === "saved");
 };
 
+const listLivePaymentAgentOrdersFromDb = async (): Promise<Order[]> => {
+  const db = requireDb();
+  const snap = await measurePerfAsync("firestore-read", "paymentAgents.listLivePaymentAgentOrdersFromDb", { path: ordersPath(BUSINESS_ID) }, () => getDocs(collection(db, ordersPath(BUSINESS_ID))));
+  return snap.docs
+    .map((d) => orderFromFirestore({ id: d.id, ...(d.data() as Record<string, unknown>) }))
+    .filter(isLiveRepairOrder);
+};
+
 const syncPaymentAgentFinanceFromDb = async (agentId: string): Promise<PaymentAgent> => {
-  const [orders, ledger] = await Promise.all([listSavedOrdersFromDb(), paymentAgentsFirebaseService.listPaymentAgentLedger()]);
+  const [orders, ledger] = await Promise.all([listLivePaymentAgentOrdersFromDb(), paymentAgentsFirebaseService.listPaymentAgentLedger()]);
   return writeRecomputedAgentFinance(agentId, orders, ledger);
+};
+
+const isLiveRepairOrder = (order: Order) => {
+  const status = (order.status || "").trim().toLowerCase();
+  return status === "saved" || status === "";
+};
+
+const getSettlementRepairKey = (entry: Pick<PaymentAgentLedgerEntry, "sourceOrderId" | "sourcePaymentAgentSplitId" | "agentId">) =>
+  `${entry.sourceOrderId || ""}:${entry.sourcePaymentAgentSplitId || ""}:${entry.agentId || ""}`;
+
+const isEquivalentActiveSettlementEntry = (
+  existing: PaymentAgentLedgerEntry | null | undefined,
+  desired: PaymentAgentLedgerEntry,
+) =>
+  Boolean(
+    existing
+    && isActiveSettlementEntry(existing)
+    && existing.id === desired.id
+    && existing.agentId === desired.agentId
+    && existing.sourceOrderId === desired.sourceOrderId
+    && existing.sourcePaymentAgentSplitId === desired.sourcePaymentAgentSplitId
+    && existing.settlementHash === desired.settlementHash,
+  );
+
+const repairOrderSettlementEntriesFromSplits = async (
+  order: Order,
+  allLedger: PaymentAgentLedgerEntry[],
+): Promise<PaymentAgentRepairLog[]> => {
+  const db = requireDb();
+  const now = new Date().toISOString();
+  const splits = getOrderPaymentAgentSplits(order);
+  if (splits.length === 0) return [];
+  const validation = validatePaymentAgentSplits(order);
+  if (!validation.isValid) return [];
+
+  const desiredEntries = splits
+    .filter((split) => split.settlementSnapshot)
+    .map((split) => buildOrderSplitSettlementEntry(order, split));
+  if (desiredEntries.length === 0) return [];
+
+  const activeExistingEntries = allLedger.filter((entry) =>
+    entry.type === "order_settlement"
+    && isActiveSettlementEntry(entry)
+    && entry.sourceOrderId === order.id,
+  );
+  const activeExistingByRepairKey = new Map(
+    activeExistingEntries.map((entry) => [getSettlementRepairKey(entry), entry] as const),
+  );
+  const desiredByRepairKey = new Map(
+    desiredEntries.map((entry) => [getSettlementRepairKey(entry), entry] as const),
+  );
+
+  const staleOrMissingEntries = desiredEntries.filter((entry) => {
+    const existing = activeExistingByRepairKey.get(getSettlementRepairKey(entry));
+    return !isEquivalentActiveSettlementEntry(existing, entry);
+  });
+  const extraActiveEntries = activeExistingEntries.filter((entry) => {
+    const desired = desiredByRepairKey.get(getSettlementRepairKey(entry));
+    return !desired || !isEquivalentActiveSettlementEntry(entry, desired);
+  });
+
+  if (staleOrMissingEntries.length === 0 && extraActiveEntries.length === 0) {
+    return [];
+  }
+
+  for (const entry of extraActiveEntries) {
+    const reversal = buildOrderSplitSettlementReversalEntry(order, entry);
+    await measurePerfAsync(
+      "firestore-write",
+      "paymentAgents.repairOrderSettlementEntriesFromSplits.reversal",
+      { path: `${paymentAgentLedgerPath(BUSINESS_ID)}/${reversal.id}`, orderId: order.id, splitId: entry.sourcePaymentAgentSplitId || "legacy" },
+      () => setDoc(doc(db, paymentAgentLedgerPath(BUSINESS_ID), reversal.id), paymentAgentLedgerEntryToFirestore({ ...reversal, createdAt: now, updatedAt: now }), { merge: true }),
+    );
+    await measurePerfAsync(
+      "firestore-write",
+      "paymentAgents.repairOrderSettlementEntriesFromSplits.deactivateExisting",
+      { path: `${paymentAgentLedgerPath(BUSINESS_ID)}/${entry.id}`, orderId: order.id, splitId: entry.sourcePaymentAgentSplitId || "legacy" },
+      () => setDoc(doc(db, paymentAgentLedgerPath(BUSINESS_ID), entry.id), { active: false, isReversed: true, updatedAt: now }, { merge: true }),
+    );
+  }
+
+  for (const entry of staleOrMissingEntries) {
+    const existing = activeExistingByRepairKey.get(getSettlementRepairKey(entry)) ?? null;
+    await measurePerfAsync(
+      "firestore-write",
+      "paymentAgents.repairOrderSettlementEntriesFromSplits.settlement",
+      { path: `${paymentAgentLedgerPath(BUSINESS_ID)}/${entry.id}`, orderId: order.id, splitId: entry.sourcePaymentAgentSplitId || "legacy" },
+      () => setDoc(
+        doc(db, paymentAgentLedgerPath(BUSINESS_ID), entry.id),
+        paymentAgentLedgerEntryToFirestore({
+          ...entry,
+          createdAt: existing?.createdAt || entry.createdAt,
+          updatedAt: now,
+        }),
+        { merge: true },
+      ),
+    );
+  }
+
+  return [
+    ...staleOrMissingEntries.map((entry) => {
+      const existing = activeExistingByRepairKey.get(getSettlementRepairKey(entry)) ?? null;
+      return {
+        collection: "paymentAgentLedger" as const,
+        orderId: order.id,
+        orderNumber: order.number || order.orderNumber,
+        agentId: entry.agentId,
+        targetId: entry.id,
+        before: existing
+          ? {
+              id: existing.id,
+              amount: existing.amount,
+              creditUsed: existing.creditUsed,
+              remainingPayable: existing.remainingPayable,
+              active: existing.active,
+              isReversed: existing.isReversed,
+              settlementHash: existing.settlementHash,
+            }
+          : { missing: true },
+        after: {
+          id: entry.id,
+          amount: entry.amount,
+          creditUsed: entry.creditUsed,
+          remainingPayable: entry.remainingPayable,
+          active: true,
+          isReversed: false,
+          settlementHash: entry.settlementHash,
+        },
+      };
+    }),
+    ...extraActiveEntries.map((entry) => ({
+      collection: "paymentAgentLedger" as const,
+      orderId: order.id,
+      orderNumber: order.number || order.orderNumber,
+      agentId: entry.agentId,
+      targetId: entry.id,
+      before: {
+        id: entry.id,
+        amount: entry.amount,
+        creditUsed: entry.creditUsed,
+        remainingPayable: entry.remainingPayable,
+        active: entry.active,
+        isReversed: entry.isReversed,
+        settlementHash: entry.settlementHash,
+      },
+      after: {
+        active: false,
+        isReversed: true,
+        reversedBecauseMissingDesiredSplit: true,
+      },
+    })),
+  ];
+};
+
+const splitCreditUsedAmount = (split: PaymentAgentOrderSplit) =>
+  clamp(split.settlementSnapshot?.creditUsed ?? split.paidNow ?? split.settlementSnapshot?.paidNow ?? 0);
+
+const splitRemainingPayableAmount = (split: PaymentAgentOrderSplit) =>
+  clamp(split.settlementSnapshot?.remainingPayable ?? Math.max(0, clamp(split.assignedAmount) - splitCreditUsedAmount(split)));
+
+const groupPaymentAgentEventsByAgent = (order: Order) => {
+  const grouped = new Map<string, NonNullable<Order["paymentAgentPaymentEvents"]>>();
+  (order.paymentAgentPaymentEvents ?? [])
+    .filter((event) => clamp(event.amount) > 0)
+    .forEach((event) => {
+      const agentId = (event.paymentAgentId || event.paymentBy || event.paymentAgentSnapshot?.id || "").trim();
+      if (!agentId) return;
+      const current = grouped.get(agentId) ?? [];
+      current.push(event);
+      grouped.set(agentId, current);
+    });
+  return grouped;
+};
+
+type PaymentAgentRepairLog = {
+  collection: "orders" | "paymentAgentLedger" | "paymentAgents";
+  orderId?: string;
+  orderNumber?: string;
+  agentId?: string;
+  agentName?: string;
+  targetId?: string;
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
+};
+
+type MissingSettlementLedgerRepair = {
+  order: Order;
+  split: PaymentAgentOrderSplit;
+  expectedEntryId: string;
+  desiredEntry: PaymentAgentLedgerEntry;
+};
+
+const getMissingSettlementLedgerRepairs = (
+  orders: Order[],
+  ledger: PaymentAgentLedgerEntry[],
+): MissingSettlementLedgerRepair[] => {
+  const activeSettlementEntryIds = new Set(
+    ledger
+      .filter((entry) => entry.type === "order_settlement" && isActiveSettlementEntry(entry))
+      .map((entry) => entry.id),
+  );
+
+  return orders.flatMap((order) => {
+    if (!isLiveRepairOrder(order)) return [];
+    return getOrderPaymentAgentSplits(order).flatMap((split) => {
+      if (!split.settlementSnapshot) return [];
+      const assignedAmount = clamp(split.assignedAmount);
+      if (!(assignedAmount > 0) || !hasRealPaymentAgentSplits(order)) return [];
+      const expectedEntryId = getOrderPaymentAgentSplitSettlementEntryId(order.id, split.id, isVirtualLegacyPaymentAgentSplit(order, split));
+      if (activeSettlementEntryIds.has(expectedEntryId)) return [];
+      return [{
+        order,
+        split,
+        expectedEntryId,
+        desiredEntry: buildOrderSplitSettlementEntry(order, split),
+      }];
+    });
+  });
+};
+
+const getCacheMismatchAgents = (
+  agents: PaymentAgent[],
+  orders: Order[],
+  ledger: PaymentAgentLedgerEntry[],
+) => {
+  return agents.flatMap((agent) => {
+    const live = calculatePaymentAgentLiveFinance(agent, orders, ledger);
+    const stored = {
+      creditBalance: clamp(agent.creditBalance ?? 0),
+      currentDuePayable: clamp(agent.currentDuePayable ?? 0),
+      currentPayable: clamp(agent.currentPayable ?? agent.currentDuePayable ?? 0),
+      totalUsedAmount: clamp(agent.totalUsedAmount ?? 0),
+      totalOrdersPaid: clamp(agent.totalOrdersPaid ?? 0),
+      totalOrderAmount: clamp(agent.totalOrderAmount ?? 0),
+      totalPaidAmount: clamp(agent.totalPaidAmount ?? 0),
+      totalPayableAmount: clamp(agent.totalPayableAmount ?? 0),
+    };
+    const expected = {
+      creditBalance: live.available,
+      currentDuePayable: live.pending,
+      currentPayable: live.pending,
+      totalUsedAmount: live.creditUsed,
+      totalOrdersPaid: live.ordersCount,
+      totalOrderAmount: live.assigned,
+      totalPaidAmount: live.manualPayments,
+      totalPayableAmount: live.pending,
+    };
+    return JSON.stringify(stored) === JSON.stringify(expected)
+      ? []
+      : [{ agent, stored, expected }];
+  });
+};
+
+const rebuildOrderSplitsFromEvents = (order: Order) => {
+  const eventGroups = groupPaymentAgentEventsByAgent(order);
+  if (eventGroups.size === 0) {
+    return { order, changed: false, repairedSplitCount: 0, logs: [] as PaymentAgentRepairLog[] };
+  }
+
+  const originalSplits = getOrderPaymentAgentSplits(order);
+  const nextSplits: PaymentAgentOrderSplit[] = [];
+  const logs: PaymentAgentRepairLog[] = [];
+  let repairedSplitCount = 0;
+
+  for (const [agentId, events] of eventGroups.entries()) {
+    const matchingSplits = originalSplits.filter((split) => getPaymentAgentSplitAgentId(split) === agentId);
+    const existingAssigned = matchingSplits.reduce((sum, split) => sum + clamp(split.assignedAmount), 0);
+    const existingCreditUsed = matchingSplits.reduce((sum, split) => sum + splitCreditUsedAmount(split), 0);
+    const groupedEventTotal = events.reduce((sum, event) => sum + clamp(event.amount), 0);
+
+    if (groupedEventTotal === existingCreditUsed) {
+      nextSplits.push(...matchingSplits);
+      continue;
+    }
+
+    const primarySplit = matchingSplits[0] ?? null;
+    const existingRemaining = matchingSplits.reduce((sum, split) => sum + splitRemainingPayableAmount(split), 0);
+    const hasValidAssignedShape = existingAssigned >= groupedEventTotal && existingAssigned === existingCreditUsed + existingRemaining;
+    const assignedAmount = hasValidAssignedShape ? existingAssigned : groupedEventTotal;
+    const creditUsed = Math.min(groupedEventTotal, assignedAmount);
+    const remainingPayable = Math.max(0, assignedAmount - creditUsed);
+    const firstEvent = events[0]!;
+    const replacementSplit: PaymentAgentOrderSplit = {
+      id: primarySplit?.id || firstEvent.id,
+      paymentAgentId: agentId,
+      paymentBy: agentId,
+      paymentAgentName: firstEvent.paymentAgentName || primarySplit?.paymentAgentName || firstEvent.paymentAgentSnapshot?.name || primarySplit?.paymentAgentSnapshot?.name || "",
+      paymentAgentSnapshot: firstEvent.paymentAgentSnapshot || primarySplit?.paymentAgentSnapshot,
+      assignedAmount,
+      paidNow: creditUsed,
+      note: events.map((event) => event.note?.trim()).filter(Boolean).join(" | ") || primarySplit?.note,
+      settlementSnapshot: {
+        orderPortionTotal: assignedAmount,
+        existingCredit: clamp(primarySplit?.settlementSnapshot?.existingCredit),
+        creditUsed,
+        payableAfterCredit: remainingPayable,
+        remainingPayable,
+        newCreditCreated: clamp(primarySplit?.settlementSnapshot?.newCreditCreated),
+        resultingCreditBalance: Math.max(0, clamp(primarySplit?.settlementSnapshot?.existingCredit) - creditUsed),
+        paidNow: creditUsed,
+        status: remainingPayable > 0 ? "partial" : creditUsed > 0 ? "paid" : "unpaid",
+        createdAt: primarySplit?.settlementSnapshot?.createdAt || firstEvent.createdAt || order.updatedAt || order.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      createdAt: primarySplit?.createdAt || firstEvent.createdAt || order.createdAt,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const beforeSummary = {
+      splitIds: matchingSplits.map((split) => split.id),
+      assignedAmount: existingAssigned,
+      creditUsed: existingCreditUsed,
+      remainingPayable: existingRemaining,
+      eventTotal: groupedEventTotal,
+    };
+    const afterSummary = {
+      splitId: replacementSplit.id,
+      assignedAmount: replacementSplit.assignedAmount,
+      creditUsed,
+      remainingPayable,
+      eventTotal: groupedEventTotal,
+    };
+
+    nextSplits.push(replacementSplit);
+
+    repairedSplitCount += 1;
+    logs.push({
+      collection: "orders",
+      orderId: order.id,
+      orderNumber: order.number || order.orderNumber,
+      agentId,
+      agentName: replacementSplit.paymentAgentName || replacementSplit.paymentAgentSnapshot?.name || agentId,
+      targetId: replacementSplit.id,
+      before: beforeSummary,
+      after: afterSummary,
+    });
+  }
+
+  const staleRemovedSplits = originalSplits.filter((split) => !eventGroups.has(getPaymentAgentSplitAgentId(split)));
+  if (staleRemovedSplits.length > 0) {
+    repairedSplitCount += staleRemovedSplits.length;
+    staleRemovedSplits.forEach((split) => {
+      logs.push({
+        collection: "orders",
+        orderId: order.id,
+        orderNumber: order.number || order.orderNumber,
+        agentId: getPaymentAgentSplitAgentId(split),
+        agentName: split.paymentAgentName || split.paymentAgentSnapshot?.name || getPaymentAgentSplitAgentId(split),
+        targetId: split.id,
+        before: {
+          splitId: split.id,
+          assignedAmount: clamp(split.assignedAmount),
+          creditUsed: splitCreditUsedAmount(split),
+          remainingPayable: splitRemainingPayableAmount(split),
+          removedBecauseNoMatchingEvent: true,
+        },
+        after: {
+          removed: true,
+        },
+      });
+    });
+  }
+
+  if (repairedSplitCount === 0) {
+    return { order, changed: false, repairedSplitCount: 0, logs };
+  }
+
+  return {
+    order: {
+      ...order,
+      paymentAgentSplits: nextSplits,
+      updatedAt: new Date().toISOString(),
+    },
+    changed: true,
+    repairedSplitCount,
+    logs,
+  };
 };
 
 const buildOpeningCreditEntry = (agent: PaymentAgent, amount: number, now: string): PaymentAgentLedgerEntry => ({
@@ -441,6 +839,145 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
       paymentAgentsRecalculated: recalculatedAgents.length,
     };
   },
+  async applyTestingPaymentAgentRepair() {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("Testing payment-agent repair apply is disabled in production.");
+    }
+
+    const db = requireDb();
+    const writeLogs: PaymentAgentRepairLog[] = [];
+    let repairedOrders = 0;
+    let repairedSplits = 0;
+    let repairedLedgerRows = 0;
+
+    const initialOrders = await listLivePaymentAgentOrdersFromDb();
+    for (const order of initialOrders) {
+      const splitRepair = rebuildOrderSplitsFromEvents(order);
+      if (!splitRepair.changed) continue;
+      await measurePerfAsync(
+        "firestore-write",
+        "paymentAgents.applyTestingPaymentAgentRepair.order",
+        { path: `${ordersPath(BUSINESS_ID)}/${order.id}`, orderId: order.id },
+        () => setDoc(doc(db, ordersPath(BUSINESS_ID), order.id), orderToFirestore(splitRepair.order), { merge: true }),
+      );
+      repairedOrders += 1;
+      repairedSplits += splitRepair.repairedSplitCount;
+      writeLogs.push(...splitRepair.logs);
+      splitRepair.logs.forEach((log) => {
+        console.info("[PaymentAgent Repair Apply]", log);
+      });
+    }
+
+    const ordersAfterSplitRepair = await listLivePaymentAgentOrdersFromDb();
+    const ledgerAfterSplitRepair = await paymentAgentsFirebaseService.listPaymentAgentLedger();
+    const missingLedgerRepairs = getMissingSettlementLedgerRepairs(ordersAfterSplitRepair, ledgerAfterSplitRepair);
+
+    for (const repair of missingLedgerRepairs) {
+      const now = new Date().toISOString();
+      await measurePerfAsync(
+        "firestore-write",
+        "paymentAgents.applyTestingPaymentAgentRepair.ledger",
+        { path: `${paymentAgentLedgerPath(BUSINESS_ID)}/${repair.expectedEntryId}`, orderId: repair.order.id, splitId: repair.split.id },
+        () => setDoc(
+          doc(db, paymentAgentLedgerPath(BUSINESS_ID), repair.expectedEntryId),
+          paymentAgentLedgerEntryToFirestore({
+            ...repair.desiredEntry,
+            id: repair.expectedEntryId,
+            active: true,
+            isReversed: false,
+            createdAt: repair.desiredEntry.createdAt || now,
+            updatedAt: now,
+          }),
+          { merge: true },
+        ),
+      );
+      repairedLedgerRows += 1;
+      const log: PaymentAgentRepairLog = {
+        collection: "paymentAgentLedger",
+        orderId: repair.order.id,
+        orderNumber: repair.order.number || repair.order.orderNumber,
+        agentId: repair.desiredEntry.agentId,
+        targetId: repair.expectedEntryId,
+        before: { missing: true },
+        after: {
+          agentId: repair.desiredEntry.agentId,
+          sourceOrderId: repair.desiredEntry.sourceOrderId,
+          sourceOrderNumber: repair.desiredEntry.sourceOrderNumber,
+          sourcePaymentAgentSplitId: repair.desiredEntry.sourcePaymentAgentSplitId,
+          amount: repair.desiredEntry.amount,
+          creditUsed: repair.desiredEntry.creditUsed,
+          remainingPayable: repair.desiredEntry.remainingPayable,
+          active: true,
+          isReversed: false,
+        },
+      };
+      writeLogs.push(log);
+      console.info("[PaymentAgent Repair Apply]", log);
+    }
+
+    const refreshedOrders = await listLivePaymentAgentOrdersFromDb();
+    const finalLedger = await paymentAgentsFirebaseService.listPaymentAgentLedger();
+    for (const order of refreshedOrders) {
+      const ledgerRepairLogs = await repairOrderSettlementEntriesFromSplits(order, finalLedger);
+      if (ledgerRepairLogs.length === 0) continue;
+      repairedLedgerRows += ledgerRepairLogs.length;
+      writeLogs.push(...ledgerRepairLogs);
+      ledgerRepairLogs.forEach((log) => {
+        console.info("[PaymentAgent Repair Apply]", log);
+      });
+    }
+
+    const [finalOrders, finalLedgerAfterRepair, finalAgents] = await Promise.all([
+      listLivePaymentAgentOrdersFromDb(),
+      paymentAgentsFirebaseService.listPaymentAgentLedger(),
+      paymentAgentsFirebaseService.listPaymentAgents(),
+    ]);
+
+    const cacheMismatchAgents = getCacheMismatchAgents(finalAgents, finalOrders, finalLedgerAfterRepair);
+    let recomputedAgents = 0;
+    for (const { agent, stored, expected } of cacheMismatchAgents) {
+      await measurePerfAsync(
+        "firestore-write",
+        "paymentAgents.applyTestingPaymentAgentRepair.cache",
+        { path: paymentAgentPath(BUSINESS_ID, agent.id), agentId: agent.id },
+        () => setDoc(
+          doc(db, paymentAgentPath(BUSINESS_ID, agent.id)),
+          paymentAgentToFirestore({
+            ...agent,
+            creditBalance: expected.creditBalance,
+            currentDuePayable: expected.currentDuePayable,
+            currentPayable: expected.currentPayable,
+            totalUsedAmount: expected.totalUsedAmount,
+            totalOrdersPaid: expected.totalOrdersPaid,
+            totalOrderAmount: expected.totalOrderAmount,
+            totalPaidAmount: expected.totalPaidAmount,
+            totalPayableAmount: expected.totalPayableAmount,
+            updatedAt: new Date().toISOString(),
+          }),
+          { merge: true },
+        ),
+      );
+      recomputedAgents += 1;
+      const log: PaymentAgentRepairLog = {
+        collection: "paymentAgents",
+        agentId: agent.id,
+        agentName: agent.name,
+        targetId: agent.id,
+        before: stored,
+        after: expected,
+      };
+      writeLogs.push(log);
+      console.info("[PaymentAgent Repair Apply]", log);
+    }
+
+    return {
+      repairedOrders,
+      repairedSplits,
+      repairedLedgerRows,
+      recomputedAgents,
+      logs: writeLogs,
+    };
+  },
   async deletePaymentAgent(id: string) {
     const existing = await paymentAgentsFirebaseService.getPaymentAgentById(id);
     if (!existing) throw new Error("Payment agent not found.");
@@ -556,7 +1093,7 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
         tx.set(doc(db, paymentAgentPath(BUSINESS_ID, agentId)), paymentAgentToFirestore(updatedAgent), { merge: true });
       }
     });
-    const [orders, ledger] = await Promise.all([listSavedOrdersFromDb(), paymentAgentsFirebaseService.listPaymentAgentLedger()]);
+    const [orders, ledger] = await Promise.all([listLivePaymentAgentOrdersFromDb(), paymentAgentsFirebaseService.listPaymentAgentLedger()]);
     await Promise.all(Array.from(affectedAgentIds).map((agentId) => writeRecomputedAgentFinance(agentId, orders, ledger)));
   },
   async reverseOrderSettlement(order) {
@@ -617,7 +1154,7 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
         tx.set(doc(db, paymentAgentPath(BUSINESS_ID, agentId)), paymentAgentToFirestore(updated), { merge: true });
       }
     });
-    const [orders, ledger] = await Promise.all([listSavedOrdersFromDb(), paymentAgentsFirebaseService.listPaymentAgentLedger()]);
+    const [orders, ledger] = await Promise.all([listLivePaymentAgentOrdersFromDb(), paymentAgentsFirebaseService.listPaymentAgentLedger()]);
     await Promise.all(Array.from(affectedAgentIds).map((agentId) => writeRecomputedAgentFinance(agentId, orders, ledger)));
   },
 };

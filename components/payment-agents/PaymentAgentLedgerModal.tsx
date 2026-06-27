@@ -5,23 +5,16 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { formatAmount } from "@/lib/data";
 import { formatIndianDate } from "@/lib/dateFormat";
-import { orderTotal, type Customer, type Order, type PaymentAgentLedgerEntry } from "@/lib/types";
+import type { PaymentAgentLedgerEntry } from "@/lib/types";
 import { CalendarDays, Download, Plus, Trash2, Wallet, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { TablePagination } from "@/components/table/TablePagination";
-import { getLineCustomerDisplay } from "@/services/customers/customerResolution";
-import {
-  buildPaymentAgentPaymentRows,
-  buildPaymentAgentTransactionRows,
-  type PaymentAgentAccountingSummary,
-} from "@/services/settlement/paymentAgentAccounting";
+import { type PaymentAgentAccountingSummary } from "@/services/settlement/paymentAgentAccounting";
 
 type Props = {
   open: boolean;
   summary: PaymentAgentAccountingSummary | null;
   entries: PaymentAgentLedgerEntry[];
-  orders: Order[];
-  customers: Customer[];
   error?: string | null;
   onClose: () => void;
   onExport?: () => void;
@@ -34,13 +27,7 @@ const formatDateLabel = (value?: string) => {
   return formatIndianDate(value);
 };
 
-const sortableTime = (value?: string) => {
-  if (!value) return 0;
-  const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? 0 : parsed;
-};
-
-export function PaymentAgentLedgerModal({ open, summary, entries, orders, customers, error, onClose, onExport, onAddPayment, onDeletePayment }: Props) {
+export function PaymentAgentLedgerModal({ open, summary, error, onClose, onExport, onAddPayment, onDeletePayment }: Props) {
   const PAGE_SIZE = 100;
   const [addPaymentOpen, setAddPaymentOpen] = useState(false);
   const [transactionsPage, setTransactionsPage] = useState(1);
@@ -56,62 +43,9 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
   const [deletingPaymentId, setDeletingPaymentId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const transactionRows = useMemo(
-    () => (summary ? buildPaymentAgentTransactionRows(summary) : []),
-    [summary],
-  );
-  const paymentRows = useMemo(
-    () => (summary ? buildPaymentAgentPaymentRows(summary) : []),
-    [summary],
-  );
-  const orderRows = useMemo(() => {
-    if (!summary) return [];
-
-    const settlementsByOrderId = new Map<string, PaymentAgentLedgerEntry[]>();
-    summary.activeSettlementEntries.forEach((entry) => {
-      const orderId = entry.sourceOrderId || "";
-      if (!orderId) return;
-      const existing = settlementsByOrderId.get(orderId) ?? [];
-      existing.push(entry);
-      settlementsByOrderId.set(orderId, existing);
-    });
-
-    return summary.matchedOrders
-      .map((order) => {
-        const lines = order.lines || [];
-        const firstLine = lines[0];
-        const firstProduct =
-          firstLine?.marka?.trim()
-          || firstLine?.productSnapshot?.name?.trim()
-          || firstLine?.details?.trim()
-          || [firstLine?.detail1, firstLine?.detail2, firstLine?.detail3].filter(Boolean).join(" ").trim()
-          || "-";
-        const products = lines.length > 1 ? `${firstProduct} + ${lines.length - 1} more` : firstProduct;
-        const settlements = settlementsByOrderId.get(order.id) ?? [];
-
-        return {
-          id: order.id,
-          orderDate: order.date || order.createdAt || order.updatedAt || "",
-          orderNumber: order.number || order.orderNumber || "-",
-          customer: Array.from(new Set(
-            lines
-              .map((line) => getLineCustomerDisplay(line, customers))
-              .filter(Boolean),
-          )).join(", ") || "-",
-          products,
-          orderAmount: Math.max(0, Number(orderTotal(order)) || 0),
-          agentPaid: settlements.reduce(
-            (sum, entry) => sum + Math.max(0, Number(entry.creditUsed) || 0) + Math.max(0, Number(entry.paidNow) || 0),
-            0,
-          ),
-          remaining: settlements.reduce(
-            (sum, entry) => sum + Math.max(0, Number(entry.remainingPayable) || 0),
-            0,
-          ),
-        };
-      })
-      .sort((left, right) => sortableTime(right.orderDate) - sortableTime(left.orderDate) || right.orderNumber.localeCompare(left.orderNumber, undefined, { numeric: true, sensitivity: "base" }));
-  }, [customers, summary]);
+  const transactionRows = summary?.transactionRows ?? [];
+  const paymentRows = summary?.paymentRows ?? [];
+  const orderRows = summary?.orderRows ?? [];
   const pagedTransactionRows = useMemo(
     () => transactionRows.slice((transactionsPage - 1) * PAGE_SIZE, transactionsPage * PAGE_SIZE),
     [transactionRows, transactionsPage],
@@ -336,14 +270,14 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
             </section>
           </div>
 
-          <section className="mt-3 min-w-0 min-h-[170px] self-start overflow-hidden rounded-2xl border border-border bg-bg-card">
+          <section className="mt-3 min-w-0 overflow-hidden rounded-2xl border border-border bg-bg-card">
             <div className="border-b border-border px-4 py-3">
               <div className="text-[16px] font-semibold leading-tight text-fg">Orders</div>
             </div>
             {orderRows.length === 0 ? (
-              <div className="px-4 py-8 text-center text-[12px] text-fg-subtle">No orders linked to this payment agent.</div>
+              <div className="px-4 py-8 text-center text-[12px] text-fg-subtle">No linked orders found for this payment agent.</div>
             ) : (
-              <div className="max-h-[34vh] overflow-y-auto overflow-x-hidden">
+              <div className="max-h-[36vh] overflow-y-auto overflow-x-hidden">
                 <table className="w-full text-[12px]">
                   <thead className="sticky top-0 z-30 bg-bg-card/95 shadow-[0_1px_0_rgba(15,23,42,0.06)] backdrop-blur">
                     <tr className="border-b border-border text-[10px] uppercase tracking-[0.01em] text-fg-muted">
@@ -359,13 +293,13 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
                   <tbody>
                     {pagedOrderRows.map((row) => (
                       <tr key={row.id} className="border-b border-border transition-colors last:border-b-0 hover:bg-bg-subtle/40">
-                        <td className="px-3 py-2.5">{formatDateLabel(row.orderDate)}</td>
-                        <td className="px-3 py-2.5 font-semibold">{row.orderNumber}</td>
-                        <td className="px-3 py-2.5">{row.customer}</td>
-                        <td className="px-3 py-2.5 text-fg-subtle">{row.products}</td>
-                        <td className="px-3 py-2.5 text-right font-semibold tabular-nums">{formatAmount(row.orderAmount)}</td>
-                        <td className="px-3 py-2.5 text-right font-semibold tabular-nums">{formatAmount(row.agentPaid)}</td>
-                        <td className="px-3 py-2.5 text-right font-semibold tabular-nums">{formatAmount(row.remaining)}</td>
+                        <td className="px-3 py-2.5 leading-tight">{formatDateLabel(row.orderDate)}</td>
+                        <td className="px-3 py-2.5 font-semibold leading-tight">{row.orderNumber}</td>
+                        <td className="px-3 py-2.5 leading-tight">{row.customer}</td>
+                        <td className="px-3 py-2.5 leading-tight text-fg-subtle">{row.products || "-"}</td>
+                        <td className="px-3 py-2.5 text-right font-semibold leading-tight tabular-nums text-fg">{formatAmount(row.orderAmount ?? 0)}</td>
+                        <td className="px-3 py-2.5 text-right font-semibold leading-tight tabular-nums text-fg">{formatAmount(row.agentPaid ?? 0)}</td>
+                        <td className="px-3 py-2.5 text-right font-semibold leading-tight tabular-nums text-fg">{formatAmount(row.remaining ?? 0)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -374,6 +308,7 @@ export function PaymentAgentLedgerModal({ open, summary, entries, orders, custom
             )}
             <TablePagination total={orderRows.length} currentPage={ordersPage} pageSize={PAGE_SIZE} onPageChange={setOrdersPage} label="orders" />
           </section>
+
           {error ? <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">{error}</div> : null}
           {actionError ? <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-700">{actionError}</div> : null}
         </div>

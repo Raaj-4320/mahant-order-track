@@ -5,13 +5,14 @@ import { X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
-import type { PaymentAgent, PaymentAgentOrderSplit } from "@/lib/types";
 import { formatAmount } from "@/lib/data";
-import { getPaymentAgentDirectFinance } from "@/services/paymentAgentFinance";
+import type { PaymentAgent, PaymentAgentOrderSplit, PaymentAgentPaymentEvent } from "@/lib/types";
 
 type Props = {
   splits: PaymentAgentOrderSplit[];
+  events: PaymentAgentPaymentEvent[];
   paymentAgents: PaymentAgent[];
+  availableCreditByAgentId?: Record<string, number>;
   onChange: (splits: PaymentAgentOrderSplit[]) => void;
   onAdd: () => void;
   onRemove: (splitId: string) => void;
@@ -30,6 +31,7 @@ type PickerRowProps = {
   index: number;
   totalSplits: number;
   paymentAgents: PaymentAgent[];
+  availableCreditByAgentId?: Record<string, number>;
   query: string;
   duplicateKeys: Set<string>;
   onQueryChange: (value: string) => void;
@@ -46,6 +48,7 @@ function PaymentAgentPickerRow({
   index,
   totalSplits,
   paymentAgents,
+  availableCreditByAgentId,
   query,
   duplicateKeys,
   onQueryChange,
@@ -66,6 +69,12 @@ function PaymentAgentPickerRow({
     .sort((left, right) => collator.compare(left.name, right.name))
     .slice(0, 4);
   const typedDuplicate = Boolean(normalizedQuery && duplicateKeys.has(normalizedQuery));
+  const selectedAgent =
+    paymentAgents.find((agent) => agent.id === split.paymentAgentId)
+    ?? paymentAgents.find((agent) => agent.id === split.paymentBy)
+    ?? paymentAgents.find((agent) => normalizeValue(agent.name) === normalizeValue(getSplitLabel(split)))
+    ?? null;
+  const availableCredit = selectedAgent ? Math.max(0, Number(availableCreditByAgentId?.[selectedAgent.id]) || 0) : 0;
 
   useEffect(() => {
     if (!open) return;
@@ -89,8 +98,8 @@ function PaymentAgentPickerRow({
   }, [open]);
 
   return (
-    <div className="flex w-[198px] shrink-0 items-center gap-1.5">
-      <div ref={anchorRef} className="relative min-w-0 flex-1">
+    <div className="w-[198px] shrink-0">
+      <div ref={anchorRef} className="relative min-w-0">
         <Input
           value={query}
           autoComplete="off"
@@ -144,7 +153,7 @@ function PaymentAgentPickerRow({
                         }}
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <span className="truncate">{getPaymentAgentDirectFinance(agent).creditLeft > 0 ? `${agent.name} - Credit: ${formatAmount(getPaymentAgentDirectFinance(agent).creditLeft)}` : agent.name}</span>
+                          <span className="truncate">{agent.name}</span>
                           {isUsed ? <span className="shrink-0 text-[10px] uppercase">Used</span> : null}
                         </div>
                       </button>
@@ -158,27 +167,34 @@ function PaymentAgentPickerRow({
             )
           : null}
       </div>
-      {totalSplits > 1 ? (
-        <button
-          type="button"
-          aria-label={`Remove payment agent ${index + 1}`}
-          title="Remove payment agent"
-          className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-border/60 bg-bg-card text-fg-subtle transition-colors hover:border-border hover:text-fg"
-          onMouseDown={(event) => {
-            event.preventDefault();
-            onRemove();
-          }}
-        >
-          <X size={12} />
-        </button>
-      ) : null}
+      <div className="mt-1 flex items-center justify-between gap-2 px-1">
+        <div className="min-w-0 truncate text-[11px] text-fg-subtle">
+          {selectedAgent ? `Credit left: ${formatAmount(availableCredit)}` : ""}
+        </div>
+        {totalSplits > 1 ? (
+          <button
+            type="button"
+            aria-label={`Remove payment agent ${index + 1}`}
+            title="Remove payment agent"
+            className="grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-border/60 bg-bg-card text-fg-subtle transition-colors hover:border-border hover:text-fg"
+            onMouseDown={(event) => {
+              event.preventDefault();
+              onRemove();
+            }}
+          >
+            <X size={12} />
+          </button>
+        ) : <span className="h-7 w-7 shrink-0" />}
+      </div>
     </div>
   );
 }
 
 export function PaymentAgentHeaderPicker({
   splits,
+  events: _events,
   paymentAgents,
+  availableCreditByAgentId,
   onChange,
   onAdd,
   onRemove,
@@ -227,22 +243,10 @@ export function PaymentAgentHeaderPicker({
     onChange(splits.map((split) => (split.id === splitId ? updater(split) : split)));
   };
 
-  const primarySplit = splits[0] ?? null;
-  const primaryAgent =
-    primarySplit
-      ? paymentAgents.find((agent) => agent.id === primarySplit.paymentAgentId)
-        ?? paymentAgents.find((agent) => agent.id === primarySplit.paymentBy)
-        ?? paymentAgents.find((agent) => normalizeValue(agent.name) === normalizeValue(getSplitLabel(primarySplit)))
-        ?? null
-      : null;
-
   return (
     <div className="min-w-0 space-y-1.5">
       <div className="flex items-center gap-3">
         <span className="shrink-0 text-[14px] font-medium tracking-[0.01em] text-fg-muted">Payment By</span>
-        <span className="min-w-0 truncate text-[14px] font-medium tracking-[0.01em] text-fg-subtle">
-          {primaryAgent ? `Credit left: ${formatAmount(getPaymentAgentDirectFinance(primaryAgent).creditLeft)}` : "Credit left: 0"}
-        </span>
       </div>
 
       <div className="overflow-x-auto overflow-y-visible pb-1">
@@ -258,6 +262,7 @@ export function PaymentAgentHeaderPicker({
                   index={index}
                   totalSplits={splits.length}
                   paymentAgents={paymentAgents}
+                  availableCreditByAgentId={availableCreditByAgentId}
                   query={query}
                   duplicateKeys={duplicateKeys}
                   open={openRowId === split.id}

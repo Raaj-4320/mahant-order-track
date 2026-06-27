@@ -38,6 +38,22 @@ export interface PaymentAgentsService {
     settlementEntriesCreatedOrUpdated: number;
     paymentAgentsRecalculated: number;
   }>;
+  applyTestingPaymentAgentRepair?(): Promise<{
+    repairedOrders: number;
+    repairedSplits: number;
+    repairedLedgerRows: number;
+    recomputedAgents: number;
+    logs: Array<{
+      collection: "orders" | "paymentAgentLedger" | "paymentAgents";
+      orderId?: string;
+      orderNumber?: string;
+      agentId?: string;
+      agentName?: string;
+      targetId?: string;
+      before: Record<string, unknown>;
+      after: Record<string, unknown>;
+    }>;
+  }>;
   recordPaymentToAgent(agentId: string, payment: { amount: number; paymentDate: string; note?: string; paymentMethod?: string }): Promise<PaymentAgent>;
   deletePaymentAgentLedgerEntry?(entryId: string): Promise<PaymentAgent>;
   listPaymentAgentLedger(agentId?: string): Promise<PaymentAgentLedgerEntry[]>;

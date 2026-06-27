@@ -503,14 +503,6 @@ export const orderToFirestore = (entity: Order): Record<string, unknown> => sani
       }
     : {}),
   wechatId: entity.wechatId ?? "",
-  paidToPaymentAgentNow: entity.paidToPaymentAgentNow ?? 0,
-  paymentAgentSettlementSnapshot: entity.paymentAgentSettlementSnapshot
-    ? {
-        ...entity.paymentAgentSettlementSnapshot,
-        paymentAgentId: entity.paymentAgentSettlementSnapshot.paymentAgentId ?? "",
-        paymentAgentName: entity.paymentAgentSettlementSnapshot.paymentAgentName ?? "",
-      }
-    : null,
   lines: entity.lines.map((line) => ({
     ...withDerivedLegacyDetails(line),
     supplierId: line.supplierId ?? "",
