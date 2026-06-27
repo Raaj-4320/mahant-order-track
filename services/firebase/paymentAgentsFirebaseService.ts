@@ -840,7 +840,7 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
     };
   },
   async applyTestingPaymentAgentRepair() {
-    if (process.env.NODE_ENV === "production") {
+    if (process.env.NEXT_PUBLIC_ENABLE_PAYMENT_AGENT_REPAIR_APPLY !== "true") {
       throw new Error("Testing payment-agent repair apply is disabled in production.");
     }
 

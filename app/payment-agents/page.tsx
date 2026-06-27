@@ -80,7 +80,7 @@ const clampCount = (value: number | undefined | null) => Math.max(0, Number(valu
 
 export default function PaymentAgentsPage() {
   const PAGE_SIZE = 100;
-  const testingRepairApplyEnabled = process.env.NODE_ENV !== "production";
+  const testingRepairApplyEnabled = process.env.NEXT_PUBLIC_ENABLE_PAYMENT_AGENT_REPAIR_APPLY === "true";
   const { data: agents, isLoading: isPaymentAgentsLoading, upsertPaymentAgent, deletePaymentAgent, recordPaymentToAgent, deletePaymentAgentLedgerEntry, listPaymentAgentLedger, applyTestingPaymentAgentRepair, reload: reloadPaymentAgents } = usePaymentAgents();
   const { data: customers } = useCustomers();
   const { orders, pushToast } = useStore();
