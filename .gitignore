@@ -11,3 +11,8 @@ out/
 service-account/
 exports/
 *.firebase-adminsdk*.json
+
+# Local export/admin files
+scripts/export-firestore-admin.js
+service-account/
+exports/
