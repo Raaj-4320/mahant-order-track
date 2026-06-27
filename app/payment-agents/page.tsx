@@ -1030,10 +1030,10 @@ export default function PaymentAgentsPage() {
               <div className="flex items-center justify-between border-b border-border px-4 py-3">
                 <div>
                   <div className="text-lg font-semibold">Repair Payment Agent Data</div>
-                  <div className="text-[12px] text-fg-subtle">{testingRepairApplyEnabled ? "Dry-run report with optional testing-only Apply." : "Dry-run only. No writes are applied."}</div>
+                  <div className="text-[12px] text-fg-subtle">{testingRepairApplyEnabled === true ? "Dry-run report with optional Apply." : "Dry-run only. No writes are applied."}</div>
                 </div>
                 <div className="flex items-center gap-2">
-                  {testingRepairApplyEnabled ? (
+                  {testingRepairApplyEnabled === true ? (
                     <Button variant="primary" disabled={repairApplyBusy || repairReportBusy} onClick={() => void applyRepairReport()}>
                       {repairApplyBusy ? "Applying..." : "Apply Repair"}
                     </Button>
