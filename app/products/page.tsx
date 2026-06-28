@@ -84,6 +84,7 @@ export default function ProductsPage() {
   const [pendingDeleteProduct, setPendingDeleteProduct] = useState<Product | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const productSaveInFlightRef = useRef(false);
 
   const categories = Array.from(new Set(rows.map((r) => r.category)));
   const filtered = useMemo(
@@ -238,15 +239,19 @@ export default function ProductsPage() {
   }, [isProductsLoading, error, rows.length, filtered.length, status, kpiScope, active, inactive, displayedRows.length, displayedCatalogValue, activeCatalogValue]);
 
   const openAdd = () => {
+    productSaveInFlightRef.current = false;
     setForm(emptyForm);
     setFile(null);
+    setSaving(false);
     setOpen(true);
   };
 
   const save = async () => {
+    if (productSaveInFlightRef.current) return;
     if (!form.name.trim()) return pushToast({ tone: "danger", text: "Product name is required." });
     if (!(form.productCode || form.sku).trim()) return pushToast({ tone: "danger", text: "Product code / SKU is required." });
     if (!form.status) return pushToast({ tone: "danger", text: "Status is required." });
+    productSaveInFlightRef.current = true;
     setSaving(true);
     try {
       let photo = form.photo;
@@ -281,11 +286,19 @@ export default function ProductsPage() {
       pushToast({ tone: "success", text: form.id ? "Product updated." : "Product added." });
       setOpen(false);
     } catch (e) {
+      productSaveInFlightRef.current = false;
       pushToast({ tone: "danger", text: e instanceof Error ? e.message : "Failed to save product." });
     } finally {
+      productSaveInFlightRef.current = false;
       setSaving(false);
     }
   };
+
+  useEffect(() => {
+    if (open) return;
+    productSaveInFlightRef.current = false;
+    setSaving(false);
+  }, [open]);
 
   const removeProduct = async () => {
     if (!pendingDeleteProduct || deleteBusy) return;

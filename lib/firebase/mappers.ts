@@ -437,7 +437,12 @@ export const orderFromFirestore = (doc: unknown): Order => {
           totalCtns: asNum(line.totalCtns) ?? 0,
           pcsPerCtn: asNum(line.pcsPerCtn) ?? 0,
           rmbPerPcs: asNum(line.rmbPerPcs) ?? 0,
+          sortOrder: asNum(line.sortOrder) ?? undefined,
         });
+      }).sort((left, right) => {
+        const leftOrder = typeof left.sortOrder === "number" ? left.sortOrder : Number.MAX_SAFE_INTEGER;
+        const rightOrder = typeof right.sortOrder === "number" ? right.sortOrder : Number.MAX_SAFE_INTEGER;
+        return leftOrder - rightOrder;
       })
     : [];
   return { ...(o as any), id: asStr(o.id), number: asStr(o.number) || asStr(o.orderNumber), orderNumber: asStr(o.orderNumber) || asStr(o.number), orderPrefix: asStr(o.orderPrefix) || undefined, orderSequenceNumber: asNum(o.orderSequenceNumber) ?? undefined, date: asStr(o.date), loadingDate: asStr(o.loadingDate) || undefined, wechatId: asStr(o.wechatId), status: (asStr(o.status) as Order["status"]) || "draft", paymentStatus: (asStr(o.paymentStatus) as Order["paymentStatus"]) || "pending", paymentBy: asStr(o.paymentBy), paymentAgentId: asStr(o.paymentAgentId), paymentAgentSplits: paymentAgentSplitsFromUnknown(o.paymentAgentSplits), paymentAgentPaymentEvents: paymentAgentPaymentEventsFromUnknown(o.paymentAgentPaymentEvents), shippingPrice: asNum(o.shippingPrice) ?? 0, paidToPaymentAgentNow: asNum(o.paidToPaymentAgentNow) ?? 0, lines: lines as any, createdAt: asStr(o.createdAt, now), updatedAt: asStr(o.updatedAt, now), savedAt: asStr(o.savedAt) || undefined, draftAutosavedAt: asStr(o.draftAutosavedAt) || undefined, lastEditedAt: asStr(o.lastEditedAt) || undefined, lifecycle: lifecycleFromUnknown(o.lifecycle, { type: "order", sourceType: "manual" }), dependencyMap: orderDependencyMapFromUnknown(o.dependencyMap) } as Order;
@@ -503,7 +508,7 @@ export const orderToFirestore = (entity: Order): Record<string, unknown> => sani
       }
     : {}),
   wechatId: entity.wechatId ?? "",
-  lines: entity.lines.map((line) => ({
+  lines: entity.lines.map((line, index) => ({
     ...withDerivedLegacyDetails(line),
     supplierId: line.supplierId ?? "",
     supplierName: line.supplierName ?? null,
@@ -516,6 +521,7 @@ export const orderToFirestore = (entity: Order): Record<string, unknown> => sani
     productPhotoUrl: line.productPhotoUrl ?? null,
     photoUrl: line.photoUrl ?? null,
     notes: line.notes ?? null,
+    sortOrder: line.sortOrder ?? index,
   })),
   savedAt: entity.savedAt ?? null,
   draftAutosavedAt: (entity as any).draftAutosavedAt ?? null,

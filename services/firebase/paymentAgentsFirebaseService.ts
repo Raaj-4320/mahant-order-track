@@ -614,9 +614,16 @@ export const paymentAgentsFirebaseService: PaymentAgentsService = {
     const db = requireDb();
     if (!(Number(payment.amount) > 0)) throw new Error("Payment amount must be greater than 0.");
     const agentRef = doc(db, paymentAgentPath(BUSINESS_ID, agentId));
-    const ledgerRef = doc(collection(db, paymentAgentLedgerPath(BUSINESS_ID)));
+    const idempotencyKey = typeof payment.idempotencyKey === "string" ? payment.idempotencyKey.trim() : "";
+    const ledgerRef = idempotencyKey
+      ? doc(db, paymentAgentLedgerPath(BUSINESS_ID), `agent-payment-${agentId}-${idempotencyKey}`)
+      : doc(collection(db, paymentAgentLedgerPath(BUSINESS_ID)));
     const now = new Date().toISOString();
     await runTransaction(db, async (tx) => {
+      if (idempotencyKey) {
+        const existingLedgerSnap = await tx.get(ledgerRef);
+        if (existingLedgerSnap.exists()) return;
+      }
       const snap = await tx.get(agentRef);
       if (!snap.exists()) throw new Error("Payment agent not found.");
       const current = paymentAgentFromFirestore({ id: snap.id, ...(snap.data() as Record<string, unknown>) });

@@ -54,7 +54,7 @@ export interface PaymentAgentsService {
       after: Record<string, unknown>;
     }>;
   }>;
-  recordPaymentToAgent(agentId: string, payment: { amount: number; paymentDate: string; note?: string; paymentMethod?: string }): Promise<PaymentAgent>;
+  recordPaymentToAgent(agentId: string, payment: { amount: number; paymentDate: string; note?: string; paymentMethod?: string; idempotencyKey?: string }): Promise<PaymentAgent>;
   deletePaymentAgentLedgerEntry?(entryId: string): Promise<PaymentAgent>;
   listPaymentAgentLedger(agentId?: string): Promise<PaymentAgentLedgerEntry[]>;
   deletePaymentAgent?(id: string): Promise<void>;

@@ -69,6 +69,18 @@ type PaymentAgentRepairApplyResult = {
   }>;
 };
 
+type PaymentAgentForm = {
+  id: string;
+  name: string;
+  agentCode: string;
+  phone: string;
+  wechatId: string;
+  country: string;
+  openingCredit: string;
+  notes: string;
+  status: PaymentAgent["status"];
+};
+
 const clampPercent = (value: number) => Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
 const formatPercent = (value: number) => {
   const safe = clampPercent(value);
@@ -77,6 +89,7 @@ const formatPercent = (value: number) => {
 const canonicalComparisonDebugEnabled = process.env.NODE_ENV !== "production";
 const clampMoney = (value: number | undefined | null) => Math.max(0, Number.isFinite(Number(value)) ? Number(value) : 0);
 const clampCount = (value: number | undefined | null) => Math.max(0, Number(value) || 0);
+const buildEmptyPaymentAgentForm = (): PaymentAgentForm => ({ id: "", name: "", agentCode: "", phone: "", wechatId: "", country: "", openingCredit: "", notes: "", status: "active" });
 
 export default function PaymentAgentsPage() {
   const PAGE_SIZE = 100;
@@ -97,9 +110,11 @@ export default function PaymentAgentsPage() {
   const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10));
   const [payNote, setPayNote] = useState("");
   const [payMethod, setPayMethod] = useState("");
+  const [payBusy, setPayBusy] = useState(false);
   const [ledgerRows, setLedgerRows] = useState<Record<string, PaymentAgentLedgerEntry[]>>({});
   const [ledgerErrors, setLedgerErrors] = useState<Record<string, string>>({});
-  const [form, setForm] = useState({ id: "", name: "", agentCode: "", phone: "", wechatId: "", country: "", openingCredit: "", notes: "", status: "active" as PaymentAgent["status"] });
+  const [form, setForm] = useState<PaymentAgentForm>(buildEmptyPaymentAgentForm);
+  const [agentSaveBusy, setAgentSaveBusy] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [viewTab, setViewTab] = useState<"agents" | "live-orders">("agents");
@@ -122,10 +137,51 @@ export default function PaymentAgentsPage() {
     riskDetected: boolean;
   }>(null);
   const paymentAgentComparisonLoggedRef = useRef<Set<string>>(new Set());
+  const paySubmitInFlightRef = useRef(false);
+  const paySubmitKeyRef = useRef<string | null>(null);
+  const agentModalSaveInFlightRef = useRef(false);
+  const agentModalCreateIdRef = useRef<string | null>(null);
+  const repairApplyInFlightRef = useRef(false);
+
+  const buildPaymentAgentId = () => `pa-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  const resetPaymentAgentModal = () => {
+    agentModalSaveInFlightRef.current = false;
+    agentModalCreateIdRef.current = null;
+    setAgentSaveBusy(false);
+    setOpen(false);
+    setForm(buildEmptyPaymentAgentForm());
+  };
+
+  const openCreatePaymentAgentModal = () => {
+    agentModalSaveInFlightRef.current = false;
+    agentModalCreateIdRef.current = buildPaymentAgentId();
+    setAgentSaveBusy(false);
+    setForm(buildEmptyPaymentAgentForm());
+    setOpen(true);
+  };
+
+  const resetStandalonePaymentModal = () => {
+    paySubmitInFlightRef.current = false;
+    paySubmitKeyRef.current = null;
+    setPayBusy(false);
+    setPayAgentId(null);
+    setPayAmount("");
+    setPayDate(new Date().toISOString().slice(0, 10));
+    setPayMethod("");
+    setPayNote("");
+  };
 
   useEffect(() => {
     logPageAccess("Payment Agents", { component: "app/payment-agents/page.tsx", source: process.env.NEXT_PUBLIC_PAYMENT_AGENTS_DATA_SOURCE ?? "mock" });
   }, []);
+
+  useEffect(() => {
+    if (open) return;
+    agentModalSaveInFlightRef.current = false;
+    agentModalCreateIdRef.current = null;
+    setAgentSaveBusy(false);
+  }, [open]);
 
   useEffect(() => {
     if (ledgerRows[ALL_LEDGER_ROWS_KEY]) return;
@@ -400,18 +456,35 @@ export default function PaymentAgentsPage() {
   };
 
   const submitPayment = async () => {
+    if (paySubmitInFlightRef.current) return;
     if (!payAgentId) return;
     const amount = Number(payAmount);
     if (!(amount > 0)) return pushToast({ tone: "danger", text: "Payment amount must be greater than 0." });
-    await recordPaymentToAgent(payAgentId, { amount, paymentDate: payDate, paymentMethod: payMethod.trim() || undefined, note: payNote.trim() || undefined });
-    const loaded = await listPaymentAgentLedger();
-    setLedgerRows((prev) => ({ ...prev, [ALL_LEDGER_ROWS_KEY]: loaded }));
-    pushToast({ tone: "success", text: "Payment recorded." });
-    setPayAgentId(null);
-    setPayAmount("");
-    setPayDate(new Date().toISOString().slice(0, 10));
-    setPayMethod("");
-    setPayNote("");
+    paySubmitInFlightRef.current = true;
+    setPayBusy(true);
+    if (!paySubmitKeyRef.current) {
+      paySubmitKeyRef.current = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    }
+    try {
+      await recordPaymentToAgent(payAgentId, {
+        amount,
+        paymentDate: payDate,
+        paymentMethod: payMethod.trim() || undefined,
+        note: payNote.trim() || undefined,
+        idempotencyKey: paySubmitKeyRef.current,
+      });
+      try {
+        const loaded = await listPaymentAgentLedger();
+        setLedgerRows((prev) => ({ ...prev, [ALL_LEDGER_ROWS_KEY]: loaded }));
+      } catch {}
+      pushToast({ tone: "success", text: "Payment recorded." });
+      resetStandalonePaymentModal();
+    } catch (error) {
+      paySubmitInFlightRef.current = false;
+      paySubmitKeyRef.current = null;
+      setPayBusy(false);
+      throw error;
+    }
   };
 
   const toggleLedger = async (agentId: string) => {
@@ -583,6 +656,7 @@ export default function PaymentAgentsPage() {
   };
 
   const applyRepairReport = async () => {
+    if (repairApplyInFlightRef.current) return;
     if (!testingRepairApplyEnabled || !applyTestingPaymentAgentRepair) {
       pushToast({ tone: "danger", text: "Testing repair apply is not enabled in this environment." });
       return;
@@ -590,6 +664,7 @@ export default function PaymentAgentsPage() {
     if (!window.confirm("Apply testing Payment Agent repair now? This will update saved orders, payment-agent ledger rows, and cache fields in the current testing Firebase business.")) {
       return;
     }
+    repairApplyInFlightRef.current = true;
     setRepairApplyBusy(true);
     setRepairReportError(null);
     try {
@@ -610,6 +685,7 @@ export default function PaymentAgentsPage() {
       setRepairReportError(message);
       pushToast({ tone: "danger", text: message });
     } finally {
+      repairApplyInFlightRef.current = false;
       setRepairApplyBusy(false);
     }
   };
@@ -620,10 +696,12 @@ export default function PaymentAgentsPage() {
     void runRepairReportScan();
   }, [isPaymentAgentsLoading, pendingRepairRescan, repairApplyBusy, sourceOrders]);
 
-  const handleLedgerPayment = async (agentId: string, input: { paymentDate: string; amount: number; paymentMethod?: string; note?: string }) => {
+  const handleLedgerPayment = async (agentId: string, input: { paymentDate: string; amount: number; paymentMethod?: string; note?: string; idempotencyKey?: string }) => {
     try {
       await recordPaymentToAgent(agentId, input);
-      await refreshPaymentAgentFinanceView();
+      try {
+        await refreshPaymentAgentFinanceView();
+      } catch {}
       pushToast({ tone: "success", text: "Payment recorded." });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not record payment.";
@@ -646,11 +724,18 @@ export default function PaymentAgentsPage() {
 
   const save = async () => {
     if (!form.name.trim()) return pushToast({ tone: "danger", text: "Payment Agent Name is required." });
+    if (agentModalSaveInFlightRef.current) return;
+    agentModalSaveInFlightRef.current = true;
+    setAgentSaveBusy(true);
     const now = new Date().toISOString();
     const existing = rows.find((x) => x.agent.id === form.id)?.agent ?? null;
     const opening = existing ? Math.max(0, Number(existing.openingCreditBalance) || 0) : Math.max(0, Number(form.openingCredit) || 0);
+    const resolvedAgentId = form.id || agentModalCreateIdRef.current || buildPaymentAgentId();
+    if (!form.id && !agentModalCreateIdRef.current) {
+      agentModalCreateIdRef.current = resolvedAgentId;
+    }
     const agent: PaymentAgent = {
-      id: form.id || `pa-${Date.now()}`,
+      id: resolvedAgentId,
       initials: form.name.trim().slice(0, 2).toUpperCase(),
       name: form.name.trim(),
       agentCode: form.agentCode.trim() || existing?.agentCode || `AG-${Math.floor(Math.random() * 900 + 100)}`,
@@ -671,13 +756,22 @@ export default function PaymentAgentsPage() {
       totalUsedAmount: existing?.totalUsedAmount ?? 0,
       currentPayable: existing?.currentPayable ?? existing?.currentDuePayable ?? 0,
     };
-    await upsertPaymentAgent(agent);
-    setOpen(false);
-    setForm({ id: "", name: "", agentCode: "", phone: "", wechatId: "", country: "", openingCredit: "", notes: "", status: "active" });
-    pushToast({ tone: "success", text: form.id ? "Payment Agent updated." : "Payment Agent added." });
+    try {
+      await upsertPaymentAgent(agent);
+      resetPaymentAgentModal();
+      pushToast({ tone: "success", text: form.id ? "Payment Agent updated." : "Payment Agent added." });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not save payment agent.";
+      agentModalSaveInFlightRef.current = false;
+      setAgentSaveBusy(false);
+      pushToast({ tone: "danger", text: message });
+    }
   };
 
   const startEdit = (agent: PaymentAgent) => {
+    agentModalSaveInFlightRef.current = false;
+    agentModalCreateIdRef.current = null;
+    setAgentSaveBusy(false);
     setForm({
       id: agent.id,
       name: agent.name,
@@ -787,10 +881,7 @@ export default function PaymentAgentsPage() {
               <>
                 <Button
                   size="sm"
-                  onClick={() => {
-                    setForm({ id: "", name: "", agentCode: "", phone: "", wechatId: "", country: "", openingCredit: "", notes: "", status: "active" });
-                    setOpen(true);
-                  }}
+                  onClick={openCreatePaymentAgentModal}
                 >
                   <Plus size={14} />
                   Add Payment Agent
@@ -982,8 +1073,8 @@ export default function PaymentAgentsPage() {
               <Input value={payMethod} onChange={(e) => setPayMethod(e.target.value)} placeholder="Payment Method" />
               <Input value={payNote} onChange={(e) => setPayNote(e.target.value)} placeholder="Notes (optional)" />
               <div className="flex justify-end gap-2">
-                <Button variant="secondary" onClick={() => setPayAgentId(null)}>Cancel</Button>
-                <Button variant="primary" onClick={() => void submitPayment()}>Save Payment</Button>
+                <Button variant="secondary" disabled={payBusy} onClick={() => { if (!payBusy) resetStandalonePaymentModal(); }}>Cancel</Button>
+                <Button variant="primary" disabled={payBusy || !(Number(payAmount) > 0)} onClick={() => void submitPayment()}>{payBusy ? "Saving..." : "Save Payment"}</Button>
               </div>
             </div>
           </div>
@@ -1006,8 +1097,8 @@ export default function PaymentAgentsPage() {
                 <Input value={form.status} onChange={(e) => setForm((s) => ({ ...s, status: e.target.value as PaymentAgent["status"] }))} placeholder="Status" />
               </div>
               <div className="flex justify-end gap-2">
-                <Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
-                <Button variant="primary" onClick={() => void save()}>{form.id ? "Save Changes" : "Save Agent"}</Button>
+                <Button variant="secondary" disabled={agentSaveBusy} onClick={resetPaymentAgentModal}>Cancel</Button>
+                <Button variant="primary" disabled={agentSaveBusy} onClick={() => void save()}>{agentSaveBusy ? "Saving..." : form.id ? "Save Changes" : "Save Agent"}</Button>
               </div>
             </div>
           </div>

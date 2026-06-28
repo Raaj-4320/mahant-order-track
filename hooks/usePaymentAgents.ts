@@ -54,7 +54,7 @@ export function usePaymentAgents() {
     await reload();
     return result;
   }, [reload, service]);
-  const recordPaymentToAgent = useCallback(async (agentId: string, payment: { amount: number; paymentDate: string; note?: string; paymentMethod?: string }) => {
+  const recordPaymentToAgent = useCallback(async (agentId: string, payment: { amount: number; paymentDate: string; note?: string; paymentMethod?: string; idempotencyKey?: string }) => {
     const updated = await service.recordPaymentToAgent(agentId, payment);
     setData((prev) => prev.map((entry) => (entry.id === updated.id ? updated : entry)));
     return updated;

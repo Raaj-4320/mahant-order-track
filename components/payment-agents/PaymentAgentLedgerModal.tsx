@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { formatAmount } from "@/lib/data";
@@ -18,7 +18,7 @@ type Props = {
   error?: string | null;
   onClose: () => void;
   onExport?: () => void;
-  onAddPayment: (input: { paymentDate: string; amount: number; paymentMethod?: string; note?: string }) => Promise<void>;
+  onAddPayment: (input: { paymentDate: string; amount: number; paymentMethod?: string; note?: string; idempotencyKey?: string }) => Promise<void>;
   onDeletePayment: (entryId: string) => Promise<void>;
 };
 
@@ -42,6 +42,8 @@ export function PaymentAgentLedgerModal({ open, summary, error, onClose, onExpor
   const [paymentBusy, setPaymentBusy] = useState(false);
   const [deletingPaymentId, setDeletingPaymentId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const paymentSubmitInFlightRef = useRef(false);
+  const paymentSubmitKeyRef = useRef<string | null>(null);
 
   const transactionRows = summary?.transactionRows ?? [];
   const paymentRows = summary?.paymentRows ?? [];
@@ -64,6 +66,8 @@ export function PaymentAgentLedgerModal({ open, summary, error, onClose, onExpor
     setTransactionsPage(1);
     setPaymentsPage(1);
     setOrdersPage(1);
+    paymentSubmitInFlightRef.current = false;
+    paymentSubmitKeyRef.current = null;
   }, [open, summary?.agent.id]);
 
   useEffect(() => {
@@ -105,16 +109,22 @@ export function PaymentAgentLedgerModal({ open, summary, error, onClose, onExpor
   };
 
   const submitPayment = async () => {
+    if (paymentSubmitInFlightRef.current) return;
     const amount = Number(paymentForm.amount);
     if (!(amount > 0)) return;
+    paymentSubmitInFlightRef.current = true;
     setPaymentBusy(true);
     setActionError(null);
+    if (!paymentSubmitKeyRef.current) {
+      paymentSubmitKeyRef.current = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    }
     try {
       await onAddPayment({
         paymentDate: paymentForm.paymentDate,
         amount,
         paymentMethod: paymentForm.paymentMethod.trim() || undefined,
         note: paymentForm.note.trim() || undefined,
+        idempotencyKey: paymentSubmitKeyRef.current,
       });
       setAddPaymentOpen(false);
       setPaymentForm({
@@ -123,7 +133,12 @@ export function PaymentAgentLedgerModal({ open, summary, error, onClose, onExpor
         paymentMethod: "",
         note: "",
       });
+      paymentSubmitKeyRef.current = null;
+    } catch (error) {
+      paymentSubmitKeyRef.current = null;
+      throw error;
     } finally {
+      paymentSubmitInFlightRef.current = false;
       setPaymentBusy(false);
     }
   };
@@ -323,7 +338,7 @@ export function PaymentAgentLedgerModal({ open, summary, error, onClose, onExpor
             <Input value={paymentForm.paymentMethod} onChange={(e) => setPaymentForm((prev) => ({ ...prev, paymentMethod: e.target.value }))} placeholder="Payment Method" />
             <Input value={paymentForm.note} onChange={(e) => setPaymentForm((prev) => ({ ...prev, note: e.target.value }))} placeholder="Notes" />
             <div className="flex justify-end gap-2">
-              <Button variant="secondary" onClick={() => setAddPaymentOpen(false)}>Cancel</Button>
+              <Button variant="secondary" disabled={paymentBusy} onClick={() => setAddPaymentOpen(false)}>Cancel</Button>
               <Button variant="primary" disabled={paymentBusy || !(Number(paymentForm.amount) > 0)} onClick={() => void submitPayment()}>
                 {paymentBusy ? "Saving..." : "Save Payment"}
               </Button>

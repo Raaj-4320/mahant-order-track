@@ -1,6 +1,6 @@
 "use client";
 
-import { Trash2 } from "lucide-react";
+import { GripVertical, Trash2 } from "lucide-react";
 import { Customer, OrderLine, lineTotalPcs, lineTotalRmb } from "@/lib/types";
 import { Input } from "@/components/ui/Input";
 import { applyTypedCustomerToLine, findCustomerByTypedName } from "@/services/customers/customerResolution";
@@ -19,15 +19,19 @@ type Props = {
   customers?: Customer[];
   onPreviewImage?: (src: string) => void;
   onCustomerValidityChange?: (lineId: string, issue: string | null) => void;
+  isDragging?: boolean;
+  onDragStart?: () => void;
+  onDragEnd?: () => void;
+  onDragEnter?: () => void;
 };
 
 // Columns: pic+dim | product | marka | details | ctns | pcs/ctn | total pcs | rmb/pcs | line total | customer | action
 export const LINE_GRID_TEMPLATE =
-  "82px 72px 180px 112px 112px 112px 68px 84px 84px 92px 124px 172px 32px";
-export const LINE_TABLE_MIN_WIDTH = 1344;
+  "28px 82px 72px 180px 112px 112px 112px 68px 84px 84px 92px 124px 172px 32px";
+export const LINE_TABLE_MIN_WIDTH = 1372;
 export const LINE_GRID = "grid items-center gap-2";
 
-export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, customerSuggestions = [], customers = [], onPreviewImage, onCustomerValidityChange }: Props) {
+export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, customerSuggestions = [], customers = [], onPreviewImage, onCustomerValidityChange, isDragging = false, onDragStart, onDragEnd, onDragEnter }: Props) {
   const pcs = lineTotalPcs(line);
   const totalRmb = lineTotalRmb(line);
   const detailParts = getLineDetailsParts(line);
@@ -92,9 +96,30 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
 
   return (
     <div
-      className={`${LINE_GRID} rounded-lg px-2 py-1.5 text-[13px] transition-colors hover:bg-bg-subtle/30`}
+      className={cn(
+        LINE_GRID,
+        "rounded-lg px-2 py-1.5 text-[13px] transition-colors hover:bg-bg-subtle/30",
+        isDragging && "cursor-grabbing border border-border bg-bg-subtle/50 opacity-70 shadow-sm",
+      )}
       style={{ gridTemplateColumns: LINE_GRID_TEMPLATE }}
+      onDragOver={(event) => event.preventDefault()}
+      onDragEnter={onDragEnter}
     >
+      <button
+        type="button"
+        draggable
+        onDragStart={(event) => {
+          event.dataTransfer.effectAllowed = "move";
+          event.dataTransfer.setData("text/plain", line.id);
+          onDragStart?.();
+        }}
+        onDragEnd={onDragEnd}
+        aria-label="Drag to reorder line"
+        className="inline-flex h-8 w-7 cursor-grab items-center justify-center rounded-md text-fg-subtle transition-colors hover:bg-bg-subtle hover:text-fg active:cursor-grabbing"
+      >
+        <GripVertical size={15} />
+      </button>
+
       <PhotoUpload
         compact
         ariaLabel="Upload weight/dimension photo"

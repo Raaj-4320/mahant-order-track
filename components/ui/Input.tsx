@@ -29,20 +29,20 @@ export const Input = forwardRef<HTMLInputElement, Props>(function Input(
   const offsetL = compact ? "left-2" : "left-3";
   const offsetR = compact ? "right-2" : "right-3";
   return (
-    <div className={cn("relative", containerClassName)}>
+    <div className={cn("relative min-w-0 box-border", containerClassName)}>
       {leadingIcon && (
-        <span className={cn("pointer-events-none absolute inset-y-0 flex items-center text-fg-subtle", offsetL)}>
+        <span className={cn("pointer-events-none absolute inset-y-0 flex shrink-0 items-center text-fg-subtle", offsetL)}>
           {leadingIcon}
         </span>
       )}
       <input
         ref={ref}
-        className={cn(base, leadingIcon && padL, trailingIcon && padR, className)}
+        className={cn("box-border min-w-0 leading-normal", base, leadingIcon && padL, trailingIcon && padR, className)}
         {...rest}
         onWheel={handleWheel}
       />
       {trailingIcon && (
-        <span className={cn("absolute inset-y-0 flex items-center text-fg-subtle", offsetR)}>
+        <span className={cn("absolute inset-y-0 flex shrink-0 items-center text-fg-subtle", offsetR)}>
           {trailingIcon}
         </span>
       )}

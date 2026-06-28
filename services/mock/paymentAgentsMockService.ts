@@ -81,6 +81,11 @@ export const paymentAgentsMockService: PaymentAgentsService = {
   async recordPaymentToAgent(agentId, payment) {
     const idx = paymentAgentsState.findIndex((a) => a.id === agentId);
     if (idx < 0) throw new Error("Payment agent not found.");
+    const idempotencyKey = typeof payment.idempotencyKey === "string" ? payment.idempotencyKey.trim() : "";
+    const ledgerId = idempotencyKey ? `agent-payment-${agentId}-${idempotencyKey}` : `led-${Date.now()}`;
+    if (idempotencyKey && paymentAgentLedgerState.some((entry) => entry.id === ledgerId)) {
+      return syncMockPaymentAgentFinance(agentId);
+    }
     const amount = Math.max(0, Number(payment.amount) || 0);
     const due = Math.max(0, paymentAgentsState[idx].currentDuePayable ?? 0);
     const dueReduced = Math.min(due, amount);
@@ -93,7 +98,7 @@ export const paymentAgentsMockService: PaymentAgentsService = {
       totalPaidAmount: Math.max(0, (paymentAgentsState[idx].totalPaidAmount ?? 0) + amount),
       updatedAt: new Date().toISOString(),
     };
-    paymentAgentLedgerState = [{ id: `led-${Date.now()}`, agentId, type: "agent_payment", amount, dueReduced, creditCreated, note: payment.note, paymentMethod: payment.paymentMethod, createdAt: payment.paymentDate || new Date().toISOString(), paymentDate: payment.paymentDate || new Date().toISOString() }, ...paymentAgentLedgerState];
+    paymentAgentLedgerState = [{ id: ledgerId, agentId, type: "agent_payment", amount, dueReduced, creditCreated, note: payment.note, paymentMethod: payment.paymentMethod, createdAt: payment.paymentDate || new Date().toISOString(), paymentDate: payment.paymentDate || new Date().toISOString() }, ...paymentAgentLedgerState];
     return syncMockPaymentAgentFinance(agentId);
   },
   async deletePaymentAgentLedgerEntry(entryId) {

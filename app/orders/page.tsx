@@ -67,6 +67,14 @@ const createEmptyPaymentAgentPaymentEvent = (seed?: Partial<PaymentAgentPaymentE
   amount: Number(seed?.amount) || 0,
   note: seed?.note,
 });
+const normalizeOrderLineSortOrder = (lines: Order["lines"]) =>
+  [...lines]
+    .sort((left, right) => {
+      const leftOrder = typeof left.sortOrder === "number" ? left.sortOrder : Number.MAX_SAFE_INTEGER;
+      const rightOrder = typeof right.sortOrder === "number" ? right.sortOrder : Number.MAX_SAFE_INTEGER;
+      return leftOrder - rightOrder;
+    })
+    .map((line, index) => ({ ...line, sortOrder: index }));
 const getDefaultMarkaFromOrderNumber = (orderNumber?: string | null) => {
   const parsed = parseOrderNumber(orderNumber || "");
   const rawPrefix = parsed?.prefix?.trim() || "";
@@ -120,13 +128,9 @@ type RowEditState = {
 type OutsideEditField =
   | "orderNumber"
   | "wechat"
-  | "payment"
   | "customer"
   | "marka"
   | "details"
-  | "totalCtns"
-  | "pcsPerCtn"
-  | "rate"
   | "shipping"
   | (string & {});
 type OutsideEditState = {
@@ -947,6 +951,10 @@ export default function OrdersPage() {
   const manuallyEditedPaymentEventIdsRef = useRef<Set<string>>(new Set());
   const autoManagedPaymentEventIdsRef = useRef<Set<string>>(new Set());
   const previousDraftMarkaDefaultRef = useRef("");
+  const rowEditSaveInFlightRef = useRef<Set<string>>(new Set());
+  const outsideEditSaveInFlightRef = useRef<Set<string>>(new Set());
+  const orderSaveInFlightRef = useRef(false);
+  const createSeriesInFlightRef = useRef(false);
 
   const pickerRef = useRef<HTMLDivElement | null>(null);
   const seriesPickerRef = useRef<HTMLDivElement | null>(null);
@@ -1249,6 +1257,12 @@ export default function OrdersPage() {
   }, [selectedSeriesId]);
 
   useEffect(() => {
+    if (showCreateSeriesModal) return;
+    createSeriesInFlightRef.current = false;
+    setSeriesCreateBusy(false);
+  }, [showCreateSeriesModal]);
+
+  useEffect(() => {
     if (mode !== "add") return;
     if ((draft.number || draft.orderNumber || "").trim()) return;
     if (!selectedOrderSeries) return;
@@ -1371,8 +1385,10 @@ export default function OrdersPage() {
   };
 
   const openCreateSeriesModal = () => {
+    createSeriesInFlightRef.current = false;
     setSeriesPickerOpen(false);
     setSeriesCreateError("");
+    setSeriesCreateBusy(false);
     setSeriesForm({ label: "", startNumber: "" });
     setShowCreateSeriesModal(true);
   };
@@ -1740,6 +1756,7 @@ export default function OrdersPage() {
   }, [draft, total, paymentAgents]);
 
   const handleCreateSeries = async () => {
+    if (createSeriesInFlightRef.current) return;
     const normalizedLabel = normalizeSeriesLabel(seriesForm.label);
     const startNumber = Number(seriesForm.startNumber);
     if (!normalizedLabel) {
@@ -1760,17 +1777,21 @@ export default function OrdersPage() {
       setSeriesCreateError("This series already exists.");
       return;
     }
+    createSeriesInFlightRef.current = true;
     setSeriesCreateBusy(true);
     setSeriesCreateError("");
     try {
       const created = await createOrderSeries({ label: normalizedLabel, startNumber });
+      createSeriesInFlightRef.current = false;
       setShowCreateSeriesModal(false);
       setSeriesForm({ label: "", startNumber: "" });
       applySeriesToDraft(created, created.nextNumber);
       pushToast({ tone: "success", text: `Series ${created.prefix} created.` });
     } catch (error) {
+      createSeriesInFlightRef.current = false;
       setSeriesCreateError(error instanceof Error ? error.message : "Could not create series.");
     } finally {
+      createSeriesInFlightRef.current = false;
       setSeriesCreateBusy(false);
     }
   };
@@ -1843,15 +1864,11 @@ export default function OrdersPage() {
   const getOutsideFieldValue = (order: Order, field: OutsideEditField, line?: Order["lines"][number] | null) => {
     if (field === "orderNumber") return order.number || order.orderNumber || "";
     if (field === "wechat") return order.wechatId?.trim() || "";
-    if (field === "payment") return order.paymentAgentSnapshot?.name?.trim() || order.paymentByName?.trim() || order.paymentAgentName?.trim() || order.paymentBy?.trim() || "";
     if (field === "shipping") return order.shippingPrice ? String(order.shippingPrice) : "";
     if (!line) return "";
     if (field === "customer") return line.customerName?.trim() || line.customerSnapshot?.name?.trim() || "";
     if (field === "marka") return line.marka?.trim() || "";
     if (field === "details") return joinLineDetails(line).trim() || "";
-    if (field === "totalCtns") return Number(line.totalCtns) ? String(line.totalCtns) : "";
-    if (field === "pcsPerCtn") return Number(line.pcsPerCtn) ? String(line.pcsPerCtn) : "";
-    if (field === "rate") return Number(line.rmbPerPcs) ? String(line.rmbPerPcs) : "";
     return "";
   };
   const getOutsideEditValue = (order: Order): OutsideEditState => {
@@ -1892,7 +1909,7 @@ export default function OrdersPage() {
   };
   const isOutsideFieldEditing = (order: Order, field: OutsideEditField, line?: Order["lines"][number] | null) => {
     const current = getOutsideEditValue(order);
-    return current.activeField === field && (field === "orderNumber" || field === "wechat" || field === "payment" || field === "shipping"
+    return current.activeField === field && (field === "orderNumber" || field === "wechat" || field === "shipping"
       ? !current.lineId
       : current.lineId === line?.id);
   };
@@ -1903,22 +1920,6 @@ export default function OrdersPage() {
     }
     if (field === "wechat") {
       return trimmedValue !== (order.wechatId?.trim() || "");
-    }
-    if (field === "payment") {
-      const resolvedCurrentAgent = resolveOrderPaymentAgent(order, paymentAgents);
-      const currentPaymentId = resolvedCurrentAgent?.id || order.paymentAgentId?.trim() || "";
-      const currentPaymentName = normalizePaymentAgentValue(
-        resolvedCurrentAgent?.name ||
-        order.paymentAgentSnapshot?.name ||
-        order.paymentByName ||
-        order.paymentAgentName ||
-        order.paymentBy ||
-        "",
-      );
-      const resolvedNextAgent = paymentAgents.find((agent) => agent.id === trimmedValue || normalizePaymentAgentValue(agent.name) === normalizePaymentAgentValue(trimmedValue)) ?? null;
-      const nextPaymentId = resolvedNextAgent?.id || "";
-      const nextPaymentName = normalizePaymentAgentValue(resolvedNextAgent?.name || trimmedValue);
-      return currentPaymentId !== nextPaymentId || currentPaymentName !== nextPaymentName;
     }
     if (field === "shipping") {
       return (Number(rawValue) || 0) !== (Number(order.shippingPrice) || 0);
@@ -1942,15 +1943,6 @@ export default function OrdersPage() {
     }
     if (field === "details") {
       return trimmedValue !== joinLineDetails(line).trim();
-    }
-    if (field === "totalCtns") {
-      return (rawValue === "" ? 0 : Number(rawValue)) !== (Number(line.totalCtns) || 0);
-    }
-    if (field === "pcsPerCtn") {
-      return (rawValue === "" ? 0 : Number(rawValue)) !== (Number(line.pcsPerCtn) || 0);
-    }
-    if (field === "rate") {
-      return (rawValue === "" ? 0 : Number(rawValue)) !== (Number(line.rmbPerPcs) || 0);
     }
     return false;
   };
@@ -1994,9 +1986,11 @@ export default function OrdersPage() {
   const saveRowEdit = async (order: Order) => {
     const pending = rowEdits[order.id];
     if (!pending || pending.saving) return;
+    if (rowEditSaveInFlightRef.current.has(order.id)) return;
     const dirty = pending.loadingDate !== order.loadingDate || pending.status !== order.status;
     if (!dirty) return;
     if (!ensureFirebaseOrderWriteReady()) return;
+    rowEditSaveInFlightRef.current.add(order.id);
     const updated = { ...order, loadingDate: pending.loadingDate, status: pending.status, updatedAt: new Date().toISOString() };
     setRowEdits((prev) => ({ ...prev, [order.id]: { ...pending, saving: true } }));
 try {
@@ -2019,6 +2013,8 @@ try {
       setRowEdits((prev) => ({ ...prev, [order.id]: { ...pending, saving: false } }));
       logError("order_row_update_failure", { orderId: order.id, error: message, attemptedLoadingDate: updated.loadingDate, attemptedStatus: updated.status });
       pushToast({ tone: "danger", text: "Failed to save row changes." });
+    } finally {
+      rowEditSaveInFlightRef.current.delete(order.id);
     }
   };
 
@@ -2147,6 +2143,7 @@ try {
     return runPerfAction("outside-edit-save", { orderId: order.id, field, lineId: line?.id || null }, async () => {
       const current = getOutsideEditValue(order);
       if (current.saving) return;
+      if (outsideEditSaveInFlightRef.current.has(order.id)) return;
       const targetLineId = line?.id || current.lineId;
       const targetLine = targetLineId ? order.lines.find((entry) => entry.id === targetLineId) ?? null : null;
       const rawValue = current.value;
@@ -2157,7 +2154,7 @@ try {
       }
       const trimmedValue = rawValue.trim();
       const clearingCustomer = field === "customer" && !trimmedValue;
-      if (!clearingCustomer && field !== "customer" && field !== "payment" && field !== "wechat" && field !== "shipping" && !trimmedValue) {
+      if (!clearingCustomer && field !== "customer" && field !== "wechat" && field !== "shipping" && !trimmedValue) {
         setOutsideEditConfirm(null);
         cancelOutsideField(order.id);
         return;
@@ -2167,6 +2164,7 @@ try {
         lines: order.lines.map((entry) => ({ ...entry })),
       };
 
+      outsideEditSaveInFlightRef.current.add(order.id);
       setOutsideEditValue(order.id, { saving: true });
       setOutsideEditConfirm(null);
 
@@ -2180,69 +2178,6 @@ try {
         Object.assign(nextOrder, deriveOrderSeriesFields(nextNumber));
       } else if (field === "wechat") {
         nextOrder.wechatId = trimmedValue;
-      } else if (field === "payment") {
-        if (!trimmedValue) {
-          nextOrder.paymentAgentSplits = [createEmptyPaymentAgentSplit()];
-          nextOrder.paymentAgentPaymentEvents = [createEmptyPaymentAgentPaymentEvent()];
-          nextOrder.paymentAgentId = "";
-          nextOrder.paymentBy = "";
-          nextOrder.paymentByName = "";
-          nextOrder.paymentAgentName = "";
-          nextOrder.paymentAgentSnapshot = undefined;
-          nextOrder.paymentAgentSettlementSnapshot = undefined;
-        } else {
-          let resolvedAgent = composerPaymentAgents.find((agent) => agent.id === trimmedValue || normalizePaymentAgentValue(agent.name) === normalizePaymentAgentValue(trimmedValue)) ?? null;
-          if (trimmedValue && !resolvedAgent) resolvedAgent = await resolveExistingPaymentAgentByName(trimmedValue);
-          if (trimmedValue && !resolvedAgent) throw new Error("Payment agent not found. Add it from the Payment Agents tab first.");
-          const nextPaymentAgentId = resolvedAgent?.id || "";
-          const currentSplits = getEditablePaymentAgentSplits(nextOrder);
-          const currentEvents = getEditablePaymentAgentEvents(nextOrder);
-          const primarySplit = currentSplits[0] ?? createEmptyPaymentAgentSplit();
-          const existingCredit = resolvedAgent ? (composerPaymentAgentLiveFinanceById.get(resolvedAgent.id)?.available ?? 0) : 0;
-          const hadPreviousPaymentAgent = hasLinkedPaymentAgent(order);
-          const paidAmount = hadPreviousPaymentAgent
-            ? normalizePaymentEventAmount(currentEvents[0]?.amount)
-            : Math.max(0, Math.min(orderTotal(nextOrder), existingCredit));
-          const remainingPayable = Math.max(0, orderTotal(nextOrder) - paidAmount);
-          const splitStatus: "paid" | "unpaid" = paidAmount > 0 ? "paid" : "unpaid";
-          const nextSplits = [{
-            ...primarySplit,
-            paymentAgentId: nextPaymentAgentId,
-            paymentBy: nextPaymentAgentId,
-            paymentAgentName: resolvedAgent?.name || "",
-            paymentAgentSnapshot: resolvedAgent ? { id: resolvedAgent.id, name: resolvedAgent.name, code: resolvedAgent.agentCode } : undefined,
-            assignedAmount: paidAmount,
-            settlementSnapshot: {
-              orderPortionTotal: paidAmount,
-              existingCredit,
-              creditUsed: paidAmount,
-              payableAfterCredit: 0,
-              remainingPayable,
-              newCreditCreated: 0,
-              resultingCreditBalance: Math.max(0, existingCredit - paidAmount),
-              paidNow: 0,
-              status: splitStatus,
-              updatedAt: new Date().toISOString(),
-              createdAt: primarySplit.settlementSnapshot?.createdAt || new Date().toISOString(),
-            },
-          }];
-          const nextEvents = [{
-            ...(currentEvents[0] ?? createEmptyPaymentAgentPaymentEvent()),
-            paymentAgentId: nextPaymentAgentId,
-            paymentBy: nextPaymentAgentId,
-            paymentAgentName: resolvedAgent?.name || "",
-            paymentAgentSnapshot: resolvedAgent ? { id: resolvedAgent.id, name: resolvedAgent.name, code: resolvedAgent.agentCode } : undefined,
-            amount: paidAmount,
-          }];
-          nextOrder.paymentAgentSplits = nextSplits;
-          nextOrder.paymentAgentPaymentEvents = nextEvents;
-          nextOrder.paymentAgentId = nextPaymentAgentId;
-          nextOrder.paymentBy = nextPaymentAgentId;
-          nextOrder.paymentByName = resolvedAgent?.name || "";
-          nextOrder.paymentAgentName = resolvedAgent?.name || "";
-          nextOrder.paymentAgentSnapshot = { id: nextPaymentAgentId, name: resolvedAgent?.name || "", code: resolvedAgent?.agentCode || "" };
-          nextOrder.paymentAgentSettlementSnapshot = undefined;
-        }
       } else if (field === "shipping") {
         nextOrder.shippingPrice = Math.max(0, Number(rawValue) || 0);
       } else {
@@ -2277,12 +2212,6 @@ try {
           nextLine.detail1 = trimmedValue;
           nextLine.detail2 = "";
           nextLine.detail3 = "";
-        } else if (field === "totalCtns") {
-          nextLine.totalCtns = rawValue === "" ? 0 : Number(rawValue);
-        } else if (field === "pcsPerCtn") {
-          nextLine.pcsPerCtn = rawValue === "" ? 0 : Number(rawValue);
-        } else if (field === "rate") {
-          nextLine.rmbPerPcs = rawValue === "" ? 0 : Number(rawValue);
         }
       }
 
@@ -2292,13 +2221,9 @@ try {
       const successLabels: Record<OutsideEditField, string> = {
         orderNumber: "Order number updated.",
         wechat: "WeChat ID updated.",
-        payment: "Paid By updated.",
         customer: "Customer updated.",
         marka: "Marka updated.",
         details: "Details updated.",
-        totalCtns: "CTNs updated.",
-        pcsPerCtn: "PCS/CTN updated.",
-        rate: "Rate updated.",
         shipping: "Shipping updated.",
       };
       pushToast({ tone: "success", text: isFirebaseOrdersMode ? `${successLabels[field]} Related data is syncing in background.` : successLabels[field] });
@@ -2313,12 +2238,23 @@ try {
         const message = error instanceof Error ? error.message : String(error);
         setOutsideEditValue(order.id, { saving: false });
         pushToast({ tone: "danger", text: `${field} update failed: ${message}` });
+      } finally {
+        outsideEditSaveInFlightRef.current.delete(order.id);
       }
     });
   };
 
   const onSave = async (status: Order["status"], forceDraft = false) => {
     return runPerfAction("full-order-save", { orderId: draft.id, status, mode: editingOrderId ? "edit" : "create" }, async () => {
+    if (orderSaveInFlightRef.current) return;
+    orderSaveInFlightRef.current = true;
+    let orderSaveGuardReleased = false;
+    const releaseOrderSaveGuard = () => {
+      if (orderSaveGuardReleased) return;
+      orderSaveGuardReleased = true;
+      orderSaveInFlightRef.current = false;
+    };
+    try {
     const saveAudit = createSaveTimingProfile(status === "draft" ? "draft-save" : editingOrderId ? "edit-save" : "new-order-save", {
       orderId: draft.id,
       mode: editingOrderId ? "edit" : "create",
@@ -2331,7 +2267,7 @@ try {
     if ((draft.paidToPaymentAgentNow ?? 0) < 0) return pushToast({ tone: "danger", text: "Paid Now cannot be negative." });
     setOrderSaveState("saving");
 
-    const meaningfulLines = getMeaningfulOrderLines(draft.lines).map((line) => withDerivedLegacyDetails(seedDetailBoxesFromLegacy(line)));
+    const meaningfulLines = normalizeOrderLineSortOrder(getMeaningfulOrderLines(draft.lines).map((line) => withDerivedLegacyDetails(seedDetailBoxesFromLegacy(line))));
     const normalizedDraftSplits = (draft.paymentAgentSplits ?? []).map(normalizeDraftPaymentSplit);
     const normalizedDraftEvents = (draft.paymentAgentPaymentEvents ?? []).map(normalizeDraftPaymentEvent);
     const paymentAgentCleared = normalizedDraftSplits.filter((split) => !isPaymentAgentSplitEmpty(split)).length === 0;
@@ -2458,9 +2394,9 @@ try {
     let resolvedLines = meaningfulLines;
     try {
       saveAudit.mark("customerResolution:start", { lines: meaningfulLines.length, knownCustomers: customers.length });
-      resolvedLines = (await resolveCustomersForOrderLines(meaningfulLines, customers, now, resolveOrCreateCustomerByName)).map((line) =>
+      resolvedLines = normalizeOrderLineSortOrder((await resolveCustomersForOrderLines(meaningfulLines, customers, now, resolveOrCreateCustomerByName)).map((line) =>
         withDerivedLegacyDetails(seedDetailBoxesFromLegacy(line)),
-      );
+      ));
       const knownIds = new Set(customers.map((c) => c.id));
       const affectedCustomerIds = Array.from(new Set(resolvedLines.map((l) => l.customerId).filter(Boolean)));
       const createdCustomerIds = affectedCustomerIds.filter((id) => !knownIds.has(id));
@@ -2580,6 +2516,7 @@ try {
     saveAudit.mark("ui:modalClosed");
     resetOrderComposer(false);
     pushToast({ tone: "info", text: "Order saved. Syncing ledgers..." });
+    releaseOrderSaveGuard();
 
     void (async () => {
       const paymentAgentsService = getPaymentAgentsService();
@@ -2723,6 +2660,9 @@ try {
       saveAudit.flush("save:error", { stage: "background_sync", message: error instanceof Error ? error.message : String(error) });
     });
     return;
+    } finally {
+      releaseOrderSaveGuard();
+    }
     });
   };
 
@@ -2781,7 +2721,7 @@ try {
       orderNumber: normalizedOrderNumber,
       ...deriveOrderSeriesFields(normalizedOrderNumber),
       wechatId: (copy.wechatId || "").trim(),
-      lines: (copy.lines || []).map((line: Order["lines"][number]) => seedDetailBoxesFromLegacy(line)),
+      lines: normalizeOrderLineSortOrder((copy.lines || []).map((line: Order["lines"][number]) => seedDetailBoxesFromLegacy(line))),
     }, getEditablePaymentAgentSplits(copy), getEditablePaymentAgentEvents(copy));
     setDraft(preparedDraft);
     setComposerBaseline(normalizeComposerOrderForComparison(preparedDraft));
@@ -3020,7 +2960,7 @@ try {
       const customerOptions = field === "customer"
         ? listOptions.filter((option) => option && option.toLowerCase().includes(normalizedValue)).slice(0, 4)
         : [];
-      const suggestionOptions = field === "wechat" || field === "payment"
+      const suggestionOptions = field === "wechat"
         ? getTopPrefixSuggestions(listOptions, outsideEdit.value, 4)
         : [];
       if (field === "customer") {
@@ -3052,7 +2992,7 @@ try {
           />
         );
       }
-      if (field === "wechat" || field === "payment") {
+      if (field === "wechat") {
         return (
           <OutsideSuggestionEditor
             value={outsideEdit.value}
@@ -3061,7 +3001,7 @@ try {
             saving={outsideEdit.saving}
             suspendCancel={outsideEditConfirm?.orderId === order.id}
             options={suggestionOptions}
-            emptyLabel={field === "payment" ? "No matching payment agent" : "No matching WeChat ID"}
+            emptyLabel="No matching WeChat ID"
             onChange={(nextValue) => setOutsideEditValue(order.id, { value: nextValue })}
             onEnter={() => requestOutsideFieldSave(order, field, line)}
             onEscape={() => cancelOutsideField(order.id)}
@@ -3531,44 +3471,14 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                         </div>
                       </div>
                       <div className="px-0.5 py-1.5 text-center text-[14.5px] font-semibold tabular-nums">
-                        {selectedLine ? renderOutsideEditableField({
-                          order,
-                          field: "totalCtns",
-                          line: selectedLine,
-                          displayValue: formatPlainNumber(ctns),
-                          placeholder: "Set CTNs",
-                          buttonClassName: "block w-full rounded-md px-1 py-1 text-center transition-colors hover:bg-bg-subtle",
-                          inputClassName: "h-8 min-w-0 text-center text-[13px]",
-                          inputMode: "decimal",
-                          numeric: true,
-                        }) : formatPlainNumber(ctns)}
+                        {formatPlainNumber(ctns)}
                       </div>
                       <div className="px-0.5 py-1.5 text-center text-[14.5px] font-semibold tabular-nums">
-                        {selectedLine ? renderOutsideEditableField({
-                          order,
-                          field: "pcsPerCtn",
-                          line: selectedLine,
-                          displayValue: formatPlainNumber(pcsPerCtn),
-                          placeholder: "Set PCS/CTN",
-                          buttonClassName: "block w-full rounded-md px-1 py-1 text-center transition-colors hover:bg-bg-subtle",
-                          inputClassName: "h-8 min-w-0 text-center text-[13px]",
-                          inputMode: "decimal",
-                          numeric: true,
-                        }) : formatPlainNumber(pcsPerCtn)}
+                        {formatPlainNumber(pcsPerCtn)}
                       </div>
                       <div className="px-0.5 py-1.5 text-center text-[14.5px] font-semibold tabular-nums">{formatPlainNumber(totalPcs)}</div>
                       <div className="px-0.5 py-1.5 text-center text-[15px] font-semibold tabular-nums">
-                        {selectedLine ? renderOutsideEditableField({
-                          order,
-                          field: "rate",
-                          line: selectedLine,
-                          displayValue: formatRateAmount(rate),
-                          placeholder: "Set rate",
-                          buttonClassName: "block w-full rounded-md px-1 py-1 text-center transition-colors hover:bg-bg-subtle",
-                          inputClassName: "h-8 min-w-0 text-center text-[13px]",
-                          inputMode: "decimal",
-                          numeric: true,
-                        }) : formatRateAmount(rate)}
+                        {formatRateAmount(rate)}
                       </div>
                       <div className="px-0.5 py-1.5 tabular-nums">
                         <div className="flex flex-col items-center justify-center gap-0.5 text-center">
@@ -3613,15 +3523,9 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                         {canEditOperationalFields && rowDirty ? <button type="button" title="Save row changes" aria-label="Save row changes" className="mt-1 inline-flex text-[10.5px] font-semibold text-brand transition-colors hover:underline disabled:opacity-60" disabled={rowValue.saving} onClick={() => { void saveRowEdit(order); }}>{rowValue.saving ? "Saving..." : "Save"}</button> : null}
                       </div>
                       <div className="min-w-0 px-1 py-1.5 text-center">
-                        {renderOutsideEditableField({
-                          order,
-                          field: "payment",
-                          displayValue: paymentName,
-                          placeholder: "Set Paid By",
-                          buttonClassName: cn("block w-full rounded-md px-1 py-1 text-center text-[14.5px] font-semibold leading-tight transition-colors hover:bg-bg-subtle", paymentMeta.isMissing && "text-[var(--danger)]"),
-                          inputClassName: "h-8 min-w-0 text-[13px]",
-                          listOptions: paymentAgents.map((agent) => agent.name),
-                        })}
+                        <div className={cn("block w-full px-1 py-1 text-center text-[14.5px] font-semibold leading-tight", paymentMeta.isMissing && "text-[var(--danger)]")}>
+                          {paymentName}
+                        </div>
                       </div>
                       <div className="px-0.5 py-1.5">
                         <div className="flex justify-center gap-0.5 whitespace-nowrap">

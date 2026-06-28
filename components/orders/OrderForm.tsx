@@ -22,6 +22,7 @@ export function newLine(defaultMarka = ""): OrderLine {
     pcsPerCtn: 0,
     rmbPerPcs: 0,
     customerId: "",
+    sortOrder: 0,
   };
 }
 
@@ -39,6 +40,9 @@ type Props = {
   onCustomerValidityChange?: (lineId: string, issue: string | null) => void;
   defaultMarka?: string;
 };
+
+const normalizeLineOrder = (lines: Order["lines"]) =>
+  lines.map((line, index) => ({ ...line, sortOrder: index }));
 
 export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, wechatSuggestions = [], customerSuggestions = [], customers = [], paymentAgents = [], showOrderInfo = true, onPreviewImage, onCustomerValidityChange, defaultMarka = "" }: Props) {
   const sectionShellClass = showOrderInfo ? "card flex min-h-0 flex-1 flex-col overflow-visible" : "flex min-h-0 flex-1 flex-col overflow-visible";
@@ -75,7 +79,24 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
       lines: d.lines.map((l) => (l.id === id ? { ...l, ...patch } : l)),
     }));
 
-  const addLine = () => setDraft((d) => ({ ...d, lines: [...d.lines, newLine(defaultMarka)] }));
+  const addLine = () => setDraft((d) => {
+    const nextLine = { ...newLine(defaultMarka), sortOrder: d.lines.length };
+    return { ...d, lines: [...d.lines, nextLine] };
+  });
+  const [draggingLineId, setDraggingLineId] = useState<string | null>(null);
+
+  const moveLine = (fromId: string, toId: string) => {
+    if (!fromId || !toId || fromId === toId) return;
+    setDraft((current) => {
+      const fromIndex = current.lines.findIndex((line) => line.id === fromId);
+      const toIndex = current.lines.findIndex((line) => line.id === toId);
+      if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return current;
+      const nextLines = [...current.lines];
+      const [moved] = nextLines.splice(fromIndex, 1);
+      nextLines.splice(toIndex, 0, moved);
+      return { ...current, lines: normalizeLineOrder(nextLines) };
+    });
+  };
 
   const selectedPaymentAgent = resolveOrderPaymentAgent(draft, paymentAgents);
   const selectedLabel = selectedPaymentAgent ? paymentLabel(selectedPaymentAgent) : "";
@@ -211,6 +232,7 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
               className={`${LINE_GRID} sticky top-0 z-10 border-b border-border/60 bg-bg-card/95 px-2 py-2 text-[11px] font-semibold uppercase tracking-[0.04em] text-fg-subtle backdrop-blur`}
               style={{ gridTemplateColumns: LINE_GRID_TEMPLATE }}
             >
+              <span className="text-center">Move</span>
               <span className="text-center">Pic + Dim</span>
               <span className="text-center">Product</span>
               <span>MARKA</span>
@@ -231,6 +253,7 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
                 <OrderLineRow
                   key={l.id}
                   line={l}
+                  isDragging={draggingLineId === l.id}
                   onChange={(patch) => updateLine(l.id, patch)}
                   customerSuggestions={customerSuggestions}
                   customers={customers}
@@ -240,6 +263,11 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
                   }}
                   onUploadingChange={onUploadingChange}
                   onPreviewImage={onPreviewImage}
+                  onDragStart={() => setDraggingLineId(l.id)}
+                  onDragEnd={() => setDraggingLineId(null)}
+                  onDragEnter={() => {
+                    if (draggingLineId && draggingLineId !== l.id) moveLine(draggingLineId, l.id);
+                  }}
                 />
               ))}
               {draft.lines.length === 0 ? <div className="rounded-xl bg-bg-subtle/30 py-8 text-center text-[13px] text-fg-subtle">No lines yet</div> : null}
