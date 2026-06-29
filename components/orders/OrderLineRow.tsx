@@ -27,8 +27,8 @@ type Props = {
 
 // Columns: pic+dim | product | marka | details | ctns | pcs/ctn | total pcs | rmb/pcs | line total | customer | action
 export const LINE_GRID_TEMPLATE =
-  "28px 82px 72px 180px 112px 112px 112px 68px 84px 84px 92px 124px 172px 32px";
-export const LINE_TABLE_MIN_WIDTH = 1372;
+  "28px 82px 72px 180px 112px 112px 112px 68px 84px 84px 92px 120px 124px 160px 32px";
+export const LINE_TABLE_MIN_WIDTH = 1468;
 export const LINE_GRID = "grid items-center gap-2";
 
 export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, customerSuggestions = [], customers = [], onPreviewImage, onCustomerValidityChange, isDragging = false, onDragStart, onDragEnd, onDragEnter }: Props) {
@@ -192,6 +192,13 @@ export function OrderLineRow({ line, onChange, onRemove, onUploadingChange, cust
         onBlur={() => normalizeDecimalInput(line.rmbPerPcs, setRateInput)}
         className="text-left no-spinner tabular-nums"
         onWheel={(e) => (e.currentTarget as HTMLInputElement).blur()}
+      />
+
+      <Input
+        compact
+        value={line.customerRate || ""}
+        onChange={(e) => onChange({ customerRate: e.target.value })}
+        placeholder="Customer Rate"
       />
 
       <div className="rounded-lg bg-bg-subtle/70 px-2 py-1.5 text-center tabular-nums leading-tight text-[13.5px] font-semibold">

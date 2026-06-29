@@ -21,6 +21,7 @@ export function newLine(defaultMarka = ""): OrderLine {
     totalCtns: 0,
     pcsPerCtn: 0,
     rmbPerPcs: 0,
+    customerRate: "",
     customerId: "",
     sortOrder: 0,
   };
@@ -243,6 +244,7 @@ export function OrderForm({ draft, setDraft, onUploadingChange, onRemoveLine, we
               <span className="text-center">pcs / ctn</span>
               <span className="text-center">Total PCS</span>
               <span className="text-center">Rate / PCS</span>
+              <span className="text-center">Customer Rate</span>
               <span className="text-center">Total Amount</span>
               <span className="text-center">Customer</span>
               <span className="text-center">Action</span>

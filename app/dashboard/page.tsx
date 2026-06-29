@@ -15,18 +15,23 @@ import { useEffect, useMemo, useState, type Dispatch, type MouseEvent, type SetS
 import { logPageAccess } from "@/lib/logger";
 import { ordersDataSource } from "@/lib/runtimeConfig";
 import { OrderLinesDetailModal } from "@/components/orders/OrderLinesDetailModal";
+import { LoadingDatePdfReviewModal, type LoadingDatePdfPreviewRow } from "@/components/dashboard/LoadingDatePdfReviewModal";
 import { getLineCustomerDisplay } from "@/services/customers/customerResolution";
 import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
 import { getOrderPaymentAgentDisplay } from "@/lib/orderDisplay";
 import Link from "next/link";
 
 type DashboardPdfRow = {
+  orderId: string;
+  lineId: string;
+  orderNumber: string;
   imageUrl: string;
   marka: string;
   ctns: number;
   pcsPerCtn: number;
   totalPcs: number;
   customer: string;
+  customerRate: string;
 };
 
 type DashboardOrderRow = {
@@ -86,8 +91,16 @@ const splitDisplayItems = (value?: string) =>
   Array.from(new Set(String(value || "").split(",").map((item) => item.trim()).filter(Boolean)));
 const estimateCarouselWidth = (value: string, min: number, max: number) =>
   clampNumber((value.trim().length || 1) * 8 + 54, min, max);
-const openDashboardPdfPreview = (title: string, fileName: string, html: string) => {
-  const markup = `<!doctype html><html><head><meta charset="utf-8" /><title>${escapeHtml(fileName)}.pdf</title><style>@page{size:A4 portrait;margin:10mm}html,body{margin:0;padding:0;background:#fff;color:#111;font-family:Arial,sans-serif}body{padding:12px 14px;font-size:12px;line-height:1.4}h1{margin:0 0 8px;font-size:22px;line-height:1.2}.summary{margin:0 0 14px;font-size:22px;line-height:1.2}.summary strong{color:#111}.details-table{width:100%;border-collapse:collapse;table-layout:fixed}.details-table th,.details-table td{border:1px solid #d1d5db;padding:7px 8px;vertical-align:middle;text-align:left;font-size:12px;line-height:1.35;white-space:normal;word-break:normal;overflow-wrap:normal}.details-table th{background:#f3f4f6;color:#374151;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap}.num{text-align:center;font-variant-numeric:tabular-nums}.thumb{width:58px;height:58px;margin:0 auto;border:1px solid #d1d5db;border-radius:8px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#fff}.thumb img{display:block;width:100%;height:100%;object-fit:contain}.empty-image{font-size:10px;color:#94a3b8}.customer{min-width:150px;white-space:normal;word-break:normal;overflow-wrap:normal}tr{page-break-inside:avoid}</style></head><body><h1>${escapeHtml(title)}</h1>${html}</body></html>`;
+const openDashboardPdfPreview = (title: string, fileName: string, html: string, includeCustomerRate = false) => {
+  const pageCss = includeCustomerRate ? "@page{size:A4 landscape;margin:8mm}" : "@page{size:A4 portrait;margin:10mm}";
+  const bodyCss = includeCustomerRate ? "body{padding:10px 12px;font-size:11px;line-height:1.35}" : "body{padding:12px 14px;font-size:12px;line-height:1.4}";
+  const tableCellCss = includeCustomerRate
+    ? ".details-table th,.details-table td{border:1px solid #d1d5db;padding:4px 5px;vertical-align:middle;text-align:left;font-size:10.75px;line-height:1.25;white-space:normal;word-break:normal;overflow-wrap:normal}"
+    : ".details-table th,.details-table td{border:1px solid #d1d5db;padding:7px 8px;vertical-align:middle;text-align:left;font-size:12px;line-height:1.35;white-space:normal;word-break:normal;overflow-wrap:normal}";
+  const thumbCss = includeCustomerRate
+    ? ".thumb{width:42px;height:42px;margin:0 auto;border:1px solid #d1d5db;border-radius:6px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#fff}"
+    : ".thumb{width:58px;height:58px;margin:0 auto;border:1px solid #d1d5db;border-radius:8px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#fff}";
+  const markup = `<!doctype html><html><head><meta charset="utf-8" /><title>${escapeHtml(fileName)}.pdf</title><style>${pageCss}html,body{margin:0;padding:0;background:#fff;color:#111;font-family:Arial,sans-serif}${bodyCss}h1{margin:0 0 8px;font-size:22px;line-height:1.2}.summary{margin:0 0 14px;font-size:22px;line-height:1.2}.summary strong{color:#111}.details-table{width:100%;border-collapse:collapse;table-layout:fixed}${tableCellCss}.details-table th{background:#f3f4f6;color:#374151;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;white-space:normal}.num{text-align:center;font-variant-numeric:tabular-nums}${thumbCss}.thumb img{display:block;width:100%;height:100%;object-fit:contain}.empty-image{font-size:10px;color:#94a3b8}.customer,.order-marka{white-space:normal;word-break:normal;overflow-wrap:normal}tr{page-break-inside:avoid}</style></head><body><h1>${escapeHtml(title)}</h1>${html}</body></html>`;
   const iframe = document.createElement("iframe");
   iframe.style.position = "fixed";
   iframe.style.right = "0";
@@ -117,8 +130,8 @@ const openDashboardPdfPreview = (title: string, fileName: string, html: string) 
 };
 
 export default function DashboardPage() {
-  const { orders } = useStore();
-  const { data: remoteOrders, isLoading: ordersLoading } = useOrders();
+  const { orders, upsertOrder, pushToast } = useStore();
+  const { data: remoteOrders, isLoading: ordersLoading, upsertOrder: upsertRemoteOrder } = useOrders();
   const { data: customers } = useCustomers();
   const { data: paymentAgents } = usePaymentAgents();
   const ordersSource = ordersDataSource();
@@ -128,6 +141,8 @@ export default function DashboardPage() {
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const [summaryIndexes, setSummaryIndexes] = useState<Record<string, number>>({});
   const [detailIndexes, setDetailIndexes] = useState<Record<string, number>>({});
+  const [reviewGroupKey, setReviewGroupKey] = useState<string | null>(null);
+  const [reviewBusy, setReviewBusy] = useState(false);
   const [groupNotes, setGroupNotes] = useState<Record<string, string>>(() => {
     if (typeof window === "undefined") return {};
     try {
@@ -250,12 +265,16 @@ export default function DashboardPage() {
 
       order.lines.forEach((line) => {
         current.pdfRows.push({
+          orderId: order.id,
+          lineId: line.id,
+          orderNumber,
           imageUrl: line.productPhotoUrl || line.photoUrl || "",
           marka: line.marka || line.productSnapshot?.name || "-",
           ctns: Number(line.totalCtns) || 0,
           pcsPerCtn: Number(line.pcsPerCtn) || 0,
           totalPcs: lineTotalPcs(line),
           customer: getLineCustomerDisplay(line, customers) || "-",
+          customerRate: line.customerRate || "",
         });
       });
 
@@ -276,48 +295,99 @@ export default function DashboardPage() {
 
   const viewOrder = sourceOrders.find((order) => order.id === viewOrderId) ?? null;
 
-  const exportGroup = (group: DashboardLoadingGroup) => {
-    const rowsMarkup = group.pdfRows
+  const reviewGroup = loadingGroups.find((group) => (group.loadingDate || LOADING_DATE_EMPTY_LABEL) === reviewGroupKey) ?? null;
+
+  const buildGroupPdfHtml = (group: DashboardLoadingGroup, rows: LoadingDatePdfPreviewRow[], includeCustomerRate: boolean) => {
+    const rowsMarkup = rows
       .map((row) => `
         <tr>
-          <td><div class="thumb">${row.imageUrl ? `<img src="${escapeHtml(getCloudinaryOptimizedUrl(row.imageUrl, { width: 160, height: 160, crop: "fit" }))}" alt="${escapeHtml(row.marka)}" />` : `<span class="empty-image">No image</span>`}</div></td>
-          <td>${escapeHtml(row.marka)}</td>
+          <td><div class="thumb">${row.imageUrl ? `<img src="${escapeHtml(getCloudinaryOptimizedUrl(row.imageUrl, { width: 160, height: 160, crop: "fit" }))}" alt="${escapeHtml(row.orderNumber)}" />` : `<span class="empty-image">No image</span>`}</div></td>
+          <td class="order-marka">${escapeHtml(row.orderNumber)}</td>
           <td class="num">${row.ctns}</td>
           <td class="num">${row.pcsPerCtn}</td>
           <td class="num">${row.totalPcs}</td>
+          ${includeCustomerRate ? `<td class="customer-rate">${escapeHtml(row.customerRate || "")}</td>` : ""}
           <td class="customer">${escapeHtml(row.customer)}</td>
         </tr>
       `)
       .join("");
 
+    return `
+      <p class="summary"><strong>Order Numbers:</strong> ${escapeHtml(group.orderNumbers.join(", "))}</p>
+      <table class="details-table">
+        <colgroup>
+          <col style="width:${includeCustomerRate ? "58px" : "90px"}" />
+          <col style="width:${includeCustomerRate ? "120px" : "26%"}" />
+          <col style="width:${includeCustomerRate ? "42px" : "70px"}" />
+          <col style="width:${includeCustomerRate ? "52px" : "80px"}" />
+          <col style="width:${includeCustomerRate ? "62px" : "95px"}" />
+          ${includeCustomerRate ? `<col style="width:70px" />` : ""}
+          <col />
+        </colgroup>
+        <thead>
+          <tr>
+            <th>Image</th>
+            <th>${includeCustomerRate ? "Order No" : "Marka"}</th>
+            <th class="num">CTNS</th>
+            <th class="num">${includeCustomerRate ? "PCS<br/>CTN" : "PCS/CTN"}</th>
+            <th class="num">${includeCustomerRate ? "Total<br/>PCS" : "Total PCS"}</th>
+            ${includeCustomerRate ? `<th>Customer<br/>Rate</th>` : ""}
+            <th class="customer">${includeCustomerRate ? "Customer<br/>Name" : "Customer Name"}</th>
+          </tr>
+        </thead>
+        <tbody>${rowsMarkup}</tbody>
+      </table>
+    `;
+  };
+
+  const exportGroup = (group: DashboardLoadingGroup, rows: LoadingDatePdfPreviewRow[], includeCustomerRate: boolean) => {
     openDashboardPdfPreview(
       `Loading Date ${group.label}`,
       `loading-date-${(group.loadingDate || "no-date").replace(/[^a-z0-9-]+/gi, "-").toLowerCase()}`,
-      `
-        <p class="summary"><strong>Order Numbers:</strong> ${escapeHtml(group.orderNumbers.join(", "))}</p>
-        <table class="details-table">
-          <colgroup>
-            <col style="width:90px" />
-            <col style="width:26%" />
-            <col style="width:70px" />
-            <col style="width:80px" />
-            <col style="width:95px" />
-            <col />
-          </colgroup>
-          <thead>
-            <tr>
-              <th>Image</th>
-              <th>Marka</th>
-              <th class="num">CTNS</th>
-              <th class="num">PCS/CTN</th>
-              <th class="num">Total PCS</th>
-              <th class="customer">Customer Name</th>
-            </tr>
-          </thead>
-          <tbody>${rowsMarkup}</tbody>
-        </table>
-      `,
+      buildGroupPdfHtml(group, rows, includeCustomerRate),
+      includeCustomerRate,
     );
+  };
+
+  const handleSaveCustomerRates = async (group: DashboardLoadingGroup, rows: LoadingDatePdfPreviewRow[]) => {
+    const changedByOrderId = new Map<string, Map<string, string>>();
+    rows.forEach((row) => {
+      const original = group.pdfRows.find((entry) => entry.lineId === row.lineId);
+      if (!original || (original.customerRate || "") === (row.customerRate || "")) return;
+      const orderMap = changedByOrderId.get(row.orderId) || new Map<string, string>();
+      orderMap.set(row.lineId, row.customerRate || "");
+      changedByOrderId.set(row.orderId, orderMap);
+    });
+    if (changedByOrderId.size === 0) return;
+
+    setReviewBusy(true);
+    try {
+      for (const [orderId, lineUpdates] of changedByOrderId.entries()) {
+        const sourceOrder = sourceOrders.find((order) => order.id === orderId);
+        if (!sourceOrder) continue;
+        const updatedOrder = {
+          ...sourceOrder,
+          lines: sourceOrder.lines.map((line) => (
+            lineUpdates.has(line.id)
+              ? { ...line, customerRate: lineUpdates.get(line.id) || "" }
+              : line
+          )),
+          updatedAt: new Date().toISOString(),
+        };
+        if (isFirebaseOrdersMode) {
+          const savedOrder = await upsertRemoteOrder(updatedOrder as any);
+          upsertOrder(savedOrder);
+        } else {
+          upsertOrder(updatedOrder);
+        }
+      }
+      pushToast({ text: "Customer rates saved.", tone: "success" });
+    } catch (error) {
+      pushToast({ text: error instanceof Error ? error.message : "Failed to save customer rates.", tone: "danger" });
+      throw error;
+    } finally {
+      setReviewBusy(false);
+    }
   };
 
   const summaryGridLayout = useMemo(() => {
@@ -543,7 +613,7 @@ export default function DashboardPage() {
                             variant="secondary"
                             onClick={(event) => {
                               event.stopPropagation();
-                              exportGroup(group);
+                              setReviewGroupKey(group.loadingDate || LOADING_DATE_EMPTY_LABEL);
                             }}
                           >
                             <Download size={14} />
@@ -649,6 +719,25 @@ export default function DashboardPage() {
         </div>
       </div>
       <OrderLinesDetailModal order={viewOrder} isOpen={!!viewOrder} onClose={() => setViewOrderId(null)} />
+      <LoadingDatePdfReviewModal
+        open={Boolean(reviewGroup)}
+        loadingDateLabel={reviewGroup?.label || ""}
+        orderNumbers={reviewGroup?.orderNumbers || []}
+        rows={reviewGroup?.pdfRows || []}
+        busy={reviewBusy}
+        onClose={() => {
+          if (!reviewBusy) setReviewGroupKey(null);
+        }}
+        onSaveChanges={async (rows) => {
+          if (!reviewGroup) return;
+          await handleSaveCustomerRates(reviewGroup, rows);
+        }}
+        onGenerate={async (rows, includeCustomerRate) => {
+          if (!reviewGroup) return;
+          await handleSaveCustomerRates(reviewGroup, rows);
+          exportGroup(reviewGroup, rows, includeCustomerRate);
+        }}
+      />
     </PageShell>
   );
 }

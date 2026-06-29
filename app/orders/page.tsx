@@ -103,7 +103,7 @@ const createEmptyDraft = (_orders: Order[], reservedOrderNumber = "", defaultMar
   lines: [{ ...newLine(defaultMarka), details: "", marka: defaultMarka, totalCtns: 0, pcsPerCtn: 0, rmbPerPcs: 0, productPhotoUrl: "", photoUrl: "" }],
 });
 
-const meaningfulLine = (l: Order["lines"][number]) => !!(joinLineDetails(l) || l.marka?.trim() || l.productPhotoUrl || l.photoUrl || l.totalCtns || l.pcsPerCtn || l.rmbPerPcs);
+const meaningfulLine = (l: Order["lines"][number]) => !!(joinLineDetails(l) || l.marka?.trim() || l.productPhotoUrl || l.photoUrl || l.totalCtns || l.pcsPerCtn || l.rmbPerPcs || l.customerRate?.trim());
 
 type OrderSideEffectResult = {
   mode: "create" | "edit" | "archive" | "draft";
@@ -586,6 +586,7 @@ const normalizeComposerLineForComparison = (line: Order["lines"][number]) => {
     totalCtns: Number(seeded.totalCtns) || 0,
     pcsPerCtn: Number(seeded.pcsPerCtn) || 0,
     rmbPerPcs: Number(seeded.rmbPerPcs) || 0,
+    customerRate: (seeded.customerRate || "").trim(),
     customerId: (seeded.customerId || "").trim(),
     customerName: (seeded.customerName || "").trim(),
     customerSnapshot: seeded.customerSnapshot
