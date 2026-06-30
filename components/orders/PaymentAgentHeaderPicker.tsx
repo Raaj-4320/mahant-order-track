@@ -61,13 +61,14 @@ function PaymentAgentPickerRow({
 }: PickerRowProps) {
   const anchorRef = useRef<HTMLDivElement | null>(null);
   const [layout, setLayout] = useState<{ top: number; left: number; width: number } | null>(null);
+  const [showAllAgents, setShowAllAgents] = useState(false);
   const normalizedQuery = normalizeValue(query);
   const collator = useMemo(() => new Intl.Collator(undefined, { sensitivity: "base", numeric: true }), []);
-  const suggestions = paymentAgents
+  const filteredAgents = paymentAgents
     .filter((agent) => agent.status !== "inactive" && agent.lifecycle?.status !== "deleted")
     .filter((agent) => !normalizedQuery || normalizeValue(agent.name).startsWith(normalizedQuery) || normalizeValue(agent.agentCode).startsWith(normalizedQuery) || normalizeValue(agent.id).startsWith(normalizedQuery))
-    .sort((left, right) => collator.compare(left.name, right.name))
-    .slice(0, 4);
+    .sort((left, right) => collator.compare(left.name, right.name));
+  const suggestions = filteredAgents.slice(0, 5);
   const typedDuplicate = Boolean(normalizedQuery && duplicateKeys.has(normalizedQuery));
   const selectedAgent =
     paymentAgents.find((agent) => agent.id === split.paymentAgentId)
@@ -99,77 +100,97 @@ function PaymentAgentPickerRow({
 
   return (
     <div className="w-[198px] shrink-0">
-      <div ref={anchorRef} className="relative min-w-0">
-        <Input
-          value={query}
-          autoComplete="off"
-          autoCorrect="off"
-          autoCapitalize="none"
-          spellCheck={false}
-          onFocus={onOpen}
-          onBlur={() => window.setTimeout(onClose, 120)}
-          onChange={(event) => {
-            onQueryChange(event.target.value);
-            onOpen();
-          }}
-          placeholder="Search payment agent"
-          className={`h-10 rounded-xl bg-bg-card px-3 pr-8 text-[13px] shadow-none ${typedDuplicate ? "border-[var(--danger)]/50 focus:border-[var(--danger)]" : "border-border/60"}`}
-        />
-
-        {query || split.paymentAgentId || split.paymentBy ? (
-          <button
-            type="button"
-            aria-label="Clear payment agent"
-            title="Clear payment agent"
-            className="absolute right-2 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center rounded-md text-fg-subtle transition-colors hover:bg-bg-subtle hover:text-fg"
-            onMouseDown={(event) => {
-              event.preventDefault();
-              onClear();
+      <div className="flex items-center gap-2">
+        <div ref={anchorRef} className="relative min-w-0 flex-1">
+          <Input
+            value={query}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="none"
+            spellCheck={false}
+            onFocus={onOpen}
+            onBlur={() => window.setTimeout(onClose, 120)}
+            onChange={(event) => {
+              onQueryChange(event.target.value);
+              onOpen();
             }}
-          >
-            <X size={11} />
-          </button>
-        ) : null}
+            placeholder="Search payment agent"
+            className={`h-10 rounded-xl bg-bg-card px-3 ${selectedAgent ? "pr-24" : "pr-8"} text-[13px] shadow-none ${typedDuplicate ? "border-[var(--danger)]/50 focus:border-[var(--danger)]" : "border-border/60"}`}
+          />
 
-        {open && layout && typeof document !== "undefined"
-          ? createPortal(
-              <div
-                className="fixed z-[9999] overflow-hidden rounded-xl border border-border/70 bg-bg-card shadow-card"
-                style={{ top: layout.top, left: layout.left, width: layout.width }}
-              >
-                {suggestions.length > 0 ? (
-                  suggestions.map((agent) => {
-                    const isUsed = duplicateKeys.has(normalizeValue(agent.id)) || duplicateKeys.has(normalizeValue(agent.name));
-                    return (
+          {selectedAgent ? (
+            <div className="pointer-events-none absolute right-8 top-1/2 -translate-y-1/2 text-[10.5px] font-semibold text-emerald-600">
+              {formatAmount(availableCredit)}
+            </div>
+          ) : null}
+
+          {query || split.paymentAgentId || split.paymentBy ? (
+            <button
+              type="button"
+              aria-label="Clear payment agent"
+              title="Clear payment agent"
+              className="absolute right-2 top-1/2 grid h-5 w-5 -translate-y-1/2 place-items-center rounded-md text-fg-subtle transition-colors hover:bg-bg-subtle hover:text-fg"
+              onMouseDown={(event) => {
+                event.preventDefault();
+                onClear();
+              }}
+            >
+              <X size={11} />
+            </button>
+          ) : null}
+
+          {open && layout && typeof document !== "undefined"
+            ? createPortal(
+                <div
+                  className="fixed z-[9999] overflow-hidden rounded-xl border border-border/70 bg-bg-card shadow-card"
+                  style={{ top: layout.top, left: layout.left, width: layout.width }}
+                >
+                  {filteredAgents.length > 0 ? (
+                    <>
+                      {suggestions.map((agent) => {
+                        const credit = Math.max(0, Number(availableCreditByAgentId?.[agent.id]) || 0);
+                        const isUsed = duplicateKeys.has(normalizeValue(agent.id)) || duplicateKeys.has(normalizeValue(agent.name));
+                        return (
+                          <button
+                            key={agent.id}
+                            type="button"
+                            disabled={isUsed}
+                            className={`block w-full border-b border-border/50 px-3 py-2 text-left text-[11.5px] last:border-b-0 ${isUsed ? "cursor-not-allowed bg-bg-subtle/40 text-fg-subtle" : "text-fg hover:bg-bg-subtle"}`}
+                            onMouseDown={(event) => {
+                              event.preventDefault();
+                              if (isUsed) return;
+                              onSelect(agent);
+                            }}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="min-w-0 truncate">
+                                {agent.name}
+                                <span className="ml-1 text-emerald-600">- {formatAmount(credit)}</span>
+                              </span>
+                              {isUsed ? <span className="shrink-0 text-[10px] uppercase">Used</span> : null}
+                            </div>
+                          </button>
+                        );
+                      })}
                       <button
-                        key={agent.id}
                         type="button"
-                        disabled={isUsed}
-                        className={`block w-full border-b border-border/50 px-3 py-2 text-left text-[11.5px] last:border-b-0 ${isUsed ? "cursor-not-allowed bg-bg-subtle/40 text-fg-subtle" : "text-fg hover:bg-bg-subtle"}`}
+                        className="block w-full px-3 py-2 text-left text-[11.5px] font-medium text-brand hover:bg-bg-subtle"
                         onMouseDown={(event) => {
                           event.preventDefault();
-                          if (isUsed) return;
-                          onSelect(agent);
+                          setShowAllAgents(true);
+                          onClose();
                         }}
                       >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="truncate">{agent.name}</span>
-                          {isUsed ? <span className="shrink-0 text-[10px] uppercase">Used</span> : null}
-                        </div>
+                        + See all
                       </button>
-                    );
-                  })
-                ) : (
-                  <div className="px-3 py-2 text-[11.5px] text-fg-subtle">No matching payment agent. Add it from the Payment Agents tab first.</div>
-                )}
-              </div>,
-              document.body,
-            )
-          : null}
-      </div>
-      <div className="mt-1 flex items-center justify-between gap-2 px-1">
-        <div className="min-w-0 truncate text-[11px] text-fg-subtle">
-          {selectedAgent ? `Credit left: ${formatAmount(availableCredit)}` : ""}
+                    </>
+                  ) : (
+                    <div className="px-3 py-2 text-[11.5px] text-fg-subtle">No matching payment agent. Add it from the Payment Agents tab first.</div>
+                  )}
+                </div>,
+                document.body,
+              )
+            : null}
         </div>
         {totalSplits > 1 ? (
           <button
@@ -184,8 +205,53 @@ function PaymentAgentPickerRow({
           >
             <X size={12} />
           </button>
-        ) : <span className="h-7 w-7 shrink-0" />}
+        ) : null}
       </div>
+      {showAllAgents && typeof document !== "undefined"
+        ? createPortal(
+            <div className="fixed inset-0 z-[10000] bg-black/40 p-4" onMouseDown={() => setShowAllAgents(false)}>
+              <div className="mx-auto mt-16 w-full max-w-md rounded-2xl border border-border bg-bg-card shadow-card" onMouseDown={(event) => event.stopPropagation()}>
+                <div className="flex items-center justify-between border-b border-border px-4 py-3">
+                  <div className="text-[14px] font-semibold text-fg">All Payment Agents</div>
+                  <button
+                    type="button"
+                    className="grid h-7 w-7 place-items-center rounded-lg text-fg-subtle transition-colors hover:bg-bg-subtle hover:text-fg"
+                    onClick={() => setShowAllAgents(false)}
+                    aria-label="Close payment agent list"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+                <div className="max-h-[420px] overflow-y-auto p-2">
+                  {filteredAgents.map((agent) => {
+                    const credit = Math.max(0, Number(availableCreditByAgentId?.[agent.id]) || 0);
+                    const isUsed = duplicateKeys.has(normalizeValue(agent.id)) || duplicateKeys.has(normalizeValue(agent.name));
+                    return (
+                      <button
+                        key={agent.id}
+                        type="button"
+                        disabled={isUsed}
+                        className={`block w-full rounded-xl px-3 py-2 text-left text-[12px] ${isUsed ? "cursor-not-allowed bg-bg-subtle/40 text-fg-subtle" : "text-fg hover:bg-bg-subtle"}`}
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                          if (isUsed) return;
+                          setShowAllAgents(false);
+                          onSelect(agent);
+                        }}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="min-w-0 truncate">{agent.name}</span>
+                          <span className="shrink-0 text-[11px] font-semibold text-emerald-600">{formatAmount(credit)}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

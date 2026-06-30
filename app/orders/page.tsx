@@ -23,7 +23,7 @@ import { customerLedgerService } from "@/services/customerLedgerService";
 import { applyTypedCustomerToLine, CUSTOMER_NOT_LINKED, findCustomerByTypedName, getLineCustomerDisplay, getResolvedLineCustomerName, resolveCustomersForOrderLines } from "@/services/customers/customerResolution";
 import { createCustomerIdFromName, normalizeCustomerName } from "@/services/customers/customerIdentity";
 import { logCustomer, logDB, logError, logOrder, logPageAccess, logDataFlow } from "@/lib/logger";
-import { BadgePercent, Boxes, ChevronDown, ChevronLeft, ChevronRight, Eye, Filter, IndianRupee, List, Moon, Package2, Search, ShoppingBag, SquarePen, Sun, Trash2, WalletCards, X } from "lucide-react";
+import { BadgePercent, Boxes, ChevronDown, ChevronLeft, ChevronRight, Copy, Eye, Filter, IndianRupee, List, Moon, Package2, Search, ShoppingBag, SquarePen, Sun, Trash2, WalletCards, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { getOrderPaymentAgentDisplay, resolveOrderPaymentAgent } from "@/lib/orderDisplay";
 import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
@@ -83,6 +83,7 @@ const getDefaultMarkaFromOrderNumber = (orderNumber?: string | null) => {
 };
 const LAST_SELECTED_ORDER_SERIES_KEY = "orders:lastSelectedSeriesId";
 const LAST_SELECTED_ORDER_CATEGORY_KEY = "orders:lastSelectedCategory";
+const ORDER_COPY_CLIPBOARD_KEY = "orders:copied-order-payload";
 const PAGE_SIZE = 100;
 const SAVE_AUDIT_ENABLED = process.env.NODE_ENV !== "production";
 const createEmptyDraft = (_orders: Order[], reservedOrderNumber = "", defaultMarka = ""): Order => ({
@@ -155,6 +156,17 @@ type FlatHistoryRow = {
   line: Order["lines"][number] | null;
   extraLines: Order["lines"][number][];
   paymentMeta: ReturnType<typeof getOrderPaymentAgentDisplay>;
+};
+type CopiedOrderLinePayload = {
+  productImage: string;
+  markaSuffix: string;
+  totalCtns: number;
+  pcsPerCtn: number;
+  rmbPerPcs: number;
+};
+type CopiedOrderPayload = {
+  wechatId: string;
+  lines: CopiedOrderLinePayload[];
 };
 
 function PaymentStatusAmount({
@@ -665,6 +677,28 @@ const getStoredSelectedCategory = () => {
 const sortSuggestionsAlphabetically = (items: string[]) =>
   [...items].sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base", numeric: true }));
 
+const getStoredCopiedOrderPayload = (): CopiedOrderPayload | null => {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(ORDER_COPY_CLIPBOARD_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CopiedOrderPayload;
+    if (!parsed || !Array.isArray(parsed.lines)) return null;
+    return {
+      wechatId: typeof parsed.wechatId === "string" ? parsed.wechatId : "",
+      lines: parsed.lines.map((line) => ({
+        productImage: typeof line.productImage === "string" ? line.productImage : "",
+        markaSuffix: typeof line.markaSuffix === "string" ? line.markaSuffix : "",
+        totalCtns: Number(line.totalCtns) || 0,
+        pcsPerCtn: Number(line.pcsPerCtn) || 0,
+        rmbPerPcs: Number(line.rmbPerPcs) || 0,
+      })),
+    };
+  } catch {
+    return null;
+  }
+};
+
 const getTopPrefixSuggestions = (items: string[], query: string, limit = 4) => {
   const normalizedQuery = query.trim().toLowerCase();
   const uniqueSorted = sortSuggestionsAlphabetically(Array.from(new Set(items.filter(Boolean))));
@@ -946,6 +980,8 @@ export default function OrdersPage() {
   const [deleteSeriesBusy, setDeleteSeriesBusy] = useState(false);
   const [expandedOrderIds, setExpandedOrderIds] = useState<Record<string, boolean>>({});
   const [orderLineIndexes, setOrderLineIndexes] = useState<Record<string, number>>({});
+  const [copiedOrderPayload, setCopiedOrderPayload] = useState<CopiedOrderPayload | null>(() => getStoredCopiedOrderPayload());
+  const [orderContextMenu, setOrderContextMenu] = useState<{ order: Order; x: number; y: number } | null>(null);
   const wechatNormalizationStartedRef = useRef(false);
   const manuallyEditedPaymentSplitIdsRef = useRef<Set<string>>(new Set());
   const autoManagedPaymentSplitIdsRef = useRef<Set<string>>(new Set());
@@ -1047,6 +1083,33 @@ export default function OrdersPage() {
     };
   }, [isOrderModalOpen, paymentAgentsService]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!copiedOrderPayload) {
+      window.localStorage.removeItem(ORDER_COPY_CLIPBOARD_KEY);
+      return;
+    }
+    window.localStorage.setItem(ORDER_COPY_CLIPBOARD_KEY, JSON.stringify(copiedOrderPayload));
+  }, [copiedOrderPayload]);
+
+  useEffect(() => {
+    if (!orderContextMenu) return;
+    const closeMenu = () => setOrderContextMenu(null);
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeMenu();
+    };
+    window.addEventListener("mousedown", closeMenu);
+    window.addEventListener("scroll", closeMenu, true);
+    window.addEventListener("resize", closeMenu);
+    window.addEventListener("keydown", handleEscape);
+    return () => {
+      window.removeEventListener("mousedown", closeMenu);
+      window.removeEventListener("scroll", closeMenu, true);
+      window.removeEventListener("resize", closeMenu);
+      window.removeEventListener("keydown", handleEscape);
+    };
+  }, [orderContextMenu]);
+
   const composerPaymentAgentLiveFinanceById = useMemo(() => {
     const next = new Map<string, ReturnType<typeof calculatePaymentAgentLiveFinance>>();
     composerPaymentAgents.forEach((agent) => {
@@ -1054,6 +1117,57 @@ export default function OrdersPage() {
     });
     return next;
   }, [activeOrders, composerPaymentAgents, paymentAgentLedgerEntries]);
+
+  const buildCopiedOrderPayload = (order: Order): CopiedOrderPayload => {
+    const orderPrefix = getDefaultMarkaFromOrderNumber(order.number || order.orderNumber);
+    return {
+      wechatId: (order.wechatId || "").trim(),
+      lines: (order.lines || []).map((line) => {
+        const rawMarka = (line.marka || "").trim();
+        const markaSuffix = orderPrefix && rawMarka.startsWith(orderPrefix)
+          ? rawMarka.slice(orderPrefix.length).trim()
+          : rawMarka.replace(/^[^-]+-\s*/, "").trim() || rawMarka;
+        return {
+          productImage: (line.productPhotoUrl || line.photoUrl || "").trim(),
+          markaSuffix,
+          totalCtns: Number(line.totalCtns) || 0,
+          pcsPerCtn: Number(line.pcsPerCtn) || 0,
+          rmbPerPcs: Number(line.rmbPerPcs) || 0,
+        };
+      }),
+    };
+  };
+
+  const copyOrderForPaste = (order: Order) => {
+    const payload = buildCopiedOrderPayload(order);
+    setCopiedOrderPayload(payload);
+    setOrderContextMenu(null);
+    pushToast({ tone: "success", text: `Copied order ${order.number || order.orderNumber || ""}.` });
+  };
+
+  const pasteCopiedOrderIntoDraft = () => {
+    if (!copiedOrderPayload || copiedOrderPayload.lines.length === 0) return;
+    setDraft((current) => {
+      const markaPrefix = getDefaultMarkaFromOrderNumber(current.number || current.orderNumber);
+      const nextLines = copiedOrderPayload.lines.map((copiedLine, index) => ({
+        ...newLine(markaPrefix),
+        productPhotoUrl: copiedLine.productImage,
+        photoUrl: "",
+        marka: copiedLine.markaSuffix ? `${markaPrefix}${copiedLine.markaSuffix}` : markaPrefix,
+        totalCtns: copiedLine.totalCtns,
+        pcsPerCtn: copiedLine.pcsPerCtn,
+        rmbPerPcs: copiedLine.rmbPerPcs,
+        sortOrder: index,
+      }));
+      return {
+        ...current,
+        wechatId: copiedOrderPayload.wechatId,
+        lines: normalizeOrderLineSortOrder(nextLines),
+      };
+    });
+    pushToast({ tone: "success", text: "Copied order pasted into new order." });
+  };
+
   const composerAvailableCreditByAgentId = useMemo(
     () =>
       Object.fromEntries(
@@ -3408,7 +3522,13 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                   return <div key={row.key} className={cn("rounded-lg border border-border/70 bg-bg-card", hasLoadingDateHighlight && "border-emerald-300/45 bg-emerald-100/70 dark:border-emerald-400/50 dark:bg-emerald-500/14")}>
                     <div className={rowClass} style={{ gridTemplateColumns: historyGridTemplate }}>
                       <div className="min-w-0 px-1 py-1.5 text-center">
-                        <div className="min-w-0">
+                        <div
+                          className="min-w-0"
+                          onContextMenu={(event) => {
+                            event.preventDefault();
+                            setOrderContextMenu({ order, x: event.clientX, y: event.clientY });
+                          }}
+                        >
                           {renderOutsideEditableField({
                             order,
                             field: "orderNumber",
@@ -3567,9 +3687,9 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
       />
       </main>
       {isOrderModalOpen && <div className="fixed inset-0 z-50 bg-black/50 p-2 backdrop-blur-[2px] md:p-4">
-        <div className="relative mx-auto flex h-[92vh] w-full max-w-[1520px] flex-col overflow-y-auto rounded-[24px] border border-border bg-bg-card shadow-card" onClick={(e) => e.stopPropagation()}>
+        <div className="relative mx-auto flex h-[92vh] w-full max-w-[1520px] flex-col overflow-x-hidden overflow-y-auto rounded-[24px] border border-border bg-bg-card shadow-card" onClick={(e) => e.stopPropagation()}>
           <div className="border-b border-border/70 px-4 py-4 pr-5">
-            <div className="grid items-end gap-3 xl:grid-cols-[minmax(720px,2.65fr)_132px_minmax(320px,1.08fr)_minmax(160px,0.58fr)_52px]">
+            <div className="grid items-end gap-3 xl:grid-cols-[minmax(0,2.45fr)_132px_minmax(0,1.05fr)_minmax(0,0.72fr)_max-content]">
               <section className="min-w-0">
                 <PaymentAgentHeaderPicker
                   splits={getEditablePaymentAgentSplits(draft)}
@@ -3640,6 +3760,18 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
               </section>
               <section className="min-w-0">
                 <div className="flex h-full items-end justify-end">
+                  {mode === "add" ? (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="mr-2 h-10 rounded-xl px-3"
+                      onClick={pasteCopiedOrderIntoDraft}
+                      disabled={!copiedOrderPayload || copiedOrderPayload.lines.length === 0}
+                    >
+                      <Copy size={14} />
+                      Paste
+                    </Button>
+                  ) : null}
                   <Button
                     size="sm"
                     variant="secondary"
@@ -3697,6 +3829,23 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
         title={orderSaveState === "saving" ? "Saving order" : "Loading"}
         message={orderSaveState === "saving" ? "Saving your order now..." : "Fetching the latest data..."}
       />
+      {orderContextMenu ? createPortal(
+        <div
+          className="fixed z-[120] min-w-[140px] overflow-hidden rounded-xl border border-border bg-bg-card p-1 shadow-card"
+          style={{ top: orderContextMenu.y, left: orderContextMenu.x }}
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] text-fg transition-colors hover:bg-bg-subtle"
+            onClick={() => copyOrderForPaste(orderContextMenu.order)}
+          >
+            <Copy size={14} />
+            Copy Order
+          </button>
+        </div>,
+        document.body,
+      ) : null}
       <OrderLinesDetailModal order={viewOrder} isOpen={!!viewOrder} onClose={() => setViewOrder(null)} paymentAgents={composerPaymentAgents} paymentAgentSplits={viewOrder ? getEditablePaymentAgentSplits(viewOrder) : []} paymentAgentEvents={viewOrder ? getEditablePaymentAgentEvents(viewOrder) : []} onPaymentAgentEventsChange={viewOrder ? handleViewOrderPaymentAgentEventsChange : undefined} onPaymentAgentEventManualAmountEdit={viewOrder && isOrderModalOpen && viewOrder.id === draft.id ? markDraftPaymentEventAsManual : undefined} />
     </div>
   );
