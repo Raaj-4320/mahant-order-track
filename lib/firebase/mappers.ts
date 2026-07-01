@@ -438,6 +438,7 @@ export const orderFromFirestore = (doc: unknown): Order => {
           pcsPerCtn: asNum(line.pcsPerCtn) ?? 0,
           rmbPerPcs: asNum(line.rmbPerPcs) ?? 0,
           customerRate: asStr(line.customerRate) || undefined,
+          loadingDate: typeof line.loadingDate === "string" ? asStr(line.loadingDate) : undefined,
           sortOrder: asNum(line.sortOrder) ?? undefined,
         });
       }).sort((left, right) => {
@@ -522,6 +523,7 @@ export const orderToFirestore = (entity: Order): Record<string, unknown> => sani
     productPhotoUrl: line.productPhotoUrl ?? null,
     photoUrl: line.photoUrl ?? null,
     customerRate: line.customerRate ?? null,
+    loadingDate: line.loadingDate ?? null,
     notes: line.notes ?? null,
     sortOrder: line.sortOrder ?? index,
   })),

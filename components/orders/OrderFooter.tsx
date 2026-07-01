@@ -11,6 +11,7 @@ type Props = {
   lineTotal: number;
   shippingPrice: number;
   total: number;
+  notes?: string;
   onCancel: () => void;
   showCancel?: boolean;
   onSaveDraft: () => void;
@@ -27,6 +28,7 @@ type Props = {
   onPaymentAgentEventManualAmountEdit?: (eventId: string) => void;
   onViewDetails: () => void;
   onShippingPriceChange: (value: number) => void;
+  onNotesChange: (value: string) => void;
 };
 
 const fmtFinal = (value: number) => formatWholeMoney(value);
@@ -75,6 +77,7 @@ export function OrderFooter({
   lineTotal,
   shippingPrice,
   total,
+  notes = "",
   onCancel,
   showCancel = true,
   onSaveDraft,
@@ -91,6 +94,7 @@ export function OrderFooter({
   onPaymentAgentEventManualAmountEdit,
   onViewDetails,
   onShippingPriceChange,
+  onNotesChange,
 }: Props) {
   const [shippingInput, setShippingInput] = useState(shippingPrice ? String(shippingPrice) : "");
   const settlementSummary = useMemo(() => {
@@ -149,8 +153,8 @@ export function OrderFooter({
           </div>
         </div>
 
-        <div className="mt-3 flex flex-wrap items-end justify-end gap-2.5 border-t border-border/50 pt-3">
-          <label className="mr-auto flex flex-col gap-1">
+        <div className="mt-3 grid gap-3 border-t border-border/50 pt-3 xl:grid-cols-[120px_minmax(0,1fr)_auto] xl:items-end">
+          <label className="flex flex-col gap-1">
             <span className={METRIC_LABEL_CLASS}>Shipping</span>
             <input
               type="number"
@@ -173,19 +177,31 @@ export function OrderFooter({
               placeholder="0"
             />
           </label>
-          {showCancel ? <Button size="sm" variant="secondary" className={ACTION_BUTTON_CLASS} onClick={onCancel}>Cancel</Button> : null}
-          <Button size="sm" variant="secondary" className={ACTION_BUTTON_CLASS} onClick={onSaveDraft} disabled={disableSaveDraft}>{saveDraftLabel}</Button>
-          <Button size="sm" variant="secondary" className={ACTION_BUTTON_CLASS} onClick={onViewDetails}>View Order Details -&gt;</Button>
-          <Button
-            size="sm"
-            variant="primary"
-            className="h-10 rounded-xl px-5 text-[13px] font-semibold"
-            onClick={onSaveOrder}
-            disabled={disableSaveOrder}
-            title={disableSaveOrder ? "Complete required fields before saving as order." : undefined}
-          >
-            {saveOrderLabel}
-          </Button>
+          <label className="flex min-w-0 flex-col gap-1 xl:px-3">
+            <span className={cn(METRIC_LABEL_CLASS, "text-center")}>Notes</span>
+            <textarea
+              value={notes}
+              onChange={(event) => onNotesChange(event.target.value)}
+              placeholder="Add order notes for internal use"
+              rows={3}
+              className="min-h-[92px] w-full resize-y rounded-xl border border-border/60 bg-bg-card px-3 py-2.5 text-[14px] leading-6 text-fg outline-none transition-colors placeholder:text-fg-subtle focus:border-brand"
+            />
+          </label>
+          <div className="flex flex-wrap items-end justify-end gap-2.5">
+            {showCancel ? <Button size="sm" variant="secondary" className={ACTION_BUTTON_CLASS} onClick={onCancel}>Cancel</Button> : null}
+            <Button size="sm" variant="secondary" className={ACTION_BUTTON_CLASS} onClick={onSaveDraft} disabled={disableSaveDraft}>{saveDraftLabel}</Button>
+            <Button size="sm" variant="secondary" className={ACTION_BUTTON_CLASS} onClick={onViewDetails}>View Order Details -&gt;</Button>
+            <Button
+              size="sm"
+              variant="primary"
+              className="h-10 rounded-xl px-5 text-[13px] font-semibold"
+              onClick={onSaveOrder}
+              disabled={disableSaveOrder}
+              title={disableSaveOrder ? "Complete required fields before saving as order." : undefined}
+            >
+              {saveOrderLabel}
+            </Button>
+          </div>
         </div>
       </div>
     </footer>

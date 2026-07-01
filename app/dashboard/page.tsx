@@ -6,7 +6,7 @@ import { formatAmount, formatDate } from "@/lib/data";
 import { useCustomers } from "@/hooks/useCustomers";
 import { useOrders } from "@/hooks/useOrders";
 import { usePaymentAgents } from "@/hooks/usePaymentAgents";
-import { lineTotalPcs, lineTotalRmb } from "@/lib/types";
+import { lineTotalPcs, lineTotalRmb, type Order } from "@/lib/types";
 import { isDashboardOrder } from "@/services/selectors";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -19,6 +19,9 @@ import { LoadingDatePdfReviewModal, type LoadingDatePdfPreviewRow } from "@/comp
 import { getLineCustomerDisplay } from "@/services/customers/customerResolution";
 import { getCloudinaryOptimizedUrl } from "@/lib/cloudinary/image";
 import { getOrderPaymentAgentDisplay } from "@/lib/orderDisplay";
+import { getOrdersService } from "@/services/ordersService";
+import { useRouter } from "next/navigation";
+import { useDashboardVisibility } from "@/components/auth/DashboardVisibilityContext";
 import Link from "next/link";
 
 type DashboardPdfRow = {
@@ -87,6 +90,12 @@ const buildDateSearchTokens = (dateValue?: string) => {
   if (!year || !month || !day) return [dateValue];
   return [dateValue, `${day}/${month}/${year}`, `${day}${month}${year}`, `${day}${month}${year.slice(-2)}`, `${year}${month}${day}`];
 };
+const getDashboardLineLoadingDate = (order: Order, line: Order["lines"][number]) => {
+  if (Object.prototype.hasOwnProperty.call(line, "loadingDate")) {
+    return String(line.loadingDate || "").trim();
+  }
+  return String(line.loadingDate || order.loadingDate || "").trim();
+};
 const splitDisplayItems = (value?: string) =>
   Array.from(new Set(String(value || "").split(",").map((item) => item.trim()).filter(Boolean)));
 const estimateCarouselWidth = (value: string, min: number, max: number) =>
@@ -130,8 +139,11 @@ const openDashboardPdfPreview = (title: string, fileName: string, html: string, 
 };
 
 export default function DashboardPage() {
+  const router = useRouter();
+  const { dashboardVisible } = useDashboardVisibility();
   const { orders, upsertOrder, pushToast } = useStore();
   const { data: remoteOrders, isLoading: ordersLoading, upsertOrder: upsertRemoteOrder } = useOrders();
+  const ordersService = useMemo(() => getOrdersService(), []);
   const { data: customers } = useCustomers();
   const { data: paymentAgents } = usePaymentAgents();
   const ordersSource = ordersDataSource();
@@ -165,6 +177,15 @@ export default function DashboardPage() {
     if (typeof window === "undefined") return;
     window.localStorage.setItem(DASHBOARD_LOADING_NOTES_KEY, JSON.stringify(groupNotes));
   }, [groupNotes]);
+
+  useEffect(() => {
+    if (dashboardVisible) return;
+    router.replace("/orders");
+  }, [dashboardVisible, router]);
+
+  if (!dashboardVisible) {
+    return null;
+  }
 
   const cycleIndex = (
     setter: Dispatch<SetStateAction<Record<string, number>>>,
@@ -204,6 +225,8 @@ export default function DashboardPage() {
           line.detail2 || "",
           line.detail3 || "",
           line.details || "",
+          getDashboardLineLoadingDate(order, line),
+          ...buildDateSearchTokens(getDashboardLineLoadingDate(order, line)),
           getLineCustomerDisplay(line, customers),
           lineTotalPcs(line),
           line.rmbPerPcs || 0,
@@ -219,66 +242,77 @@ export default function DashboardPage() {
     const groups = new Map<string, DashboardLoadingGroup>();
 
     filteredOrders.forEach((order) => {
-      const key = order.loadingDate || LOADING_DATE_EMPTY_LABEL;
-      const current = groups.get(key) || {
-        loadingDate: order.loadingDate || "",
-        label: order.loadingDate ? formatDate(order.loadingDate) : LOADING_DATE_EMPTY_LABEL,
-        customerNames: [],
-        orderNumbers: [],
-        orderLinks: [],
-        paymentAgents: [],
-        ordersCount: 0,
-        totalCtns: 0,
-        totalCustomers: 0,
-        totalAmount: 0,
-        orders: [],
-        pdfRows: [],
-      };
-
-      const orderNumber = order.number || order.orderNumber || "-";
-      const paymentAgent = getOrderPaymentAgentDisplay(order, paymentAgents).value;
-      const customerNames = Array.from(new Set(order.lines.map((line) => getLineCustomerDisplay(line, customers) || "-")));
-      const orderTotalCtns = order.lines.reduce((sum, line) => sum + (Number(line.totalCtns) || 0), 0);
-      const orderAmount = order.lines.reduce((sum, line) => sum + lineTotalRmb(line), 0);
-
-      current.ordersCount += 1;
-      current.orderNumbers.push(orderNumber);
-      current.orderLinks.push({ orderId: order.id, orderNumber });
-      if (paymentAgent && !current.paymentAgents.includes(paymentAgent)) current.paymentAgents.push(paymentAgent);
-      customerNames.forEach((customerName) => {
-        if (customerName && !current.customerNames.includes(customerName)) current.customerNames.push(customerName);
-      });
-      current.totalCtns += orderTotalCtns;
-      current.totalAmount += orderAmount;
-      current.orders.push({
-        orderId: order.id,
-        orderNumber,
-        imageUrl: order.lines.find((line) => (line.productPhotoUrl || line.photoUrl || "").trim())?.productPhotoUrl
-          || order.lines.find((line) => (line.productPhotoUrl || line.photoUrl || "").trim())?.photoUrl
-          || "",
-        marka: Array.from(new Set(order.lines.map((line) => line.marka || line.productSnapshot?.name || "-"))).join(", "),
-        customer: customerNames.join(", "),
-        paymentAgent,
-        totalCtns: orderTotalCtns,
-        amount: orderAmount,
-      });
-
+      const linesByLoadingDate = new Map<string, typeof order.lines>();
       order.lines.forEach((line) => {
-        current.pdfRows.push({
-          orderId: order.id,
-          lineId: line.id,
-          orderNumber,
-          imageUrl: line.productPhotoUrl || line.photoUrl || "",
-          marka: line.marka || line.productSnapshot?.name || "-",
-          ctns: Number(line.totalCtns) || 0,
-          pcsPerCtn: Number(line.pcsPerCtn) || 0,
-          totalPcs: lineTotalPcs(line),
-          customer: getLineCustomerDisplay(line, customers) || "-",
-          customerRate: line.customerRate || "",
-        });
+        const lineLoadingDate = getDashboardLineLoadingDate(order, line);
+        const key = lineLoadingDate || LOADING_DATE_EMPTY_LABEL;
+        const currentLines = linesByLoadingDate.get(key) || [];
+        currentLines.push(line);
+        linesByLoadingDate.set(key, currentLines);
       });
 
-      groups.set(key, current);
+      linesByLoadingDate.forEach((groupLines, key) => {
+        const lineLoadingDate = key === LOADING_DATE_EMPTY_LABEL ? "" : key;
+        const current = groups.get(key) || {
+          loadingDate: lineLoadingDate,
+          label: lineLoadingDate ? formatDate(lineLoadingDate) : LOADING_DATE_EMPTY_LABEL,
+          customerNames: [],
+          orderNumbers: [],
+          orderLinks: [],
+          paymentAgents: [],
+          ordersCount: 0,
+          totalCtns: 0,
+          totalCustomers: 0,
+          totalAmount: 0,
+          orders: [],
+          pdfRows: [],
+        };
+
+        const orderNumber = order.number || order.orderNumber || "-";
+        const paymentAgent = getOrderPaymentAgentDisplay(order, paymentAgents).value;
+        const customerNames = Array.from(new Set(groupLines.map((line) => getLineCustomerDisplay(line, customers) || "-")));
+        const orderTotalCtns = groupLines.reduce((sum, line) => sum + (Number(line.totalCtns) || 0), 0);
+        const orderAmount = groupLines.reduce((sum, line) => sum + lineTotalRmb(line), 0);
+
+        current.ordersCount += 1;
+        if (!current.orderNumbers.includes(orderNumber)) current.orderNumbers.push(orderNumber);
+        if (!current.orderLinks.some((entry) => entry.orderId === order.id)) current.orderLinks.push({ orderId: order.id, orderNumber });
+        if (paymentAgent && !current.paymentAgents.includes(paymentAgent)) current.paymentAgents.push(paymentAgent);
+        customerNames.forEach((customerName) => {
+          if (customerName && !current.customerNames.includes(customerName)) current.customerNames.push(customerName);
+        });
+        current.totalCtns += orderTotalCtns;
+        current.totalAmount += orderAmount;
+        current.orders.push({
+          orderId: order.id,
+          orderNumber,
+          imageUrl: groupLines.find((line) => (line.productPhotoUrl || line.photoUrl || "").trim())?.productPhotoUrl
+            || groupLines.find((line) => (line.productPhotoUrl || line.photoUrl || "").trim())?.photoUrl
+            || "",
+          marka: Array.from(new Set(groupLines.map((line) => line.marka || line.productSnapshot?.name || "-"))).join(", "),
+          customer: customerNames.join(", "),
+          paymentAgent,
+          totalCtns: orderTotalCtns,
+          amount: orderAmount,
+        });
+
+        groupLines.forEach((line) => {
+          current.pdfRows.push({
+            orderId: order.id,
+            lineId: line.id,
+            orderNumber,
+            imageUrl: line.productPhotoUrl || line.photoUrl || "",
+            marka: line.marka || line.productSnapshot?.name || "-",
+            ctns: Number(line.totalCtns) || 0,
+            pcsPerCtn: Number(line.pcsPerCtn) || 0,
+            totalPcs: lineTotalPcs(line),
+            customer: getLineCustomerDisplay(line, customers) || "-",
+            customerRate: line.customerRate || "",
+          });
+        });
+
+        groups.set(key, current);
+      });
     });
 
     return Array.from(groups.values())
@@ -365,9 +399,25 @@ export default function DashboardPage() {
       for (const [orderId, lineUpdates] of changedByOrderId.entries()) {
         const sourceOrder = sourceOrders.find((order) => order.id === orderId);
         if (!sourceOrder) continue;
+        const latestOrder = isFirebaseOrdersMode
+          ? await ordersService.getOrderById(orderId)
+          : (sourceOrders.find((order) => order.id === orderId) ?? orders.find((order) => order.id === orderId) ?? sourceOrder);
+        const baseOrder = latestOrder ?? sourceOrder;
         const updatedOrder = {
-          ...sourceOrder,
-          lines: sourceOrder.lines.map((line) => (
+          ...baseOrder,
+          paymentAgentSplits: baseOrder.paymentAgentSplits,
+          paymentAgentPaymentEvents: baseOrder.paymentAgentPaymentEvents,
+          paymentAgentSettlementSnapshot: baseOrder.paymentAgentSettlementSnapshot,
+          dependencyMap: baseOrder.dependencyMap,
+          paidAmount: baseOrder.paidAmount,
+          dueAmount: baseOrder.dueAmount,
+          paymentStatus: baseOrder.paymentStatus,
+          paymentAgentId: baseOrder.paymentAgentId,
+          paymentBy: baseOrder.paymentBy,
+          paymentByName: baseOrder.paymentByName,
+          paymentAgentName: baseOrder.paymentAgentName,
+          paymentAgentSnapshot: baseOrder.paymentAgentSnapshot,
+          lines: baseOrder.lines.map((line) => (
             lineUpdates.has(line.id)
               ? { ...line, customerRate: lineUpdates.get(line.id) || "" }
               : line
@@ -482,240 +532,242 @@ export default function DashboardPage() {
       <div className="space-y-4 p-6">
         {isFirebaseOrdersMode && ordersLoading ? <div className="card p-4 text-sm text-fg-subtle">Loading dashboard orders from Firestore...</div> : null}
 
-        <div className="card grid grid-cols-[minmax(280px,1fr)_auto] items-center gap-4 p-4 max-[720px]:grid-cols-1">
-          <div className="min-w-0">
-            <Input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search loading date groups, order no., marka, product, customer..."
-              leadingIcon={<Search size={14} />}
-            />
-          </div>
-          <div className="justify-self-end whitespace-nowrap pr-1 text-[12px] text-fg-subtle max-[720px]:justify-self-start">
-            {loadingGroups.length} loading date group{loadingGroups.length === 1 ? "" : "s"}
-          </div>
-        </div>
-
         <div className="space-y-4">
-          {loadingGroups.length > 0 ? (
-            <div className="overflow-x-auto">
-              <div className="space-y-3" style={{ minWidth: summaryGridLayout.minWidth }}>
-                <div className="card overflow-hidden border-b border-border bg-bg-card/70">
-                  <div className="px-3.5 py-2">
-                    <div
-                      className={`${DASHBOARD_UPPERCASE_LABEL} grid min-h-[35px] items-center gap-x-0`}
-                      style={{ gridTemplateColumns: summaryGridLayout.template }}
-                    >
-                      <div />
-                      <div className="px-2">Loading Date</div>
-                      <div className="px-2">Notes</div>
-                      <div className="min-w-0 px-2">Marka</div>
-                      <div className={DASHBOARD_DIVIDER_CELL}>CTNS</div>
-                      <div className={DASHBOARD_DIVIDER_CELL}>Amount</div>
-                      <div className={DASHBOARD_DIVIDER_CELL}>Customers</div>
-                      <div className={DASHBOARD_DIVIDER_CELL}>Orders</div>
-                      <div className={DASHBOARD_DIVIDER_CELL}>Payment Agents</div>
-                      <div className="border-l border-border px-2 text-right">Actions</div>
+          <div className="card grid grid-cols-[minmax(280px,1fr)_auto] items-center gap-4 p-4 max-[720px]:grid-cols-1">
+            <div className="min-w-0">
+              <Input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search loading date groups, order no., marka, product, customer..."
+                leadingIcon={<Search size={14} />}
+              />
+            </div>
+            <div className="justify-self-end whitespace-nowrap pr-1 text-[12px] text-fg-subtle max-[720px]:justify-self-start">
+              {loadingGroups.length} loading date group{loadingGroups.length === 1 ? "" : "s"}
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            {loadingGroups.length > 0 ? (
+              <div className="overflow-x-auto">
+                <div className="space-y-3" style={{ minWidth: summaryGridLayout.minWidth }}>
+                  <div className="card overflow-hidden border-b border-border bg-bg-card/70">
+                    <div className="px-3.5 py-2">
+                      <div
+                        className={`${DASHBOARD_UPPERCASE_LABEL} grid min-h-[35px] items-center gap-x-0`}
+                        style={{ gridTemplateColumns: summaryGridLayout.template }}
+                      >
+                        <div />
+                        <div className="px-2">Loading Date</div>
+                        <div className="px-2">Notes</div>
+                        <div className="min-w-0 px-2">Order Numbers</div>
+                        <div className={DASHBOARD_DIVIDER_CELL}>CTNS</div>
+                        <div className={DASHBOARD_DIVIDER_CELL}>Amount</div>
+                        <div className={DASHBOARD_DIVIDER_CELL}>Customers</div>
+                        <div className={DASHBOARD_DIVIDER_CELL}>Orders</div>
+                        <div className={DASHBOARD_DIVIDER_CELL}>Payment Agents</div>
+                        <div className="border-l border-border px-2 text-right">Actions</div>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                {loadingGroups.map((group) => (
-                  <section key={group.loadingDate || LOADING_DATE_EMPTY_LABEL} className="card overflow-hidden rounded-[24px]">
-                    <div className="px-3.5 py-2">
-                      {(() => {
-                        const groupKey = group.loadingDate || LOADING_DATE_EMPTY_LABEL;
-                        const orderIndex = Math.min(summaryIndexes[`${groupKey}:orders`] ?? 0, Math.max(group.orderLinks.length - 1, 0));
-                        const customerIndex = Math.min(summaryIndexes[`${groupKey}:customers`] ?? 0, Math.max(group.customerNames.length - 1, 0));
-                        const paymentAgentIndex = Math.min(summaryIndexes[`${groupKey}:agents`] ?? 0, Math.max(group.paymentAgents.length - 1, 0));
+                  {loadingGroups.map((group) => (
+                    <section key={group.loadingDate || LOADING_DATE_EMPTY_LABEL} className="card overflow-hidden rounded-[24px]">
+                      <div className="px-3.5 py-2">
+                        {(() => {
+                          const groupKey = group.loadingDate || LOADING_DATE_EMPTY_LABEL;
+                          const orderIndex = Math.min(summaryIndexes[`${groupKey}:orders`] ?? 0, Math.max(group.orderLinks.length - 1, 0));
+                          const customerIndex = Math.min(summaryIndexes[`${groupKey}:customers`] ?? 0, Math.max(group.customerNames.length - 1, 0));
+                          const paymentAgentIndex = Math.min(summaryIndexes[`${groupKey}:agents`] ?? 0, Math.max(group.paymentAgents.length - 1, 0));
 
-                        return (
-                      <div
-                        className="grid min-h-[60px] items-center gap-x-0 gap-y-1"
-                        style={{ gridTemplateColumns: summaryGridLayout.template }}
-                        onClick={() => setExpandedGroups((prev) => ({ ...prev, [groupKey]: !prev[groupKey] }))}
-                      >
-                        <button
-                          type="button"
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-full text-fg-subtle transition-colors hover:bg-bg-subtle hover:text-fg"
-                          aria-label={expandedGroups[groupKey] ? "Collapse loading date group" : "Expand loading date group"}
+                          return (
+                        <div
+                          className="grid min-h-[60px] items-center gap-x-0 gap-y-1"
+                          style={{ gridTemplateColumns: summaryGridLayout.template }}
+                          onClick={() => setExpandedGroups((prev) => ({ ...prev, [groupKey]: !prev[groupKey] }))}
                         >
-                          <ChevronDown
-                            size={16}
-                            className={`transition-transform ${expandedGroups[groupKey] ? "rotate-180" : ""}`}
-                          />
-                        </button>
-                      <div className="min-w-0 px-2">
-                          <div className="truncate text-[18px] font-semibold leading-tight text-fg" title={group.label}>{group.label}</div>
-                        </div>
-                        <div className="min-w-0 px-2" onClick={(event) => event.stopPropagation()}>
-                          <Input
-                            value={groupNotes[group.loadingDate || LOADING_DATE_EMPTY_LABEL] || ""}
-                            onChange={(event) =>
-                              setGroupNotes((prev) => ({
-                                ...prev,
-                                [group.loadingDate || LOADING_DATE_EMPTY_LABEL]: event.target.value,
-                              }))
-                            }
-                            placeholder="Add loading-date notes"
-                            className="h-8 w-full rounded-lg border border-border bg-bg-card px-2.5 text-[13px]"
-                          />
-                        </div>
-                        <div className="min-w-0 overflow-hidden px-2">
-                          {renderSwitcher({
-                            items: group.orderLinks.map((item) => item.orderNumber),
-                            activeIndex: orderIndex,
-                            onPrevious: () => cycleIndex(setSummaryIndexes, `${groupKey}:orders`, group.orderLinks.length, -1),
-                            onNext: () => cycleIndex(setSummaryIndexes, `${groupKey}:orders`, group.orderLinks.length, 1),
-                            className: "text-[15px] leading-tight text-fg-subtle",
-                            stopPropagation: true,
-                            renderItem: (item) => (
-                              <Link
-                                href={`/orders?edit=${group.orderLinks[orderIndex]?.orderId || ""}`}
-                                className="text-brand hover:underline"
-                                onClick={(event) => event.stopPropagation()}
-                              >
-                                {item}
-                              </Link>
-                            ),
-                          })}
-                        </div>
-                        <div className={`${DASHBOARD_DIVIDER_CELL} flex min-h-[40px] items-center`}>
-                          <div className={DASHBOARD_METRIC_VALUE}>{group.totalCtns}</div>
-                        </div>
-                        <div className={`${DASHBOARD_DIVIDER_CELL} flex min-h-[40px] items-center`}>
-                          <div className={DASHBOARD_METRIC_VALUE}>{formatAmount(group.totalAmount)}</div>
-                        </div>
-                        <div className={`min-w-0 ${DASHBOARD_DIVIDER_CELL} flex min-h-[40px] items-center overflow-hidden`}>
-                          {renderSwitcher({
-                            items: group.customerNames,
-                            activeIndex: customerIndex,
-                            onPrevious: () => cycleIndex(setSummaryIndexes, `${groupKey}:customers`, group.customerNames.length, -1),
-                            onNext: () => cycleIndex(setSummaryIndexes, `${groupKey}:customers`, group.customerNames.length, 1),
-                            stopPropagation: true,
-                          })}
-                        </div>
-                        <div className={`${DASHBOARD_DIVIDER_CELL} flex min-h-[40px] items-center`}>
-                          <div className={DASHBOARD_METRIC_VALUE}>{group.ordersCount}</div>
-                        </div>
-                        <div className={`min-w-0 ${DASHBOARD_DIVIDER_CELL} flex min-h-[40px] items-center overflow-hidden`}>
-                          {renderSwitcher({
-                            items: group.paymentAgents,
-                            activeIndex: paymentAgentIndex,
-                            onPrevious: () => cycleIndex(setSummaryIndexes, `${groupKey}:agents`, group.paymentAgents.length, -1),
-                            onNext: () => cycleIndex(setSummaryIndexes, `${groupKey}:agents`, group.paymentAgents.length, 1),
-                            stopPropagation: true,
-                          })}
-                        </div>
-                        <div className="flex min-h-[40px] items-center justify-end border-l border-border px-2">
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              setReviewGroupKey(group.loadingDate || LOADING_DATE_EMPTY_LABEL);
-                            }}
+                          <button
+                            type="button"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-full text-fg-subtle transition-colors hover:bg-bg-subtle hover:text-fg"
+                            aria-label={expandedGroups[groupKey] ? "Collapse loading date group" : "Expand loading date group"}
                           >
-                            <Download size={14} />
-                            Export PDF
-                          </Button>
+                            <ChevronDown
+                              size={16}
+                              className={`transition-transform ${expandedGroups[groupKey] ? "rotate-180" : ""}`}
+                            />
+                          </button>
+                        <div className="min-w-0 px-2">
+                            <div className="truncate text-[18px] font-semibold leading-tight text-fg" title={group.label}>{group.label}</div>
+                          </div>
+                          <div className="min-w-0 px-2" onClick={(event) => event.stopPropagation()}>
+                            <Input
+                              value={groupNotes[group.loadingDate || LOADING_DATE_EMPTY_LABEL] || ""}
+                              onChange={(event) =>
+                                setGroupNotes((prev) => ({
+                                  ...prev,
+                                  [group.loadingDate || LOADING_DATE_EMPTY_LABEL]: event.target.value,
+                                }))
+                              }
+                              placeholder="Add loading-date notes"
+                              className="h-8 w-full rounded-lg border border-border bg-bg-card px-2.5 text-[13px]"
+                            />
+                          </div>
+                          <div className="min-w-0 overflow-hidden px-2">
+                            {renderSwitcher({
+                              items: group.orderLinks.map((item) => item.orderNumber),
+                              activeIndex: orderIndex,
+                              onPrevious: () => cycleIndex(setSummaryIndexes, `${groupKey}:orders`, group.orderLinks.length, -1),
+                              onNext: () => cycleIndex(setSummaryIndexes, `${groupKey}:orders`, group.orderLinks.length, 1),
+                              className: "text-[15px] leading-tight text-fg-subtle",
+                              stopPropagation: true,
+                              renderItem: (item) => (
+                                <Link
+                                  href={`/orders?edit=${group.orderLinks[orderIndex]?.orderId || ""}`}
+                                  className="text-brand hover:underline"
+                                  onClick={(event) => event.stopPropagation()}
+                                >
+                                  {item}
+                                </Link>
+                              ),
+                            })}
+                          </div>
+                          <div className={`${DASHBOARD_DIVIDER_CELL} flex min-h-[40px] items-center`}>
+                            <div className={DASHBOARD_METRIC_VALUE}>{group.totalCtns}</div>
+                          </div>
+                          <div className={`${DASHBOARD_DIVIDER_CELL} flex min-h-[40px] items-center`}>
+                            <div className={DASHBOARD_METRIC_VALUE}>{formatAmount(group.totalAmount)}</div>
+                          </div>
+                          <div className={`min-w-0 ${DASHBOARD_DIVIDER_CELL} flex min-h-[40px] items-center overflow-hidden`}>
+                            {renderSwitcher({
+                              items: group.customerNames,
+                              activeIndex: customerIndex,
+                              onPrevious: () => cycleIndex(setSummaryIndexes, `${groupKey}:customers`, group.customerNames.length, -1),
+                              onNext: () => cycleIndex(setSummaryIndexes, `${groupKey}:customers`, group.customerNames.length, 1),
+                              stopPropagation: true,
+                            })}
+                          </div>
+                          <div className={`${DASHBOARD_DIVIDER_CELL} flex min-h-[40px] items-center`}>
+                            <div className={DASHBOARD_METRIC_VALUE}>{group.ordersCount}</div>
+                          </div>
+                          <div className={`min-w-0 ${DASHBOARD_DIVIDER_CELL} flex min-h-[40px] items-center overflow-hidden`}>
+                            {renderSwitcher({
+                              items: group.paymentAgents,
+                              activeIndex: paymentAgentIndex,
+                              onPrevious: () => cycleIndex(setSummaryIndexes, `${groupKey}:agents`, group.paymentAgents.length, -1),
+                              onNext: () => cycleIndex(setSummaryIndexes, `${groupKey}:agents`, group.paymentAgents.length, 1),
+                              stopPropagation: true,
+                            })}
+                          </div>
+                          <div className="flex min-h-[40px] items-center justify-end border-l border-border px-2">
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setReviewGroupKey(group.loadingDate || LOADING_DATE_EMPTY_LABEL);
+                              }}
+                            >
+                              <Download size={14} />
+                              Export PDF
+                            </Button>
+                          </div>
                         </div>
+                          );
+                        })()}
                       </div>
-                        );
-                      })()}
-                    </div>
 
-                    {expandedGroups[group.loadingDate || LOADING_DATE_EMPTY_LABEL] ? (
-                      <div className="border-t border-border">
-                        <table className="w-full text-[14px]">
-                          <thead className="bg-bg-card/95 text-[12.5px] uppercase tracking-[0.04em] text-fg-subtle">
-                            <tr className="border-b border-border">
-                              <th className="px-3 py-2 text-left">Order ID</th>
-                              <th className="px-3 py-2 text-left">Product Image</th>
-                              <th className="px-3 py-2 text-left">Marka</th>
-                              <th className="px-3 py-2 text-left">Customer</th>
-                              <th className="px-3 py-2 text-left">Payment Agent(s)</th>
-                              <th className="px-3 py-2 text-center">CTNS</th>
-                              <th className="px-3 py-2 text-right">Total Amount</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {group.orders.map((orderRow) => (
-                              (() => {
-                                const markaItems = splitDisplayItems(orderRow.marka);
-                                const customerItems = splitDisplayItems(orderRow.customer);
-                                const paymentAgentItems = splitDisplayItems(orderRow.paymentAgent);
-                                const markaKey = `${orderRow.orderId}:marka`;
-                                const customerKey = `${orderRow.orderId}:customer`;
-                                const paymentAgentKey = `${orderRow.orderId}:payment-agent`;
-                                const markaIndex = Math.min(detailIndexes[markaKey] ?? 0, Math.max(markaItems.length - 1, 0));
-                                const customerIndex = Math.min(detailIndexes[customerKey] ?? 0, Math.max(customerItems.length - 1, 0));
-                                const paymentAgentIndex = Math.min(detailIndexes[paymentAgentKey] ?? 0, Math.max(paymentAgentItems.length - 1, 0));
+                      {expandedGroups[group.loadingDate || LOADING_DATE_EMPTY_LABEL] ? (
+                        <div className="border-t border-border">
+                          <table className="w-full text-[14px]">
+                            <thead className="bg-bg-card/95 text-[12.5px] uppercase tracking-[0.04em] text-fg-subtle">
+                              <tr className="border-b border-border">
+                                <th className="px-3 py-2 text-left">Order ID</th>
+                                <th className="px-3 py-2 text-left">Product Image</th>
+                                <th className="px-3 py-2 text-left">Marka</th>
+                                <th className="px-3 py-2 text-left">Customer</th>
+                                <th className="px-3 py-2 text-left">Payment Agent(s)</th>
+                                <th className="px-3 py-2 text-center">CTNS</th>
+                                <th className="px-3 py-2 text-right">Total Amount</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {group.orders.map((orderRow) => (
+                                (() => {
+                                  const markaItems = splitDisplayItems(orderRow.marka);
+                                  const customerItems = splitDisplayItems(orderRow.customer);
+                                  const paymentAgentItems = splitDisplayItems(orderRow.paymentAgent);
+                                  const markaKey = `${orderRow.orderId}:marka`;
+                                  const customerKey = `${orderRow.orderId}:customer`;
+                                  const paymentAgentKey = `${orderRow.orderId}:payment-agent`;
+                                  const markaIndex = Math.min(detailIndexes[markaKey] ?? 0, Math.max(markaItems.length - 1, 0));
+                                  const customerIndex = Math.min(detailIndexes[customerKey] ?? 0, Math.max(customerItems.length - 1, 0));
+                                  const paymentAgentIndex = Math.min(detailIndexes[paymentAgentKey] ?? 0, Math.max(paymentAgentItems.length - 1, 0));
 
-                                return (
-                                  <tr key={orderRow.orderId} className="border-b border-border/70 transition-colors last:border-b-0 hover:bg-bg-subtle/30">
-                                    <td className="px-3 py-2.5">
-                                      <div className="text-[16px] font-semibold text-fg">{orderRow.orderNumber}</div>
-                                      <div className="text-[12.5px] text-fg-subtle">{orderRow.orderId}</div>
-                                    </td>
-                                    <td className="px-3 py-2.5">
-                                      <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-lg border border-border bg-bg-subtle">
-                                        {orderRow.imageUrl ? (
-                                          <img
-                                            src={getCloudinaryOptimizedUrl(orderRow.imageUrl, { width: 160, height: 160, crop: "fit" })}
-                                            alt={orderRow.marka}
-                                            className="h-full w-full object-contain"
-                                            loading="lazy"
-                                            decoding="async"
-                                          />
-                                        ) : (
-                                          <span className="text-[11px] text-fg-subtle">No image</span>
-                                        )}
-                                      </div>
-                                    </td>
-                                    <td className="px-3 py-2.5">
-                                      {renderSwitcher({
-                                        items: markaItems,
-                                        activeIndex: markaIndex,
-                                        onPrevious: () => cycleIndex(setDetailIndexes, markaKey, markaItems.length, -1),
-                                        onNext: () => cycleIndex(setDetailIndexes, markaKey, markaItems.length, 1),
-                                        className: "text-[16px] font-medium leading-tight text-fg",
-                                      })}
-                                    </td>
-                                    <td className="px-3 py-2.5">
-                                      {renderSwitcher({
-                                        items: customerItems,
-                                        activeIndex: customerIndex,
-                                        onPrevious: () => cycleIndex(setDetailIndexes, customerKey, customerItems.length, -1),
-                                        onNext: () => cycleIndex(setDetailIndexes, customerKey, customerItems.length, 1),
-                                        className: "text-[15px] leading-tight text-fg-subtle",
-                                      })}
-                                    </td>
-                                    <td className="px-3 py-2.5">
-                                      {renderSwitcher({
-                                        items: paymentAgentItems,
-                                        activeIndex: paymentAgentIndex,
-                                        onPrevious: () => cycleIndex(setDetailIndexes, paymentAgentKey, paymentAgentItems.length, -1),
-                                        onNext: () => cycleIndex(setDetailIndexes, paymentAgentKey, paymentAgentItems.length, 1),
-                                        className: "text-[15px] leading-tight text-fg-subtle",
-                                      })}
-                                    </td>
-                                    <td className="px-3 py-2.5 text-center text-[14px] tabular-nums text-fg">{orderRow.totalCtns}</td>
-                                    <td className="px-3 py-2.5 text-right text-[15px] font-semibold tabular-nums text-fg">{formatAmount(orderRow.amount)}</td>
-                                  </tr>
-                                );
-                              })()
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    ) : null}
-                  </section>
-                ))}
+                                  return (
+                                    <tr key={orderRow.orderId} className="border-b border-border/70 transition-colors last:border-b-0 hover:bg-bg-subtle/30">
+                                      <td className="px-3 py-2.5">
+                                        <div className="text-[16px] font-semibold text-fg">{orderRow.orderNumber}</div>
+                                        <div className="text-[12.5px] text-fg-subtle">{orderRow.orderId}</div>
+                                      </td>
+                                      <td className="px-3 py-2.5">
+                                        <div className="flex h-14 w-14 items-center justify-center overflow-hidden rounded-lg border border-border bg-bg-subtle">
+                                          {orderRow.imageUrl ? (
+                                            <img
+                                              src={getCloudinaryOptimizedUrl(orderRow.imageUrl, { width: 160, height: 160, crop: "fit" })}
+                                              alt={orderRow.marka}
+                                              className="h-full w-full object-contain"
+                                              loading="lazy"
+                                              decoding="async"
+                                            />
+                                          ) : (
+                                            <span className="text-[11px] text-fg-subtle">No image</span>
+                                          )}
+                                        </div>
+                                      </td>
+                                      <td className="px-3 py-2.5">
+                                        {renderSwitcher({
+                                          items: markaItems,
+                                          activeIndex: markaIndex,
+                                          onPrevious: () => cycleIndex(setDetailIndexes, markaKey, markaItems.length, -1),
+                                          onNext: () => cycleIndex(setDetailIndexes, markaKey, markaItems.length, 1),
+                                          className: "text-[16px] font-medium leading-tight text-fg",
+                                        })}
+                                      </td>
+                                      <td className="px-3 py-2.5">
+                                        {renderSwitcher({
+                                          items: customerItems,
+                                          activeIndex: customerIndex,
+                                          onPrevious: () => cycleIndex(setDetailIndexes, customerKey, customerItems.length, -1),
+                                          onNext: () => cycleIndex(setDetailIndexes, customerKey, customerItems.length, 1),
+                                          className: "text-[15px] leading-tight text-fg-subtle",
+                                        })}
+                                      </td>
+                                      <td className="px-3 py-2.5">
+                                        {renderSwitcher({
+                                          items: paymentAgentItems,
+                                          activeIndex: paymentAgentIndex,
+                                          onPrevious: () => cycleIndex(setDetailIndexes, paymentAgentKey, paymentAgentItems.length, -1),
+                                          onNext: () => cycleIndex(setDetailIndexes, paymentAgentKey, paymentAgentItems.length, 1),
+                                          className: "text-[15px] leading-tight text-fg-subtle",
+                                        })}
+                                      </td>
+                                      <td className="px-3 py-2.5 text-center text-[14px] tabular-nums text-fg">{orderRow.totalCtns}</td>
+                                      <td className="px-3 py-2.5 text-right text-[15px] font-semibold tabular-nums text-fg">{formatAmount(orderRow.amount)}</td>
+                                    </tr>
+                                  );
+                                })()
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : null}
+                    </section>
+                  ))}
+                </div>
               </div>
-            </div>
-          ) : null}
-          {loadingGroups.length === 0 ? <div className="card px-4 py-8 text-center text-fg-subtle">No dashboard rows match this search.</div> : null}
+            ) : null}
+            {loadingGroups.length === 0 ? <div className="card px-4 py-8 text-center text-fg-subtle">No dashboard rows match this search.</div> : null}
+          </div>
         </div>
       </div>
       <OrderLinesDetailModal order={viewOrder} isOpen={!!viewOrder} onClose={() => setViewOrderId(null)} />

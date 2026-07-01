@@ -33,9 +33,10 @@ const items: Item[] = [
   { label: "Recycle Bin", href: "/recycle-bin", icon: RotateCcw },
 ];
 
-export function Sidebar({ collapsed = false, onToggle }: { collapsed?: boolean; onToggle?: () => void }) {
+export function Sidebar({ collapsed = false, onToggle, showDashboard = true }: { collapsed?: boolean; onToggle?: () => void; showDashboard?: boolean }) {
   const pathname = usePathname();
   const businessId = getFirebaseConfigStatus().businessId || "mahant";
+  const visibleItems = showDashboard ? items : items.filter((it) => it.href !== "/dashboard");
 
   return (
     <aside
@@ -64,7 +65,7 @@ export function Sidebar({ collapsed = false, onToggle }: { collapsed?: boolean; 
       </div>
 
       <nav className={cn("flex flex-col gap-0.5", collapsed ? "p-2" : "p-2.5")}>
-        {items.map((it) => {
+        {visibleItems.map((it) => {
           const active = pathname === it.href || (it.href !== "/" && pathname.startsWith(it.href));
           const Icon = it.icon;
           return (

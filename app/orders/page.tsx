@@ -42,6 +42,7 @@ import { orderLifecycleService } from "@/services/orderLifecycleService";
 import { getMeaningfulOrderLines } from "@/services/orderValidation";
 import { buildSeriesPrefix, deriveOrderSeriesFields, formatSeriesOrderNumber, getSeriesSuggestion, normalizeSeriesLabel, orderNumberExists, parseOrderNumber } from "@/lib/orderNumberSeries";
 import { getOrderNumberSeriesService } from "@/services/orderNumberSeriesService";
+import { getOrdersService } from "@/services/ordersService";
 import { getPaymentAgentsService } from "@/services/paymentAgentsService";
 import { measurePerfAsync, measurePerfSync, runPerfAction } from "@/lib/perfDebug";
 import { getOrderPaymentAgentLinkedAgentIds, getOrderPaymentAgentSplits } from "@/services/settlement/paymentAgentSplits";
@@ -344,6 +345,29 @@ const summarizeOrderForLog = (o: Order) => ({
 });
 
 const normalizePaymentAgentValue = (value?: string) => (value || "").trim().toLowerCase();
+const getEffectiveLineLoadingDate = (line: Order["lines"][number], orderLoadingDate?: string) => {
+  if (Object.prototype.hasOwnProperty.call(line, "loadingDate")) {
+    return (line.loadingDate || "").trim();
+  }
+  return (line.loadingDate || orderLoadingDate || "").trim();
+};
+const countOrderLinesWithLoadingDate = (order: Order) =>
+  order.lines.reduce((count, line) => count + (getEffectiveLineLoadingDate(line, order.loadingDate) ? 1 : 0), 0);
+const getOrderLoadingDateCoverage = (order: Order) => {
+  if (order.lines.length === 0) return "none" as const;
+  const datedLineCount = countOrderLinesWithLoadingDate(order);
+  if (datedLineCount === 0) return "none" as const;
+  if (datedLineCount === order.lines.length) return "complete" as const;
+  return "partial" as const;
+};
+const derivePersistedOrderLoadingDate = (lines: Order["lines"], fallback?: string) => {
+  const nonEmptyDates = lines.map((line) => (line.loadingDate || "").trim()).filter(Boolean);
+  if (nonEmptyDates.length === 0) return undefined;
+  const uniqueDates = Array.from(new Set(nonEmptyDates));
+  if (nonEmptyDates.length === lines.length && uniqueDates.length === 1) return uniqueDates[0];
+  const normalizedFallback = (fallback || "").trim();
+  return normalizedFallback || uniqueDates[0];
+};
 const normalizeSearchText = (...parts: Array<string | number | undefined | null>) =>
   parts
     .flatMap((part) => String(part ?? "").split(/\s+/))
@@ -478,6 +502,7 @@ const buildOrderLineSearchText = (
     joinLineDetails(line),
     getResolvedLineCustomerName(line),
     getLineCustomerDisplay(line, customers),
+    getEffectiveLineLoadingDate(line, order.loadingDate),
     lineTotalPcs(line),
     line.rmbPerPcs,
     lineTotalRmb(line),
@@ -570,6 +595,111 @@ const applyPaymentAgentDraftState = (
     paymentAgentPaymentEvents: events.length > 0 ? events : [createEmptyPaymentAgentPaymentEvent()],
   };
 };
+const normalizeFinanceLineForComparison = (line: Order["lines"][number]) => {
+  const seeded = seedDetailBoxesFromLegacy(line);
+  return {
+    id: (seeded.id || "").trim(),
+    totalCtns: Number(seeded.totalCtns) || 0,
+    pcsPerCtn: Number(seeded.pcsPerCtn) || 0,
+    rmbPerPcs: Number(seeded.rmbPerPcs) || 0,
+  };
+};
+const normalizeFinanceSplitForComparison = (split: PaymentAgentOrderSplit) => ({
+  id: (split.id || "").trim(),
+  paymentAgentId: (split.paymentAgentId || "").trim(),
+  paymentBy: (split.paymentBy || "").trim(),
+  paymentAgentName: (split.paymentAgentName || "").trim(),
+  paymentAgentSnapshot: split.paymentAgentSnapshot
+    ? {
+        id: (split.paymentAgentSnapshot.id || "").trim(),
+        name: (split.paymentAgentSnapshot.name || "").trim(),
+        code: (split.paymentAgentSnapshot.code || "").trim(),
+      }
+    : undefined,
+  assignedAmount: Number(split.assignedAmount) || 0,
+  paidNow: Number(split.paidNow) || 0,
+  note: (split.note || "").trim(),
+});
+const normalizeFinancePaymentEventForComparison = (event: PaymentAgentPaymentEvent) => ({
+  id: (event.id || "").trim(),
+  paymentAgentId: (event.paymentAgentId || "").trim(),
+  paymentBy: (event.paymentBy || "").trim(),
+  paymentAgentName: (event.paymentAgentName || "").trim(),
+  paymentAgentSnapshot: event.paymentAgentSnapshot
+    ? {
+        id: (event.paymentAgentSnapshot.id || "").trim(),
+        name: (event.paymentAgentSnapshot.name || "").trim(),
+        code: (event.paymentAgentSnapshot.code || "").trim(),
+      }
+    : undefined,
+  amount: Number(event.amount) || 0,
+  note: (event.note || "").trim(),
+});
+const normalizeFinanceOrderForComparison = (order: Order) => ({
+  shippingPrice: Number(order.shippingPrice) || 0,
+  orderTotal: orderTotal(order),
+  paymentAgentId: (order.paymentAgentId || "").trim(),
+  paymentBy: (order.paymentBy || "").trim(),
+  paymentByName: (order.paymentByName || "").trim(),
+  paymentAgentName: (order.paymentAgentName || "").trim(),
+  paymentAgentSnapshot: order.paymentAgentSnapshot
+    ? {
+        id: (order.paymentAgentSnapshot.id || "").trim(),
+        name: (order.paymentAgentSnapshot.name || "").trim(),
+        code: (order.paymentAgentSnapshot.code || "").trim(),
+      }
+    : undefined,
+  lines: (order.lines || [])
+    .map(normalizeFinanceLineForComparison)
+    .sort((left, right) => left.id.localeCompare(right.id)),
+  paymentAgentSplits: getEditablePaymentAgentSplits(order)
+    .map(normalizeFinanceSplitForComparison)
+    .sort((left, right) => left.id.localeCompare(right.id)),
+  paymentAgentPaymentEvents: getEditablePaymentAgentEvents(order)
+    .map(normalizeFinancePaymentEventForComparison)
+    .sort((left, right) => left.id.localeCompare(right.id)),
+});
+const financeFieldsChanged = (beforeOrder: Order, afterOrder: Order) =>
+  JSON.stringify(normalizeFinanceOrderForComparison(beforeOrder)) !== JSON.stringify(normalizeFinanceOrderForComparison(afterOrder));
+const preserveOrderPaymentAgentState = (sourceOrder: Order, targetOrder: Order): Order => ({
+  ...targetOrder,
+  paymentAgentId: sourceOrder.paymentAgentId,
+  paymentBy: sourceOrder.paymentBy,
+  paymentByName: sourceOrder.paymentByName,
+  paymentAgentName: sourceOrder.paymentAgentName,
+  paymentAgentSnapshot: sourceOrder.paymentAgentSnapshot,
+  paymentAgentSplits: sourceOrder.paymentAgentSplits,
+  paymentAgentPaymentEvents: sourceOrder.paymentAgentPaymentEvents,
+  paymentAgentSettlementSnapshot: sourceOrder.paymentAgentSettlementSnapshot,
+  paidAmount: sourceOrder.paidAmount,
+  dueAmount: sourceOrder.dueAmount,
+  paymentStatus: sourceOrder.paymentStatus,
+});
+const rebuildOrderPaymentAgentStateForSave = async (
+  order: Order,
+  resolvePaymentAgentEventsForSave: (
+    rawEvents: PaymentAgentPaymentEvent[] | undefined,
+    expectedTotal: number,
+    rawSplits?: PaymentAgentOrderSplit[],
+  ) => Promise<{ events: PaymentAgentPaymentEvent[]; splits: PaymentAgentOrderSplit[]; primaryAgent: PaymentAgent | null }>,
+) => {
+  const splitResolution = await resolvePaymentAgentEventsForSave(
+    getEditablePaymentAgentEvents(order),
+    orderTotal(order),
+    getEditablePaymentAgentSplits(order),
+  );
+  const nextOrder = applyPaymentAgentDraftState(order, splitResolution.splits, splitResolution.events);
+  const totalAmount = orderTotal(nextOrder);
+  const paidAmount = calculateOrderAgentPaidTotal(splitResolution.splits);
+  const dueAmount = calculateOrderRemainingPayable(totalAmount, splitResolution.splits);
+  return {
+    ...nextOrder,
+    paidAmount,
+    dueAmount,
+    paymentStatus: getOrderPaymentStatusFromDue(totalAmount, dueAmount),
+    paymentAgentSettlementSnapshot: undefined,
+  };
+};
 const hasLinkedPaymentAgent = (order: Order) =>
   getOrderPaymentAgentLinkedAgentIds(order).length > 0;
 const hasLinkedCustomerInOrder = (order: Pick<Order, "lines">) =>
@@ -609,6 +739,7 @@ const normalizeComposerLineForComparison = (line: Order["lines"][number]) => {
       : undefined,
     productPhotoUrl: (seeded.productPhotoUrl || "").trim(),
     photoUrl: (seeded.photoUrl || "").trim(),
+    loadingDate: Object.prototype.hasOwnProperty.call(seeded, "loadingDate") ? seeded.loadingDate || "" : undefined,
   };
 };
 
@@ -927,6 +1058,7 @@ export default function OrdersPage() {
   const { orders, upsertOrder, deleteOrder, pushToast } = useStore();
   const { data: paymentAgents, isLoading: paymentAgentsLoading, recalculateFromOrders, applyOrderSettlement, reverseOrderSettlement, reload: reloadPaymentAgents } = usePaymentAgents();
   const { data: firebaseOrders, isLoading: isOrdersLoading, error: ordersLoadError, draftOrders: firebaseDraftOrders, autosaveDraft, upsertOrder: upsertFirebaseOrder, reload: reloadFirebaseOrders } = useOrders();
+  const ordersService = useMemo(() => getOrdersService(), []);
   const { data: customers, isLoading: isCustomersLoading, reload: reloadCustomers, upsertCustomer } = useCustomers();
   const paymentAgentsService = useMemo(() => getPaymentAgentsService(), []);
   const [query, setQuery] = useState("");
@@ -982,6 +1114,11 @@ export default function OrdersPage() {
   const [orderLineIndexes, setOrderLineIndexes] = useState<Record<string, number>>({});
   const [copiedOrderPayload, setCopiedOrderPayload] = useState<CopiedOrderPayload | null>(() => getStoredCopiedOrderPayload());
   const [orderContextMenu, setOrderContextMenu] = useState<{ order: Order; x: number; y: number } | null>(null);
+  const [lineLoadingDateModal, setLineLoadingDateModal] = useState<{
+    order: Order;
+    dates: Record<string, string>;
+    saving: boolean;
+  } | null>(null);
   const wechatNormalizationStartedRef = useRef(false);
   const manuallyEditedPaymentSplitIdsRef = useRef<Set<string>>(new Set());
   const autoManagedPaymentSplitIdsRef = useRef<Set<string>>(new Set());
@@ -1168,6 +1305,63 @@ export default function OrdersPage() {
     pushToast({ tone: "success", text: "Copied order pasted into new order." });
   };
 
+  const openLineLoadingDateModal = (order: Order) => {
+    setOrderContextMenu(null);
+    setLineLoadingDateModal({
+      order,
+      dates: Object.fromEntries(order.lines.map((line) => [line.id, getEffectiveLineLoadingDate(line, order.loadingDate)])),
+      saving: false,
+    });
+  };
+
+  const saveLineLoadingDateModal = async () => {
+    if (!lineLoadingDateModal || lineLoadingDateModal.saving) return;
+    const { order, dates } = lineLoadingDateModal;
+    const nextLines = order.lines.map((line) => ({
+      ...line,
+      loadingDate: dates[line.id] || "",
+    }));
+    const unchanged = nextLines.every((line, index) => (line.loadingDate || "") === (order.lines[index]?.loadingDate || ""));
+    const nextOrderLoadingDate = derivePersistedOrderLoadingDate(nextLines, order.loadingDate);
+    if (unchanged && (nextOrderLoadingDate || "") === (order.loadingDate || "")) {
+      setLineLoadingDateModal(null);
+      return;
+    }
+
+    const loadingDateUpdatedOrder = {
+      ...order,
+      lines: nextLines,
+      loadingDate: nextOrderLoadingDate,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const shouldRebuildPaymentAgentState = financeFieldsChanged(order, loadingDateUpdatedOrder);
+    const beforeEligible = isOrderEligibleForCreditSettlement(order);
+    setLineLoadingDateModal((current) => (current ? { ...current, saving: true } : current));
+    try {
+      const updatedOrder = shouldRebuildPaymentAgentState
+        ? await rebuildOrderPaymentAgentStateForSave(loadingDateUpdatedOrder, resolvePaymentAgentEventsForSave)
+        : preserveOrderPaymentAgentState(order, loadingDateUpdatedOrder);
+      const afterEligible = isOrderEligibleForCreditSettlement(updatedOrder);
+      if (isFirebaseOrdersMode) {
+        await upsertFirebaseOrder(updatedOrder);
+        if (shouldRebuildPaymentAgentState || beforeEligible !== afterEligible) {
+          if (afterEligible) await applyOrderSettlement(updatedOrder);
+          else await reverseOrderSettlement(updatedOrder);
+        }
+      } else {
+        upsertOrder(updatedOrder);
+        await recalculateFromOrders(orders.filter((entry) => entry.id !== updatedOrder.id).concat(updatedOrder));
+      }
+      setLineLoadingDateModal(null);
+      pushToast({ tone: "success", text: "Loading dates updated." });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to save loading dates.";
+      setLineLoadingDateModal((current) => (current ? { ...current, saving: false } : current));
+      pushToast({ tone: "danger", text: message });
+    }
+  };
+
   const composerAvailableCreditByAgentId = useMemo(
     () =>
       Object.fromEntries(
@@ -1238,7 +1432,7 @@ export default function OrdersPage() {
         const customerText = order.lines.map((line) => getResolvedLineCustomerName(line)).join(" ");
         const markaText = order.lines.map((line) => line.marka || "").join(" ");
         const detailText = order.lines.map((line) => joinLineDetails(line)).join(" ");
-        const hasLoadingDate = Boolean(order.loadingDate?.trim());
+        const hasLoadingDate = countOrderLinesWithLoadingDate(order) > 0;
         const hasPaymentAgent = hasLinkedPaymentAgent(order);
         const orderDate = order.date || "";
         if (filters.status !== "all" && order.status !== filters.status) return false;
@@ -1948,8 +2142,22 @@ export default function OrdersPage() {
       try {
         if (isFirebaseOrdersMode) {
           for (const order of dirtyOrders) {
+            const latestOrder = await ordersService.getOrderById(order.id);
+            const baseOrder = latestOrder ?? order;
             await upsertFirebaseOrder({
-              ...order,
+              ...baseOrder,
+              paymentAgentId: baseOrder.paymentAgentId,
+              paymentBy: baseOrder.paymentBy,
+              paymentByName: baseOrder.paymentByName,
+              paymentAgentName: baseOrder.paymentAgentName,
+              paymentAgentSnapshot: baseOrder.paymentAgentSnapshot,
+              paymentAgentSplits: baseOrder.paymentAgentSplits,
+              paymentAgentPaymentEvents: baseOrder.paymentAgentPaymentEvents,
+              paymentAgentSettlementSnapshot: baseOrder.paymentAgentSettlementSnapshot,
+              dependencyMap: baseOrder.dependencyMap,
+              paidAmount: baseOrder.paidAmount,
+              dueAmount: baseOrder.dueAmount,
+              paymentStatus: baseOrder.paymentStatus,
               wechatId: order.wechatId.trim(),
               updatedAt: new Date().toISOString(),
             });
@@ -2106,13 +2314,27 @@ export default function OrdersPage() {
     if (!dirty) return;
     if (!ensureFirebaseOrderWriteReady()) return;
     rowEditSaveInFlightRef.current.add(order.id);
-    const updated = { ...order, loadingDate: pending.loadingDate, status: pending.status, updatedAt: new Date().toISOString() };
+    const loadingDateUpdatedOrder = {
+      ...order,
+      loadingDate: pending.loadingDate,
+      status: pending.status,
+      updatedAt: new Date().toISOString(),
+      lines: order.lines.map((line) => ({ ...line, loadingDate: pending.loadingDate || "" })),
+    };
+    const shouldRebuildPaymentAgentState = financeFieldsChanged(order, loadingDateUpdatedOrder);
+    const beforeEligible = isOrderEligibleForCreditSettlement(order);
     setRowEdits((prev) => ({ ...prev, [order.id]: { ...pending, saving: true } }));
 try {
+      const updated = shouldRebuildPaymentAgentState
+        ? await rebuildOrderPaymentAgentStateForSave(loadingDateUpdatedOrder, resolvePaymentAgentEventsForSave)
+        : preserveOrderPaymentAgentState(order, loadingDateUpdatedOrder);
+      const afterEligible = isOrderEligibleForCreditSettlement(updated);
       if (isFirebaseOrdersMode) {
         await upsertFirebaseOrder(updated);
-        if (isOrderEligibleForCreditSettlement(updated)) await applyOrderSettlement(updated);
-        else await reverseOrderSettlement(updated);
+        if (shouldRebuildPaymentAgentState || beforeEligible !== afterEligible) {
+          if (afterEligible) await applyOrderSettlement(updated);
+          else await reverseOrderSettlement(updated);
+        }
       } else {
         upsertOrder(updated);
         await recalculateFromOrders(orders.filter((x) => x.id !== updated.id).concat(updated));
@@ -2126,7 +2348,7 @@ try {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setRowEdits((prev) => ({ ...prev, [order.id]: { ...pending, saving: false } }));
-      logError("order_row_update_failure", { orderId: order.id, error: message, attemptedLoadingDate: updated.loadingDate, attemptedStatus: updated.status });
+      logError("order_row_update_failure", { orderId: order.id, error: message, attemptedLoadingDate: loadingDateUpdatedOrder.loadingDate, attemptedStatus: loadingDateUpdatedOrder.status });
       pushToast({ tone: "danger", text: "Failed to save row changes." });
     } finally {
       rowEditSaveInFlightRef.current.delete(order.id);
@@ -2141,6 +2363,8 @@ try {
     const mergedOrders = activeOrders.some((entry) => entry.id === nextOrder.id)
       ? activeOrders.map((entry) => (entry.id === nextOrder.id ? nextOrder : entry))
       : [nextOrder, ...activeOrders];
+    const shouldRebuildPaymentAgentState = financeFieldsChanged(previousOrder, nextOrder);
+    const settlementEligibilityChanged = isOrderEligibleForCreditSettlement(previousOrder) !== isOrderEligibleForCreditSettlement(nextOrder);
     const orderNumberChanged = normalizeEditableOrderNumber(previousOrder.number || previousOrder.orderNumber)
       !== normalizeEditableOrderNumber(nextOrder.number || nextOrder.orderNumber);
     const shouldRefreshCustomers = hasLinkedCustomerInOrder(previousOrder) || hasLinkedCustomerInOrder(nextOrder);
@@ -2160,21 +2384,23 @@ try {
       })());
     }
 
-    syncTasks.push((async () => {
-      try {
-        const nextLinkedPaymentAgentIds = getOrderPaymentAgentLinkedAgentIds(nextOrder);
-        const previousLinkedPaymentAgentIds = getOrderPaymentAgentLinkedAgentIds(previousOrder);
-        if (nextLinkedPaymentAgentIds.length > 0) {
-          await measurePerfAsync("sync", "orders.outsideEdit.applyPaymentAgentSettlement", { orderId: nextOrder.id, paymentAgentId: nextLinkedPaymentAgentIds[0] || "" }, () => paymentAgentsService.applyOrderSettlement?.(nextOrder) ?? Promise.resolve());
-        } else if (previousLinkedPaymentAgentIds.length > 0) {
-          await measurePerfAsync("sync", "orders.outsideEdit.reversePaymentAgentSettlement", { orderId: nextOrder.id }, () => paymentAgentsService.reverseOrderSettlement?.(nextOrder) ?? Promise.resolve());
+    if (shouldRebuildPaymentAgentState || settlementEligibilityChanged) {
+      syncTasks.push((async () => {
+        try {
+          const nextLinkedPaymentAgentIds = getOrderPaymentAgentLinkedAgentIds(nextOrder);
+          const previousLinkedPaymentAgentIds = getOrderPaymentAgentLinkedAgentIds(previousOrder);
+          if (nextLinkedPaymentAgentIds.length > 0 && isOrderEligibleForCreditSettlement(nextOrder)) {
+            await measurePerfAsync("sync", "orders.outsideEdit.applyPaymentAgentSettlement", { orderId: nextOrder.id, paymentAgentId: nextLinkedPaymentAgentIds[0] || "" }, () => paymentAgentsService.applyOrderSettlement?.(nextOrder) ?? Promise.resolve());
+          } else if (previousLinkedPaymentAgentIds.length > 0) {
+            await measurePerfAsync("sync", "orders.outsideEdit.reversePaymentAgentSettlement", { orderId: nextOrder.id }, () => paymentAgentsService.reverseOrderSettlement?.(nextOrder) ?? Promise.resolve());
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          warnings.push(`Payment-agent settlement failed: ${message}`);
+          logError("outside_edit_payment_agent_sync_failure", { orderId: nextOrder.id, error: message });
         }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        warnings.push(`Payment-agent settlement failed: ${message}`);
-        logError("outside_edit_payment_agent_sync_failure", { orderId: nextOrder.id, error: message });
-      }
-    })());
+      })());
+    }
 
     if (nextOrder.status === "saved") {
       syncTasks.push((async () => {
@@ -2231,15 +2457,19 @@ try {
     }
   };
 
-  const persistOutsideEditedOrder = async (nextOrder: Order) => {
+  const persistOutsideEditedOrder = async (previousOrder: Order, nextOrder: Order) => {
+    const preparedOrder = financeFieldsChanged(previousOrder, nextOrder)
+      ? await rebuildOrderPaymentAgentStateForSave(nextOrder, resolvePaymentAgentEventsForSave)
+      : preserveOrderPaymentAgentState(previousOrder, nextOrder);
+
     if (isFirebaseOrdersMode) {
-      return upsertFirebaseOrder(nextOrder as any);
+      return upsertFirebaseOrder(preparedOrder as any);
     }
 
-    upsertOrder(nextOrder);
-    const mergedOrders = orders.filter((entry) => entry.id !== nextOrder.id).concat(nextOrder);
+    upsertOrder(preparedOrder);
+    const mergedOrders = orders.filter((entry) => entry.id !== preparedOrder.id).concat(preparedOrder);
     await recalculateFromOrders(mergedOrders);
-    return nextOrder;
+    return preparedOrder;
   };
 
   const requestOutsideFieldSave = (order: Order, field: OutsideEditField, line?: Order["lines"][number] | null) => {
@@ -2331,7 +2561,7 @@ try {
       }
 
       nextOrder.updatedAt = new Date().toISOString();
-      const savedOrder = await measurePerfAsync("sync", "orders.persistOutsideEditedOrder", { orderId: order.id, field }, () => persistOutsideEditedOrder(nextOrder));
+      const savedOrder = await measurePerfAsync("sync", "orders.persistOutsideEditedOrder", { orderId: order.id, field }, () => persistOutsideEditedOrder(order, nextOrder));
       cancelOutsideField(order.id);
       const successLabels: Record<OutsideEditField, string> = {
         orderNumber: "Order number updated.",
@@ -2542,54 +2772,94 @@ try {
       saveAudit.flush("save:blocked", { stage: "duplicate_order_number", orderNumber: finalOrderNumber });
       return;
     }
-    let splitResolution: Awaited<ReturnType<typeof resolvePaymentAgentEventsForSave>>;
-    try {
-      saveAudit.mark("paymentAgentResolve:start");
-      splitResolution = await resolvePaymentAgentEventsForSave(
-        cleanedDraft.paymentAgentPaymentEvents,
-        orderTotal({ ...cleanedDraft, lines: resolvedLines }),
-        cleanedDraft.paymentAgentSplits ?? [],
+    const editComparisonOrder: Order = editingOrder
+      ? {
+          ...editingOrder,
+          ...cleanedDraft,
+          lines: resolvedLines,
+          number: finalOrderNumber,
+          orderNumber: finalOrderNumber,
+          ...deriveOrderSeriesFields(finalOrderNumber),
+        }
+      : {
+          ...cleanedDraft,
+          lines: resolvedLines,
+          number: finalOrderNumber,
+          orderNumber: finalOrderNumber,
+          ...deriveOrderSeriesFields(finalOrderNumber),
+        } as Order;
+    const shouldRebuildPaymentAgentState = !editingOrder || financeFieldsChanged(editingOrder, editComparisonOrder);
+    let resolvedAgent: PaymentAgent | null = null;
+    let resolvedSplitsForSave: PaymentAgentOrderSplit[] = [];
+    let resolvedEventsForSave: PaymentAgentPaymentEvent[] = [];
+    let resolvedDraftWithSplits: Order;
+    let resolvedPaymentAgentId = "";
+
+    if (shouldRebuildPaymentAgentState) {
+      let splitResolution: Awaited<ReturnType<typeof resolvePaymentAgentEventsForSave>>;
+      try {
+        saveAudit.mark("paymentAgentResolve:start");
+        splitResolution = await resolvePaymentAgentEventsForSave(
+          cleanedDraft.paymentAgentPaymentEvents,
+          orderTotal({ ...cleanedDraft, lines: resolvedLines }),
+          cleanedDraft.paymentAgentSplits ?? [],
+        );
+        saveAudit.mark("paymentAgentResolve:end", {
+          resolvedAgentId: splitResolution.primaryAgent?.id || null,
+          splitCount: splitResolution.splits.length,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setOrderSaveState("idle");
+        saveAudit.flush("save:error", { stage: "payment_agent_resolve", message });
+        pushToast({ tone: "danger", text: `Payment agent selection failed: ${message}` });
+        return;
+      }
+      resolvedAgent = splitResolution.primaryAgent;
+      resolvedSplitsForSave = splitResolution.splits.map(normalizeDraftPaymentSplit);
+      resolvedEventsForSave = splitResolution.events.map(normalizeDraftPaymentEvent);
+      resolvedDraftWithSplits = applyPaymentAgentDraftState(
+        {
+          ...cleanedDraft,
+          paymentAgentSplits: [],
+          paymentAgentPaymentEvents: [],
+        },
+        resolvedSplitsForSave,
+        resolvedEventsForSave,
       );
-      saveAudit.mark("paymentAgentResolve:end", {
-        resolvedAgentId: splitResolution.primaryAgent?.id || null,
-        splitCount: splitResolution.splits.length,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setOrderSaveState("idle");
-      saveAudit.flush("save:error", { stage: "payment_agent_resolve", message });
-      pushToast({ tone: "danger", text: `Payment agent selection failed: ${message}` });
-      return;
-    }
-    const resolvedAgent = splitResolution.primaryAgent;
-    const resolvedSplitsForSave = splitResolution.splits.map(normalizeDraftPaymentSplit);
-    const resolvedEventsForSave = splitResolution.events.map(normalizeDraftPaymentEvent);
-    const resolvedDraftWithSplits = applyPaymentAgentDraftState(
-      {
+      resolvedPaymentAgentId = resolvedAgent?.id || resolvedDraftWithSplits.paymentAgentId || "";
+    } else {
+      saveAudit.mark("paymentAgentResolve:skipped", { reason: "finance_fields_unchanged" });
+      resolvedDraftWithSplits = preserveOrderPaymentAgentState(editingOrder, {
         ...cleanedDraft,
-        paymentAgentSplits: [],
-        paymentAgentPaymentEvents: [],
-      },
-      resolvedSplitsForSave,
-      resolvedEventsForSave,
-    );
-    const resolvedPaymentAgentId = resolvedAgent?.id || resolvedDraftWithSplits.paymentAgentId || "";
+        lines: resolvedLines,
+      });
+      resolvedSplitsForSave = (resolvedDraftWithSplits.paymentAgentSplits ?? []).map(normalizeDraftPaymentSplit);
+      resolvedEventsForSave = (resolvedDraftWithSplits.paymentAgentPaymentEvents ?? []).map(normalizeDraftPaymentEvent);
+      resolvedPaymentAgentId = resolvedDraftWithSplits.paymentAgentId || "";
+    }
     const finalOrderSeriesFields = deriveOrderSeriesFields(finalOrderNumber);
     const finalTotalAmount = orderTotal({ ...cleanedDraft, lines: resolvedLines });
-    const finalPaidAmount = calculateOrderAgentPaidTotal(resolvedSplitsForSave);
-    const finalDueAmount = calculateOrderRemainingPayable(finalTotalAmount, resolvedSplitsForSave);
+    const finalPaidAmount = shouldRebuildPaymentAgentState
+      ? calculateOrderAgentPaidTotal(resolvedSplitsForSave)
+      : (editingOrder?.paidAmount ?? calculateOrderAgentPaidTotal(resolvedSplitsForSave));
+    const finalDueAmount = shouldRebuildPaymentAgentState
+      ? calculateOrderRemainingPayable(finalTotalAmount, resolvedSplitsForSave)
+      : (editingOrder?.dueAmount ?? calculateOrderRemainingPayable(finalTotalAmount, resolvedSplitsForSave));
     let savedOrder: Order = {
       ...resolvedDraftWithSplits,
       number: finalOrderNumber,
       orderNumber: finalOrderNumber,
       ...finalOrderSeriesFields,
       lines: resolvedLines,
-      status: "saved" as const,
+      status: editingOrder && editingOrder.status !== "draft" ? editingOrder.status : "saved" as const,
       subtotal: orderLinesTotal({ ...cleanedDraft, lines: resolvedLines }),
       grandTotal: finalTotalAmount,
       paidAmount: finalPaidAmount,
       dueAmount: finalDueAmount,
-      paymentStatus: getOrderPaymentStatusFromDue(finalTotalAmount, finalDueAmount),
+      paymentStatus: shouldRebuildPaymentAgentState
+        ? getOrderPaymentStatusFromDue(finalTotalAmount, finalDueAmount)
+        : (editingOrder?.paymentStatus ?? getOrderPaymentStatusFromDue(finalTotalAmount, finalDueAmount)),
       paymentAgentSplits: resolvedSplitsForSave,
       paymentAgentPaymentEvents: resolvedEventsForSave,
       paymentAgentId: resolvedPaymentAgentId,
@@ -2599,7 +2869,7 @@ try {
       paymentAgentSnapshot: resolvedAgent
         ? { id: resolvedAgent.id, name: resolvedAgent.name, code: resolvedAgent.agentCode }
         : resolvedDraftWithSplits.paymentAgentSnapshot,
-      paymentAgentSettlementSnapshot: undefined,
+      paymentAgentSettlementSnapshot: shouldRebuildPaymentAgentState ? undefined : editingOrder?.paymentAgentSettlementSnapshot,
     };
     saveAudit.mark("orderPayload:built", { finalOrderNumber, resolvedLines: resolvedLines.length, resolvedPaymentAgentId: resolvedPaymentAgentId || null });
     try {
@@ -2622,6 +2892,7 @@ try {
     const mergedOrders = activeOrders.some((o) => o.id === savedOrder.id) ? activeOrders.map((o) => (o.id === savedOrder.id ? savedOrder : o)) : [savedOrder, ...activeOrders];
     logCustomer("skipped_unrelated_customer_upserts", { reason: "normal_save_should_not_rewrite_unrelated_customers", affectedCustomerIds: Array.from(new Set(savedOrder.lines.map((l) => l.customerId).filter(Boolean))) });
     const savedOrderPaymentAgentIds = getOrderPaymentAgentLinkedAgentIds(savedOrder);
+    const settlementEligibilityChanged = editingOrder ? isOrderEligibleForCreditSettlement(editingOrder) !== isOrderEligibleForCreditSettlement(savedOrder) : savedOrderPaymentAgentIds.length > 0;
     const result: OrderSideEffectResult = { mode: editingOrderId ? "edit" : "create", orderSaved: true, productsSynced: false, productSyncFailures: [], paymentSettlementApplied: !isFirebaseOrdersMode && savedOrderPaymentAgentIds.length > 0, paymentSettlementReversed: false, customerReceivablesApplied: false, customerReceivablesReversed: false, generatedProductsArchived: editingOrderId ? false : true, blocked: false, warnings: [], errors: [] };
     const affectedCustomerIds = Array.from(new Set(savedOrder.lines.map((l) => l.customerId).filter(Boolean)));
     const generatedProductIds = savedOrder.lines.map((l) => `order-line-${savedOrder.id}-${l.id}`);
@@ -2678,7 +2949,7 @@ try {
         }
       })());
 
-      if (isFirebaseOrdersMode && savedOrderPaymentAgentIds.length > 0) {
+      if (isFirebaseOrdersMode && savedOrderPaymentAgentIds.length > 0 && (shouldRebuildPaymentAgentState || settlementEligibilityChanged)) {
         syncTasks.push((async () => {
           saveAudit.mark("paymentAgentLedger:start");
           try {
@@ -2693,7 +2964,7 @@ try {
             saveAudit.mark("paymentAgentLedger:end", { applied: result.paymentSettlementApplied });
           }
         })());
-      } else if (isFirebaseOrdersMode && editingOrder && getOrderPaymentAgentLinkedAgentIds(editingOrder).length > 0) {
+      } else if (isFirebaseOrdersMode && editingOrder && getOrderPaymentAgentLinkedAgentIds(editingOrder).length > 0 && (shouldRebuildPaymentAgentState || settlementEligibilityChanged)) {
         syncTasks.push((async () => {
           saveAudit.mark("paymentAgentLedger:start");
           try {
@@ -3517,9 +3788,16 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                   const customerName = getCardCustomerValue(selectedLine);
                   const hasMultipleLines = orderLines.length > 1;
                   const customerMissing = isMissingCustomerDisplay(customerName);
-                  const hasLoadingDateHighlight = Boolean(order.loadingDate?.trim());
+                  const loadingCoverage = getOrderLoadingDateCoverage(order);
 
-                  return <div key={row.key} className={cn("rounded-lg border border-border/70 bg-bg-card", hasLoadingDateHighlight && "border-emerald-300/45 bg-emerald-100/70 dark:border-emerald-400/50 dark:bg-emerald-500/14")}>
+                  return <div
+                    key={row.key}
+                    className={cn(
+                      "rounded-lg border border-border/70 bg-bg-card",
+                      loadingCoverage === "complete" && "border-emerald-300/45 bg-emerald-100/70 dark:border-emerald-400/50 dark:bg-emerald-500/14",
+                      loadingCoverage === "partial" && "border-amber-300/55 bg-amber-100/70 dark:border-amber-400/50 dark:bg-amber-500/14",
+                    )}
+                  >
                     <div className={rowClass} style={{ gridTemplateColumns: historyGridTemplate }}>
                       <div className="min-w-0 px-1 py-1.5 text-center">
                         <div
@@ -3638,7 +3916,14 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
                         listOptions: customerSuggestions,
                       }) : customerName}</div></div>
                       <div className="min-w-0 pl-1 pr-2 py-1.5 text-center">
-                        <div className="min-w-0 [&_button]:max-w-full [&_button]:text-[13.5px] [&_button]:leading-tight">
+                        <div
+                          className="min-w-0 [&_button]:max-w-full [&_button]:text-[13.5px] [&_button]:leading-tight"
+                          onContextMenu={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            openLineLoadingDateModal(order);
+                          }}
+                        >
                           {canEditOperationalFields ? <LoadingDateControl compact debugOrderId={order.id} value={rowValue.loadingDate} onChange={(next) => { setRowEdit(order, { loadingDate: next }, "date_selected"); }} /> : <span className="text-[15px] text-fg-muted">{order.loadingDate ? formatDate(order.loadingDate) : "Set date"}</span>}
                         </div>
                         {canEditOperationalFields && rowDirty ? <button type="button" title="Save row changes" aria-label="Save row changes" className="mt-1 inline-flex text-[10.5px] font-semibold text-brand transition-colors hover:underline disabled:opacity-60" disabled={rowValue.saving} onClick={() => { void saveRowEdit(order); }}>{rowValue.saving ? "Saving..." : "Save"}</button> : null}
@@ -3798,7 +4083,7 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
           <div className="bg-bg-subtle/20">
             <OrderForm showOrderInfo={false} draft={draft} setDraft={(u) => setDraft((d) => u(d))} paymentAgents={paymentAgents} customers={customers} onUploadingChange={onUploadingChange} onRemoveLine={handleRemoveLine} wechatSuggestions={wechatSuggestions.filter((w) => draft.wechatId.trim() ? w.toLowerCase().includes(draft.wechatId.trim().toLowerCase()) : false)} customerSuggestions={customerSuggestions} onPreviewImage={(src) => setPreviewImage({ src, alt: "Order line photo preview" })} onCustomerValidityChange={(lineId, issue) => setPopupCustomerIssues((prev) => ({ ...prev, [lineId]: issue }))} defaultMarka={mode === "add" ? currentDraftDefaultMarka : ""} />
           </div>
-          <OrderFooter lineTotal={lineTotal} shippingPrice={getOrderShippingAmount(draft)} total={total} onCancel={requestExitComposer} showCancel={false} onSaveDraft={() => onSave("draft")} onSaveOrder={() => onSave("saved")} onViewDetails={() => setViewOrder(draft)} saveOrderLabel={orderSaveState === "saving" ? "Saving Order..." : (editingOrderId ? "Save Changes" : "Save Order")} saveDraftLabel={orderSaveState === "saving" ? "Saving Draft..." : "Save as Draft"} disableSaveDraft={orderSaveState !== "idle"} disableSaveOrder={orderSaveState !== "idle"} paymentAgents={composerPaymentAgents} availableCreditByAgentId={composerAvailableCreditByAgentId} paymentAgentSplits={getEditablePaymentAgentSplits(draft)} paymentAgentEvents={getEditablePaymentAgentEvents(draft)} onPaymentAgentEventsChange={setDraftPaymentAgentEvents} onPaymentAgentEventManualAmountEdit={markDraftPaymentEventAsManual} onShippingPriceChange={(value) => setDraft((d) => ({ ...d, shippingPrice: value }))} />
+          <OrderFooter lineTotal={lineTotal} shippingPrice={getOrderShippingAmount(draft)} total={total} notes={draft.notes || ""} onCancel={requestExitComposer} showCancel={false} onSaveDraft={() => onSave("draft")} onSaveOrder={() => onSave("saved")} onViewDetails={() => setViewOrder(draft)} saveOrderLabel={orderSaveState === "saving" ? "Saving Order..." : (editingOrderId ? "Save Changes" : "Save Order")} saveDraftLabel={orderSaveState === "saving" ? "Saving Draft..." : "Save as Draft"} disableSaveDraft={orderSaveState !== "idle"} disableSaveOrder={orderSaveState !== "idle"} paymentAgents={composerPaymentAgents} availableCreditByAgentId={composerAvailableCreditByAgentId} paymentAgentSplits={getEditablePaymentAgentSplits(draft)} paymentAgentEvents={getEditablePaymentAgentEvents(draft)} onPaymentAgentEventsChange={setDraftPaymentAgentEvents} onPaymentAgentEventManualAmountEdit={markDraftPaymentEventAsManual} onShippingPriceChange={(value) => setDraft((d) => ({ ...d, shippingPrice: value }))} onNotesChange={(value) => setDraft((d) => ({ ...d, notes: value }))} />
         </div>
       </div>}
       {showExitConfirm ? <div className="fixed inset-0 z-[65] bg-black/50 grid place-items-center p-4"><div className="card w-full max-w-lg p-4 space-y-3"><div className="text-lg font-semibold">{editingOrderId ? "Save changes before closing?" : "Save order before closing?"}</div><div className="text-sm text-fg-subtle">{editingOrderId ? "You made changes to this order. Save them now or discard them." : "Save this order as a draft before closing, or discard it."}</div><div className="flex flex-wrap justify-end gap-2"><Button variant="secondary" onClick={() => { setShowExitConfirm(false); resetOrderComposer(); }}>{editingOrderId ? "Discard Changes" : "Discard Order"}</Button><Button variant="primary" onClick={() => { setShowExitConfirm(false); void onSave(editingOrderId ? "saved" : "draft", true); }}>{editingOrderId ? "Save Changes" : "Save Draft"}</Button></div></div></div> : null}
@@ -3838,6 +4123,13 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
           <button
             type="button"
             className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] text-fg transition-colors hover:bg-bg-subtle"
+            onClick={() => openLineLoadingDateModal(orderContextMenu.order)}
+          >
+            Set Loading Date
+          </button>
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] text-fg transition-colors hover:bg-bg-subtle"
             onClick={() => copyOrderForPaste(orderContextMenu.order)}
           >
             <Copy size={14} />
@@ -3845,6 +4137,102 @@ const historyGridTemplate = "98px minmax(92px,0.62fr) 96px minmax(190px,1.2fr) 5
           </button>
         </div>,
         document.body,
+      ) : null}
+      {lineLoadingDateModal ? (
+        <div className="fixed inset-0 z-[125] overflow-auto bg-black/50 p-4" onClick={() => !lineLoadingDateModal.saving && setLineLoadingDateModal(null)}>
+          <div
+            className="mx-auto w-full max-w-6xl rounded-[24px] border border-border bg-bg-card shadow-card"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="border-b border-border px-5 py-4">
+              <div className="text-[20px] font-semibold text-fg">Set Loading Date</div>
+              <div className="mt-1 text-[13px] text-fg-subtle">{lineLoadingDateModal.order.number || lineLoadingDateModal.order.orderNumber || "Order"}</div>
+            </div>
+            <div className="overflow-x-auto px-5 py-4">
+              <table className="w-full min-w-[980px] border-collapse text-[13px]">
+                <thead className="text-[11px] uppercase tracking-[0.04em] text-fg-subtle">
+                  <tr className="border-b border-border">
+                    <th className="px-3 py-2 text-left">Image</th>
+                    <th className="px-3 py-2 text-left">Marka</th>
+                    <th className="px-3 py-2 text-left">Detail 1</th>
+                    <th className="px-3 py-2 text-left">Detail 2</th>
+                    <th className="px-3 py-2 text-left">Detail 3</th>
+                    <th className="px-3 py-2 text-center">CTNS</th>
+                    <th className="px-3 py-2 text-left">Existing</th>
+                    <th className="px-3 py-2 text-left">Date Picker</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lineLoadingDateModal.order.lines.map((line) => {
+                    const existingValue = getEffectiveLineLoadingDate(line, lineLoadingDateModal.order.loadingDate);
+                    const currentValue = lineLoadingDateModal.dates[line.id] ?? existingValue;
+                    const imageUrl = getLineProductPhoto(line) || line.photoUrl || "";
+                    return (
+                      <tr key={line.id} className="border-b border-border/70 last:border-b-0">
+                        <td className="px-3 py-2.5">
+                          <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-lg border border-border bg-bg-subtle">
+                            {imageUrl ? (
+                              <img
+                                src={getCloudinaryOptimizedUrl(imageUrl, { width: 120, height: 120, crop: "fit" })}
+                                alt={line.marka || "Product image"}
+                                className="h-full w-full object-contain"
+                                loading="lazy"
+                                decoding="async"
+                              />
+                            ) : (
+                              <span className="text-[10px] text-fg-subtle">No image</span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2.5 font-medium text-fg">{line.marka || "-"}</td>
+                        <td className="px-3 py-2.5 text-fg-subtle">{line.detail1 || "-"}</td>
+                        <td className="px-3 py-2.5 text-fg-subtle">{line.detail2 || "-"}</td>
+                        <td className="px-3 py-2.5 text-fg-subtle">{line.detail3 || "-"}</td>
+                        <td className="px-3 py-2.5 text-center font-medium tabular-nums text-fg">{Number(line.totalCtns) || 0}</td>
+                        <td className="px-3 py-2.5 text-fg-subtle">{existingValue ? formatDate(existingValue) : "Not set"}</td>
+                        <td className="px-3 py-2.5">
+                          <div className="flex items-center gap-2">
+                            <LoadingDateControl
+                              value={currentValue || undefined}
+                              onChange={(next) =>
+                                setLineLoadingDateModal((current) => current ? {
+                                  ...current,
+                                  dates: { ...current.dates, [line.id]: next || "" },
+                                } : current)
+                              }
+                              buttonClassName="h-11 min-w-[168px] justify-between rounded-[14px] px-4 text-[15px]"
+                              portalWidth={280}
+                            />
+                            <button
+                              type="button"
+                              className="text-[12px] font-medium text-fg-subtle transition-colors hover:text-fg"
+                              onClick={() =>
+                                setLineLoadingDateModal((current) => current ? {
+                                  ...current,
+                                  dates: { ...current.dates, [line.id]: "" },
+                                } : current)
+                              }
+                            >
+                              Clear
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-border px-5 py-4">
+              <Button type="button" variant="secondary" onClick={() => setLineLoadingDateModal(null)} disabled={lineLoadingDateModal.saving}>
+                Cancel
+              </Button>
+              <Button type="button" variant="primary" onClick={() => { void saveLineLoadingDateModal(); }} disabled={lineLoadingDateModal.saving}>
+                {lineLoadingDateModal.saving ? "Saving..." : "Save"}
+              </Button>
+            </div>
+          </div>
+        </div>
       ) : null}
       <OrderLinesDetailModal order={viewOrder} isOpen={!!viewOrder} onClose={() => setViewOrder(null)} paymentAgents={composerPaymentAgents} paymentAgentSplits={viewOrder ? getEditablePaymentAgentSplits(viewOrder) : []} paymentAgentEvents={viewOrder ? getEditablePaymentAgentEvents(viewOrder) : []} onPaymentAgentEventsChange={viewOrder ? handleViewOrderPaymentAgentEventsChange : undefined} onPaymentAgentEventManualAmountEdit={viewOrder && isOrderModalOpen && viewOrder.id === draft.id ? markDraftPaymentEventAsManual : undefined} />
     </div>
