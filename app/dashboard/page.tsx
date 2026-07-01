@@ -91,10 +91,11 @@ const buildDateSearchTokens = (dateValue?: string) => {
   return [dateValue, `${day}/${month}/${year}`, `${day}${month}${year}`, `${day}${month}${year.slice(-2)}`, `${year}${month}${day}`];
 };
 const getDashboardLineLoadingDate = (order: Order, line: Order["lines"][number]) => {
-  if (Object.prototype.hasOwnProperty.call(line, "loadingDate")) {
-    return String(line.loadingDate || "").trim();
+  const lineLoadingDate = String(line.loadingDate || "").trim();
+  if (lineLoadingDate) {
+    return lineLoadingDate;
   }
-  return String(line.loadingDate || order.loadingDate || "").trim();
+  return String(order.loadingDate || "").trim();
 };
 const splitDisplayItems = (value?: string) =>
   Array.from(new Set(String(value || "").split(",").map((item) => item.trim()).filter(Boolean)));
